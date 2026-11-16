@@ -140,6 +140,25 @@ Same `inputRange` rules and `easing` as `interpolate`, but takes `#RRGGBB` /
 `(t: number) => number` works too. JSON keyframes use the same names in
 kebab case (`ease-out-back`).
 
+Four members build a curve from numbers instead of being one:
+
+| Call | Returns |
+| --- | --- |
+| `Easings.cubicBezier(x1, y1, x2, y2)` | The curve of CSS `cubic-bezier()`, so values from a design tool or a stylesheet paste in. `x1` and `x2` must be in 0–1; `y1`/`y2` outside 0–1 overshoot. |
+| `Easings.steps(count)` | A staircase of `count` equal steps (a positive integer), 1 only at the end: stop-motion and tick-by-tick moves. |
+| `Easings.back(overshoot?)` | `{ easeIn, easeOut, easeInOut }` like the `Back` curves, with that overshoot (default `1.70158`, theirs; larger overshoots further, 0 not at all). |
+| `Easings.elastic({ amplitude?, period? })` | `{ easeIn, easeOut, easeInOut }` like the `Elastic` curves: `amplitude` (at least 1, default 1) is how far the swings reach, `period` (above 0, default 0.3) the length of one swing as a share of the span (`easeInOut` uses one and a half times it). |
+
+```tsx
+const pop = progress(frame, 0, 20, Easings.back(2.2).easeOut);
+const slide = progress(frame, 10, 24, Easings.cubicBezier(0.4, 0, 0.2, 1));
+const tick = progress(frame, 0, 60, Easings.steps(6));
+```
+
+Build a curve once (at module level or outside the per-item loop) and reuse
+it. These are functions for React code only: JSON keyframes and
+`frameKeyframes()` take the named curves.
+
 ## spring
 
 `spring({ frame, fps, config?, from?, to?, delay?, durationInFrames? })`

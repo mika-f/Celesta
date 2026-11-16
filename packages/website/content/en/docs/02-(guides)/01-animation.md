@@ -16,6 +16,17 @@ Pass the result to `<Text opacity={opacity} … />`. Input ranges must be strict
 
 `Easings` covers the familiar easings.net curves: `linear`, and the `easeIn`/`easeOut`/`easeInOut` variants of `Sine`, `Quad`, `Cubic`, `Quart`, `Quint`, `Expo`, `Circ`, `Back`, `Elastic`, and `Bounce` (for example `Easings.easeOutBack`).
 
+When a named curve is not quite right, build one from numbers:
+
+```tsx
+const pop = Easings.back(2.2).easeOut;              // a stronger overshoot than easeOutBack
+const material = Easings.cubicBezier(0.4, 0, 0.2, 1); // the same four numbers as CSS cubic-bezier()
+const tick = Easings.steps(6);                      // six equal steps
+const wobble = Easings.elastic({ amplitude: 1.5, period: 0.4 }).easeOut;
+```
+
+`Easings.back(overshoot)` and `Easings.elastic({ amplitude, period })` return `{ easeIn, easeOut, easeInOut }`. `Easings.cubicBezier` needs `x1` and `x2` between 0 and 1; `y1` and `y2` may go outside, which makes the curve overshoot. Pass the result anywhere an easing goes: `interpolate`'s `easing`, `progress`, or a component's `easing` prop. Keyframes in a JSON project take the named curves only.
+
 ## Interpolate between colors
 
 Import `interpolateColor` from `@celesta.studio/react` too. It takes the same input range and `easing` as `interpolate`, but maps the frame onto `#RRGGBB` or `#RRGGBBAA` colors and returns `#RRGGBBAA`. Use it wherever a color goes: a `Rect` fill, a text style’s fill, a gradient stop, or a shadow.
