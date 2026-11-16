@@ -175,6 +175,12 @@ export interface TypewriterOptions {
    * Defaults to one second. The caret stays on while typing.
    */
   blinkFrames?: number;
+  /**
+   * Extra frames to wait after a character before typing the next one, by
+   * character: `{ '、': 4, '。': 10 }`. Each name is one character (one code
+   * point). The caret stays steady during a pause.
+   */
+  pauses?: Readonly<Record<string, number>>;
 }
 
 export interface Typewriter {
@@ -186,6 +192,91 @@ export interface Typewriter {
   done: boolean;
   /** Whether to draw a caret on this frame. */
   caretVisible: boolean;
+  /**
+   * The first whole frame each character of the whole text is shown on, one
+   * entry per code point, on the same clock as `useCurrentFrame()` (so
+   * `from` is included). Characters typed on the same frame share it.
+   */
+  frames: number[];
+}
+
+type TypingOptions = Pick<TypewriterOptions, 'from' | 'framesPerChar' | 'pauses'>;
+
+/**
+ * Checks the typing options and returns, for each character, the pause
+ * frames of the characters before it.
+ */
+function pausesBefore(characters: readonly string[], options: TypingOptions, caller: string): number[] {
+  const { from = 0, framesPerChar = 1, pauses = {} } = options;
+  if (!Number.isFinite(from)) {
+    throw new Error(`${caller} requires a finite from`);
+  }
+  if (!Number.isFinite(framesPerChar) || framesPerChar <= 0) {
+    throw new Error(`${caller} requires a positive framesPerChar`);
+  }
+  for (const [character, frames] of Object.entries(pauses)) {
+    if (Array.from(character).length !== 1) {
+      throw new Error(`${caller} requires each name in pauses to be one character, got "${character}"`);
+    }
+    if (!Number.isFinite(frames) || frames < 0) {
+      throw new Error(`${caller} requires pauses of at least 0 frames, got ${frames} for "${character}"`);
+    }
+  }
+  let total = 0;
+  return characters.map((character) => {
+    const before = total;
+    if (Object.prototype.hasOwnProperty.call(pauses, character)) total += pauses[character];
+    return before;
+  });
+}
+
+/**
+ * Whether character `index` is shown on `frame`. The one test everything
+ * about typing is derived from, so the typed count and the reported frames
+ * cannot disagree by a rounding error.
+ */
+function isTyped(index: number, frame: number, from: number, framesPerChar: number, paused: number): boolean {
+  return Math.floor((frame - from - paused) / framesPerChar) >= index;
+}
+
+/** How many of `characters` are typed on `frame` (which may be fractional). */
+export function typedCount(characters: readonly string[], frame: number, options: TypingOptions = {}): number {
+  const { from = 0, framesPerChar = 1 } = options;
+  const paused = pausesBefore(characters, options, 'useTypewriter()');
+  return countTyped(characters.length, frame, from, framesPerChar, paused);
+}
+
+function countTyped(length: number, frame: number, from: number, framesPerChar: number, paused: readonly number[]): number {
+  let typed = 0;
+  while (typed < length && isTyped(typed, frame, from, framesPerChar, paused[typed])) typed += 1;
+  return typed;
+}
+
+function typingFrames(length: number, from: number, framesPerChar: number, paused: readonly number[]): number[] {
+  return Array.from({ length }, (_, index) => {
+    let frame = Math.ceil(from + paused[index] + index * framesPerChar);
+    while (isTyped(index, frame - 1, from, framesPerChar, paused[index])) frame -= 1;
+    while (!isTyped(index, frame, from, framesPerChar, paused[index])) frame += 1;
+    return frame;
+  });
+}
+
+/**
+ * The first whole frame each character of `text` is typed on, as
+ * `useTypewriter(text, options).frames` reports it: one entry per code
+ * point. A plain function, for where hooks cannot run and for placing
+ * something on each character, such as a key click:
+ *
+ * ```tsx
+ * const clicks = typewriterFrames('npm run build', { from: 10, framesPerChar: 2 });
+ * clicks.map((at) => <Sequence key={at} from={at}><Audio src="./key.wav" /></Sequence>);
+ * ```
+ */
+export function typewriterFrames(text: string, options: TypingOptions = {}): number[] {
+  const { from = 0, framesPerChar = 1 } = options;
+  const characters = Array.from(text);
+  const paused = pausesBefore(characters, options, 'typewriterFrames()');
+  return typingFrames(characters.length, from, framesPerChar, paused);
 }
 
 /**
@@ -207,16 +298,14 @@ export function useTypewriter(content: ReactNode, options: TypewriterOptions = {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const { from = 0, framesPerChar = 1, blinkFrames = fps } = options;
-  if (!Number.isFinite(framesPerChar) || framesPerChar <= 0) {
-    throw new Error('useTypewriter() requires a positive framesPerChar');
-  }
   if (!Number.isFinite(blinkFrames) || blinkFrames <= 0) {
     throw new Error('useTypewriter() requires a positive blinkFrames');
   }
   // Span colors are checked as they flatten, so names must be looked up first.
   const theme = React.useContext(ThemeContext);
   const characters = Array.from(flattenTextContent(themeTextContent(content, theme), 'useTypewriter() text').text);
-  const typed = Math.min(characters.length, Math.max(0, Math.floor((frame - from) / framesPerChar) + 1));
+  const paused = pausesBefore(characters, options, 'useTypewriter()');
+  const typed = countTyped(characters.length, frame, from, framesPerChar, paused);
   const typing = frame >= from && typed < characters.length;
   const phase = (((frame - from) % blinkFrames) + blinkFrames) % blinkFrames;
   return {
@@ -224,6 +313,7 @@ export function useTypewriter(content: ReactNode, options: TypewriterOptions = {
     length: typed,
     done: typed === characters.length,
     caretVisible: typing || phase < blinkFrames / 2,
+    frames: typingFrames(characters.length, from, framesPerChar, paused),
   };
 }
 
