@@ -410,10 +410,14 @@ for `ffmpeg@8`, mise's node and pnpm on `PATH`).
 | `pnpm --dir packages/website run build` | Not as one command: the full script stops at `packages/react` (`src/theme.ts(216,25): TS7006`, a file this work does not touch). The site step alone, `pnpm exec makit build --clean`, passed: 56 pages in 2 locales, and the built `en` and `ja` plugins pages have the new heading. |
 | `git diff --check` | Passed. |
 | Final-review fix wave: `cargo test -p celesta-editor --locked`; `cargo test -p celesta-registry-client -p celesta-cli --locked`; `cargo clippy --workspace --all-targets --locked -- -D warnings`; `cargo fmt --all -- --check`; `git diff --check` | 967 passed; the client and the CLI passed unchanged (CLI project 19, registry 16, session 7); no warnings; clean; passed. |
-| Live check and screenshots | See the pull request. |
+| `cargo build -p celesta-codec-test --locked`, then `cargo test --workspace --locked --no-fail-fast`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo fmt --all -- --check`, `git diff --check main...HEAD` (at `624e7c74`, before the final-review fix wave) | 3349 passed, 0 failed, 1 ignored; no warnings; clean; passed. |
+| Live check, macOS, a dev build with the maintainer's own folders and `https://registry.celesta.studio` | `avfoundation` uninstalled with the Global row's ⋯ menu, then found with **Find plugins…** and installed with **Install** (`0.10.0-alpha.3`; Include pre-releases on by default, since this Celesta is `0.10.0-alpha.3`). The button became **Installed** and the Global row came back. `celesta plugin list` then listed `avfoundation 0.10.0-alpha.3 installed` under Global. |
+| Against a signed `file://` test registry (`TestRegistry::file()` leaked to a folder, `CELESTA_REGISTRY`/`CELESTA_REGISTRY_ROOT_KEY` set, a temporary `HOME`) | A project whose lock names `acme.charts 1.0.0` (written with `celesta plugin add 'acme.charts@=1.0.0'`) asked "Download 1 plugin for “demo”?" with the version and size after the trust question; Download installed it and the This project section listed it. With an advisory on `acme.charts <1.1.0` (fixed in `1.1.0`), opening it again showed "acme.charts 1.0.0 was stopped" with **Update to 1.1.0**. |
+| Screenshots | Before (main) and after for the Plugins tab, and the new plugin page, download question, and Blocked notification, are attached to the pull request. |
 
-Not run by the builder: the full workspace test run after the last task, and
-the packaged apps. CI's `Crate names` job stays red until the maintainer
+Not run by the builder: the full workspace test run after the final-review fix
+wave (the editor, client, and CLI suites and workspace clippy were), and the
+packaged apps. CI's `Crate names` job stays red until the maintainer
 publishes the `celesta-registry-client` placeholder (see "Constraints").
 
 ## Known gaps
@@ -468,3 +472,13 @@ publishes the `celesta-registry-client` placeholder (see "Constraints").
   (about 950 lines) are large; splitting them was left alone.
 - The CLI keeps `*` as its default requirement and does not offer the
   requirement rewrite; both can adopt the library code later.
+- An update that turns out to need a rewrite (`RequirementsUnmet`) is dropped
+  without a Problems entry when, after planning, the project changed or another
+  job holds it; the requirements question it opens does not check for a dialog
+  already up.
+- For a locked plugin with no newer version that loads here, the page's button
+  reads **Installed** without a reason.
+- An id declared in `celesta.config.json` but missing from the lock shows
+  **Add to this project** (or **Pin to this project**), which replaces its
+  written requirement with `^<offered>` without the requirements question; the
+  click is the user's, but the label does not say it replaces a requirement.
