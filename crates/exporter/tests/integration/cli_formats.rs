@@ -3,18 +3,7 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-use celesta_codec_test::{PLUGIN_PATH_ENV, TestCodecPlugin};
-
-/// The variables the user's settings and plugin folders are found from,
-/// all at `home`.
-fn home_env(home: &std::path::Path) -> [(&'static str, &std::path::Path); 4] {
-    [
-        ("HOME", home),
-        ("XDG_CONFIG_HOME", home),
-        ("XDG_DATA_HOME", home),
-        ("APPDATA", home),
-    ]
-}
+use celesta_codec_test::{PLUGIN_PATH_ENV, TestCodecPlugin, isolated_home_env};
 
 /// Runs the exporter with `--json` on the minimal example and returns its one
 /// stdout line. The test codec is its only media plugin, whatever the
@@ -30,7 +19,7 @@ fn failure(source: &std::path::Path, args: &[&str]) -> serde_json::Value {
     let home = tempfile::tempdir().unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_celesta-exporter"))
         .env_remove(PLUGIN_PATH_ENV)
-        .envs(home_env(home.path()))
+        .envs(isolated_home_env(home.path()))
         .arg("--plugin-dir")
         .arg(plugin.folder())
         .arg("--json")
@@ -69,7 +58,7 @@ fn run(args: &[&str]) -> (bool, String) {
     let home = tempfile::tempdir().unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_celesta-exporter"))
         .env_remove(PLUGIN_PATH_ENV)
-        .envs(home_env(home.path()))
+        .envs(isolated_home_env(home.path()))
         .arg("--plugin-dir")
         .arg(plugin.folder())
         .args(args)
@@ -191,7 +180,7 @@ fn plain_failure(plugin_dir: &std::path::Path, args: &[&str]) -> String {
     let home = tempfile::tempdir().unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_celesta-exporter"))
         .env_remove(PLUGIN_PATH_ENV)
-        .envs(home_env(home.path()))
+        .envs(isolated_home_env(home.path()))
         .arg("--plugin-dir")
         .arg(plugin_dir)
         .arg("--no-ui")
@@ -331,7 +320,7 @@ fn export_json(
     let plugin = TestCodecPlugin::new();
     let output = Command::new(env!("CARGO_BIN_EXE_celesta-exporter"))
         .env_remove(PLUGIN_PATH_ENV)
-        .envs(home_env(home))
+        .envs(isolated_home_env(home))
         .arg("--plugin-dir")
         .arg(plugin.folder())
         .arg("--json")
@@ -440,8 +429,10 @@ fn a_broken_preset_file_is_a_usage_error() {
     let output = dir.path().join("out.mp4");
     let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let plugin = TestCodecPlugin::new();
+    let home = tempfile::tempdir().unwrap();
     let result = Command::new(env!("CARGO_BIN_EXE_celesta-exporter"))
         .env_remove(PLUGIN_PATH_ENV)
+        .envs(isolated_home_env(home.path()))
         .arg("--plugin-dir")
         .arg(plugin.folder())
         .arg("--json")
@@ -486,7 +477,7 @@ fn stills_need_no_media_plugin() {
     let run = |args: &[&std::ffi::OsStr]| {
         Command::new(&exe)
             .env(PLUGIN_PATH_ENV, empty.path())
-            .envs(home_env(home.path()))
+            .envs(isolated_home_env(home.path()))
             .args(args)
             .output()
             .unwrap()

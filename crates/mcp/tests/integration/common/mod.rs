@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use celesta_codec_test::{PLUGIN_PATH_ENV, TestCodecPlugin};
+use celesta_codec_test::{PLUGIN_PATH_ENV, TestCodecPlugin, isolated_home_env};
 use rmcp::model::{CallToolRequestParams, CallToolResult, ProgressNotificationParam};
 use rmcp::service::{NotificationContext, RunningService};
 use rmcp::transport::TokioChildProcess;
@@ -66,30 +66,20 @@ pub async fn client() -> (Client, mpsc::UnboundedReceiver<ProgressNotificationPa
 }
 
 /// A client whose server reads and writes media with the test codec
-/// `plugin`, whatever codec the developer's `CELESTA_PLUGIN_PATH` names.
-/// Bind `plugin` before the client, so that the plugin drops after the
-/// client on every path, a panic included.
+/// `plugin`, whatever codec the developer's `CELESTA_PLUGIN_PATH` names, and
+/// with the user's folders at `home` ([`isolated_home_env`]), so the server
+/// reads no settings, presets file, or plugin of the developer's: a global
+/// registry codec would otherwise be the default muxer and encoder. Bind `plugin` and `home` before the
+/// client, so that they drop after the client on every path, a panic
+/// included.
 pub async fn client_with_test_codec(
-    plugin: &TestCodecPlugin,
-) -> (Client, mpsc::UnboundedReceiver<ProgressNotificationParam>) {
-    let mut command = server();
-    // Replaces the developer's value rather than adding to it.
-    command.env(PLUGIN_PATH_ENV, plugin.folder());
-    serve(command).await
-}
-
-/// [`client_with_test_codec`] with the user's folders (`HOME`,
-/// `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `APPDATA`) all at `home`, so the
-/// server reads no presets file or plugin of the developer's.
-pub async fn client_with_test_codec_in(
     plugin: &TestCodecPlugin,
     home: &Path,
 ) -> (Client, mpsc::UnboundedReceiver<ProgressNotificationParam>) {
     let mut command = server();
+    // Replaces the developer's value rather than adding to it.
     command.env(PLUGIN_PATH_ENV, plugin.folder());
-    for variable in ["HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "APPDATA"] {
-        command.env(variable, home);
-    }
+    command.envs(isolated_home_env(home));
     serve(command).await
 }
 

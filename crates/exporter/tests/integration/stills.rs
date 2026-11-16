@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use celesta_codec_test::{PLUGIN_PATH_ENV, TestCodecPlugin};
+use celesta_codec_test::{PLUGIN_PATH_ENV, TestCodecPlugin, isolated_home_env};
 use celesta_composition::{Rational, Time, TimeRange};
 use celesta_exporter::{
     ContactSheet, ExportCancellation, ExportError, ExportOptions, ExportProgress, FrameSelection,
@@ -921,11 +921,15 @@ export default function Root() {
 }
 
 /// Runs the exporter CLI on a React entry, ignoring the codec the developer's
-/// `CELESTA_PLUGIN_PATH` names. A video `output` gets the test codec; stills
-/// need no codec, so they run without the `celesta-codec-test` program.
+/// `CELESTA_PLUGIN_PATH` names and the plugins in their user folders. A video
+/// `output` gets the test codec; stills need no codec, so they run without
+/// the `celesta-codec-test` program.
 fn react_export(entry: &Path, args: &[&str], output: &Path) -> std::process::Output {
+    let home = tempfile::tempdir().unwrap();
     let mut command = Command::new(env!("CARGO_BIN_EXE_celesta-exporter"));
-    command.env_remove(PLUGIN_PATH_ENV);
+    command
+        .env_remove(PLUGIN_PATH_ENV)
+        .envs(isolated_home_env(home.path()));
     // Kept until the child exits: `output` waits for it.
     let video = output
         .extension()
@@ -1041,7 +1045,7 @@ fn separate_stills_and_videos_name_the_frame_that_failed() {
         ["react", "render"].contains(&report["error"]["code"].as_str().unwrap()),
         "{report}"
     );
-    assert_eq!(report["error"]["frame"], 6);
+    assert_eq!(report["error"]["frame"], 6, "{report}");
     let message = report["error"]["message"].as_str().unwrap();
     assert!(message.starts_with("frame 6: "), "{message}");
     // Separate files stop at the failed frame, keeping those before it.
