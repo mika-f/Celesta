@@ -8,9 +8,11 @@ the client core is [`2026-11-14-registry-client.md`](2026-11-14-registry-client.
 (plan 3) and the command line is
 [`2026-11-14-celesta-command.md`](2026-11-14-celesta-command.md) (plan 4).
 
-Status: design, agreed with the maintainer on 2026-11-16 (screens settled
-with mockups). Items marked **(designer's call)** were not discussed and may
-be corrected.
+Status: built (2026-11-16). The design was agreed with the maintainer on
+2026-11-16 (screens settled with mockups); the sections below keep it, updated
+where the build differs, and "Implementation", "Checks", and "Known gaps" at
+the end say what was built. Items marked **(designer's call)** were not
+discussed and may be corrected.
 
 ## Intent
 
@@ -64,8 +66,9 @@ command line, so a project made in one works in the other.
 
 ## Constraints
 
-- `celesta-editor` is published to crates.io; `celesta-registry-client` has
-  `publish = false`. The editor depending on it means removing that line, and
+- `celesta-editor` is published to crates.io; `celesta-registry-client` had
+  `publish = false`. The editor depending on it meant removing that line (done),
+  and
   **before the next release the maintainer publishes a `0.0.0` placeholder of
   `celesta-registry-client` and runs `scripts/crates-trusted-publishing.sh`**
   (plan 3, decision 1; `2026-11-14-crates-io-trusted-publishing.md`). Its own
@@ -237,9 +240,15 @@ area widens while it is open.
   - Media plugin: **Install** (primary), **Pin to this project** (in a
     project).
   - Other plugins: **Add to this project** (primary; disabled outside a
-    project with the reason "Open a project to add plugins to it").
+    project with the reason "Add plugins to a project with
+    celesta.config.json").
   - When already installed at the offered version: **Installed** (disabled);
-    when an older one is: **Update to X**.
+    when an older one is: **Update to X**. For a media plugin these concern the
+    global store only; **Pin to this project** is the project-scoped button
+    (**Pinned** when the lock holds the offered version), and it carries its own
+    reason when disabled.
+  - While a change to the project is running, the project-scoped buttons are
+    disabled and say so.
   - No offered version: disabled, with the reason under it (no build for this
     computer; needs Celesta X; only pre-releases, turn on Include
     pre-releases).
@@ -264,8 +273,12 @@ After the trust question (a trusted project only):
    "“<project>” was locked with Celesta 0.X", lists the plugins that cannot
    load, with **Not Now** and **Update Plugins** (re-resolves only those ids
    and rewrites the lock with the running Celesta's version). `NoLock` and
-   `OutOfDate` go to Problems with an **Update Plugins** row action in the
-   This project heading.
+   `OutOfDate` go to Problems with an **Update Plugins** action in the This
+   project heading; the heading offers it for `OtherCelesta` too, so there is
+   a way back after Not Now. The heading's Update Plugins runs without a
+   question when nothing needs a rewrite; otherwise it asks a third question,
+   "Update this project’s plugins?", which lists each requirement it would
+   change (the "Requirements that can no longer be met" text above).
 2. Otherwise, locked versions with a build for the host that neither the store
    nor a bundled copy holds: a dialog "Download N plugins for “<project>”?"
    with a table (id, version, size, total) and **Not Now** / **Download**.
@@ -283,9 +296,11 @@ After the trust question (a trusted project only):
   rediscovers when the verified list changed.
 - A plugin that is newly stopped by an advisory raises one notification per
   id, version, and advisory per app run: "<id> <version> was stopped", the
-  advisory's id and description, and **Update to X** when the advisory names a
-  fixed version, or "Update Celesta to get a fixed version." for a bundled
-  one. While stopped, its row says Blocked and Problems has an error entry.
+  advisory's id and description, and its one action: **Update to X** when the
+  advisory names a fixed version and the copy came from the store (the app
+  updates it where it was installed), else **Show in Problems**; a bundled copy
+  says "Update Celesta to get a fixed version." (the notification API carries
+  one action). While stopped, its row says Blocked and Problems has an error entry.
 - With a `CELESTA_REGISTRY` override, discovery reads the official cached list
   and the override's list together, so a test registry's advisory stops a
   plugin and the official list keeps protecting (a `RegistryContext` change
@@ -333,25 +348,89 @@ The CLI keeps its behaviour and output; its tests are the check.
 - Exact wording of row states and errors, within the Design Guides'
   interface-language rules.
 
-## Checks this work needs
+## Implementation
 
-- Unit tests (`cargo test`): the offered-version rule (pre-release on and off,
-  `celesta` range, host and project targets, yanked and blocked skipped); the
-  Plugins tab's rows and actions per state; the page model's button and
-  reason per state; the once-per-run questions; the moved CLI code's existing
-  tests, unchanged.
-- Headless GPUI tests (as the export page's) for the page: search filtering,
-  selection, the footer per state, an install against the `file://` test
-  registry updating the list.
-- The CLI's tests pass unchanged (`crates/cli/tests`).
-- Live: install `avfoundation` `0.10.0-alpha.3` globally on macOS from the
-  page; then `celesta plugin list` shows it.
-- Against a `file://` test registry: Add to this project writes
-  `celesta.config.json` and `celesta.lock` that `celesta plugin install
-  --locked` accepts; opening that project on a clean store asks to download;
-  a blocked advisory raises the notification.
-- Screenshots of the same project before and after: the Plugins tab, the
-  plugin page, the download question, the Blocked notification.
-- User guide (`packages/website/content/{en,ja}/docs/05-(more)/05-plugins.md`)
-  and the skill (`skills/celesta/references/plugins.md`) describe the app's
-  flow.
+| Path | Responsibility |
+| --- | --- |
+| `crates/registry-client/src/config.rs` | `ProjectConfig` (editing `plugins.dependencies` without touching other keys, `dependency(id)` for the text as written), `restore_config`, `restore_file`; moved from `crates/cli/src/config.rs`. |
+| `crates/registry-client/src/selection.rs` | `RegistryAccess`: the official registry or the `CELESTA_REGISTRY` / `CELESTA_REGISTRY_ROOT_KEY` override (`from_env`, `transport`, `cache_dir`, `client`), `SelectionError`; moved from the CLI's `session.rs`. |
+| `crates/registry-client/src/offer.rs` | `offered_version` (the rule, per `OfferScope`), `NoOffer` (why nothing is offered), `offered_requirement` (`^<version>`), `prereleases_by_default`. |
+| `crates/registry-client/src/edit.rs` | `add_dependency`, `remove_dependency`, `plan_update`, `update_dependencies`, `check_pin`, `Rewrite`, `EditError`; the CLI's `add` and `remove` call them, with the same byte-for-byte restore on failure. |
+| `crates/registry-client/src/store.rs`, `project.rs`, `registry.rs` | `Progress` and the progress callback on `Store::install` (every 64 KiB and once at the end); `Registry::cached_search`. |
+| `crates/plugin-host/src/registry.rs` | `RegistryContext::merge_advisories`: an overriding registry's advisories are read together with the official list. |
+| `crates/editor/src/plugins.rs` | `FoundPlugins::find(project, extra_advisories)`: the trusted project's lock (read only for a saved trusted project with `celesta.config.json`), lock problems, blocked plugins, registry plugins, bundled copies, declared requirements, and whether the advisory list is stale. |
+| `crates/editor/src/registry/client.rs` | `EditorRegistry`: registry selection, store, cache, and settings paths, host, bundled folder; shared across background jobs. |
+| `crates/editor/src/registry/state.rs` | `RegistryState`, one entity per window: the `search.json` list, indexes, work in flight per plugin id (install, add, pin, update, remove, uninstall, download), failures, download progress sampled every 100 ms, the Include pre-releases flag, the 24-hour refresh. Everything blocking runs on the background executor. |
+| `crates/editor/src/registry/questions.rs` | The download question, the other-Celesta question, and the requirements question: `lock_question`, `prepare` (sizes or rewrites within a 3-second budget), the dialogs, asked once per project per run. |
+| `crates/editor/src/registry/notices.rs` | Problems entries (deprecated, yanked, shadowed registry copy, stale advisory list, stopped plugins) and the Blocked notification with its one action. |
+| `crates/editor/src/plugins_tab_model.rs` | The Plugins tab as data: sections, rows, states, the one action per row, menus, the heading; pure, so it is unit tested. |
+| `crates/editor/src/plugins_panel.rs` | Renders that model: toolbar, sections, rows, the ⋯ menus. |
+| `crates/editor/src/plugin_page/model.rs` | The page's rows, details, footer (button, reason, progress), and the list's footer line; pure. |
+| `crates/editor/src/plugin_page/view.rs`, `mod.rs` | `PluginPage` (search field, Include pre-releases, list and detail columns, keyboard), `PluginPageSlot`, and the `EditorView` methods that open, close, and sync it. |
+| `crates/editor/src/export_control.rs`, `render.rs`, `view.rs`, `lifecycle.rs`, `main.rs`, `problems.rs` | The widened Assets area and `LeftPanel::Plugins` (exclusive with the export page), the registry entity's wiring, the questions after the trust question, and the `Registry`, `RegistryNotices`, and `Advisories` Problems sources. |
+| `crates/cli/src/session.rs`, `commands/project.rs` | The CLI now uses the shared selection and edit code; its output and tests are unchanged. |
+| `packages/website/content/{en,ja}/docs/05-(more)/05-plugins.md`, `skills/celesta/references/plugins.md`, `HANDOFF.md` | The user guide's "The Plugins tab" and "In the app", the skill's paragraph, and the workspace map. |
+
+## Checks
+
+Commands run with the global constraints' build environment (`PKG_CONFIG_PATH`
+for `ffmpeg@8`, mise's node and pnpm on `PATH`).
+
+| Command | Result |
+| --- | --- |
+| `cargo test -p celesta-registry-client -p celesta-cli --locked` (task 1, after the move) | Passed; the CLI's tests ran unchanged (project 19, registry 16, session 7). |
+| `cargo test -p celesta-registry-client --locked` (task 3, after `edit.rs`) | Passed, with 14 edit tests. |
+| `cargo test -p celesta-plugin-host registry::` (task 5) | 20 passed, including `merged_advisories_stop_plugins_from_both_lists`. |
+| `cargo test -p celesta-editor --locked` | 955 passed, 0 failed (final run, task 10). |
+| `cargo test -p celesta-editor --locked plugin_page::` (task 9) | 34 passed: 26 model tests and 8 view tests against the `file://` test registry. |
+| `cargo clippy -p celesta-editor -p celesta-registry-client --all-targets --locked -- -D warnings`; `cargo clippy --workspace --locked --all-targets -- -D warnings` (task 9) | No warnings. |
+| `cargo fmt --all -- --check` | Clean. |
+| `pnpm --dir packages/website run build` | Not as one command: the full script stops at `packages/react` (`src/theme.ts(216,25): TS7006`, a file this work does not touch). The site step alone, `pnpm exec makit build --clean`, passed: 56 pages in 2 locales, and the built `en` and `ja` plugins pages have the new heading. |
+| `git diff --check` | Passed. |
+| Live check and screenshots | See the pull request. |
+
+Not run by the builder: the full workspace test run after the last task, and
+the packaged apps. CI's `Crate names` job stays red until the maintainer
+publishes the `celesta-registry-client` placeholder (see "Constraints").
+
+## Known gaps
+
+- The Blocked notification has one action. The mockup's second, a ghost
+  "Details" button, is not there because the notification API carries one
+  action; a notification without a fix says "Show in Problems".
+- `plan_update` fails the whole run when one id has no offer, and the question
+  then shows the reason as blocking. `resolve` skips blocked versions, so a pin
+  such as `=0.2.1` that an advisory blocks is rewritten to the offered version;
+  a global Update to a pre-release fix with Include pre-releases off may not
+  reach that fix.
+- `add` fetches the plugin's index twice when no requirement is written (the CLI
+  path, as before).
+- A page's **Install** can stay enabled until rediscovery finishes after an
+  install, so a second click installs the same version again (idempotent). The
+  list's "No build for this computer" shows only for locked plugins, because
+  `search.json` has no targets.
+- Failures of a previous project's job leave no trace once another project is
+  open, and problems reported while the window is created (a bad registry
+  override, no user folder) are lost when the first project opens, as with
+  every Problems source today.
+- Opening a project while the approval dialog is up skips the lock question
+  without marking it asked; it is asked after Allow and Reload reopens the
+  project. A search list is not refetched when one project without a root
+  replaces another.
+- A blocked bundled copy can be claimed twice (This project and Global). The
+  Problems sync clones the loaded indexes on every notify, and the indexes
+  `prepare` fetches for the questions are not kept in `RegistryState`.
+- Yank state comes only from indexes the user's actions have fetched, so a
+  yank may show late (see "Update checks and privacy").
+- Tests: no test builds a full `EditorView` in a window (`EditorView::open`
+  reads the real user settings), so the registry subscription, the progress
+  sampler, the offline branch of the page, focus after closing it, and the
+  once-per-project question at view level are not covered; the question's
+  once-only rule is tested on `ask_once`. The action lane's width (8 rem) is
+  checked only by the screenshots.
+- The window re-renders at about 10 Hz while a download runs (`cx.observe` on
+  the registry entity).
+- `plugins_tab_model.rs` (about 1,300 lines) and `registry/questions.rs`
+  (about 950 lines) are large; splitting them was left alone.
+- The CLI keeps `*` as its default requirement and does not offer the
+  requirement rewrite; both can adopt the library code later.

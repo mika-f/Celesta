@@ -24,8 +24,12 @@ Decisions this plan made (the maintainer confirms them):
    `celesta-registry-format` and run `scripts/crates-trusted-publishing.sh`, since
    the release workflow publishes every crate without `publish = false` (see
    `docs/handoff/2026-11-14-crates-io-trusted-publishing.md`).
-   `celesta-registry-client` keeps `publish = false`; it needs the same setup once
-   the editor depends on it (plan 5).
+   ~~`celesta-registry-client` keeps `publish = false`; it needs the same setup once
+   the editor depends on it (plan 5).~~ Plan 5 made the editor depend on it, so it is
+   publishable now (`publish = false` is gone) and, before the next release, the
+   maintainer must publish a `0.0.0` placeholder of `celesta-registry-client` and
+   run `scripts/crates-trusted-publishing.sh` (see
+   [`2026-11-16-plugin-registry-app.md`](2026-11-16-plugin-registry-app.md)).
 2. Rollback stamps are a format change: `config.json` and `index/<id>.json` gain a
    required `generated` timestamp (`search.json` and `advisories.json` already had
    one). `check_fresh` applies the rule. The registry service syncs fixtures from a
