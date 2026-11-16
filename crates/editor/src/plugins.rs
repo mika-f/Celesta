@@ -22,7 +22,7 @@ use celesta_plugin_host::{
     check_lock, discover_in, from_the_internet, has_project_config, project_dependencies,
     project_plugin_paths, project_root,
 };
-use celesta_registry_format::AdvisoryList;
+use celesta_registry_format::{AdvisoryList, Target};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dialog::{DialogAction, DialogClose, DialogDescription, DialogFooter};
 use gpui_kit::component::{ActiveTheme as _, WindowExt as _, v_flex};
@@ -115,6 +115,9 @@ pub(crate) struct FoundPlugins {
     /// The registry plugins that project declares, with the versions it
     /// accepts.
     pub(crate) dependencies: BTreeMap<String, VersionReq>,
+    /// The targets that project builds for, as its `celesta.config.json`
+    /// says (every release target by default); empty without a project.
+    pub(crate) targets: Vec<Target>,
     /// Why that lock does not pin what the project declares, if it does not.
     pub(crate) lock_problem: Option<LockProblem>,
     /// No media decoder can run, so video and audio files cannot be read.
@@ -198,9 +201,12 @@ impl FoundPlugins {
         let lock_problem = declared
             .as_ref()
             .and_then(|declared| Self::lock_problem_of(declared, lock.as_ref(), &errors));
-        let dependencies = match declared {
-            Some(Ok(declared)) => declared.dependencies,
-            _ => BTreeMap::new(),
+        let (dependencies, targets) = match declared {
+            Some(Ok(declared)) => {
+                let targets = declared.project_targets();
+                (declared.dependencies, targets)
+            }
+            _ => (BTreeMap::new(), Vec::new()),
         };
         let bundled = bundled_plugin_dir();
         let blocked = errors
@@ -245,6 +251,7 @@ impl FoundPlugins {
             project: lock_root,
             lock,
             dependencies,
+            targets,
             lock_problem,
             missing_decoder: false,
             registry: None,

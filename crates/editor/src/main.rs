@@ -45,6 +45,7 @@ mod occurrences;
 mod panel_header;
 mod panels;
 mod playback;
+mod plugin_page;
 mod plugins;
 mod plugins_panel;
 mod plugins_tab_model;

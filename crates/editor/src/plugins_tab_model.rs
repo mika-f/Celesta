@@ -837,7 +837,7 @@ fn entry_kind(entry: &PluginEntry) -> &'static str {
 }
 
 /// What the registry says a plugin brings.
-fn registry_kind_name(kind: &Kind) -> &'static str {
+pub(crate) fn registry_kind_name(kind: &Kind) -> &'static str {
     if kind.is_media() {
         "Media"
     } else if kind.program {
