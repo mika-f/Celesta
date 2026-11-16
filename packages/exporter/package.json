@@ -1,6 +1,6 @@
 {
   "name": "@celesta.studio/exporter",
-  "version": "0.10.0-alpha.3",
+  "version": "0.10.0-alpha.4",
   "private": true,
   "description": "Typed Node.js API for exporting Celesta compositions to video and stills through celesta-exporter.",
   "license": "MIT OR Apache-2.0",

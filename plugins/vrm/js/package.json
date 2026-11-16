@@ -1,6 +1,6 @@
 {
   "name": "celesta-plugin-vrm-js",
-  "version": "0.10.0-alpha.3",
+  "version": "0.10.0-alpha.4",
   "private": true,
   "description": "The VRM plugin's components: <Vrm> for Celesta compositions, drawn by the plugin's own process (plugins/vrm). scripts/plugins/build.mts bundles the module into the plugin directory.",
   "license": "MIT OR Apache-2.0",
