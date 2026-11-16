@@ -184,8 +184,9 @@ interface RevealUnitsProps {
 }
 
 /**
- * `<TextReveal>` for a unit finer than a line: every unit is a clipped,
- * sliding `Text` of its own, placed where the measured line puts it.
+ * `<TextReveal>` for a unit finer than a line: every unit is a sliding
+ * `Text` of its own behind its line's mask, placed where the measured line
+ * puts it.
  */
 function RevealUnits({
   groupProps, flat, ranges, style, lineStyle, unit, height, baseline, align, maskWidth,
@@ -235,27 +236,25 @@ function RevealUnits({
   }, [key]);
 
   let index = 0;
-  const layers = lines.flatMap((line, lineIndex) => line.units.map(([unitStart, unitEnd], unitIndex) => {
-    const p = progress(frame, from + index * stagger, durationInFrames, easing);
-    const shown = direction === 'in' ? p : 1 - p;
-    const piece = sliceTextRuns(flat, line.start + unitStart, line.start + unitEnd);
-    index += 1;
-    return React.createElement(
-      Group,
-      {
-        key: `${lineIndex}-${unitIndex}`,
+  // The units of a line share its mask: one clip a line, however many units.
+  const layers = lines.map((line, lineIndex) => line.units.length === 0 ? null : React.createElement(
+    Group,
+    { key: lineIndex, y: lineIndex * height, clip: { x: -maskWidth / 2, width: maskWidth, height } },
+    line.units.map(([unitStart, unitEnd], unitIndex) => {
+      const p = progress(frame, from + index * stagger, durationInFrames, easing);
+      const shown = direction === 'in' ? p : 1 - p;
+      const piece = sliceTextRuns(flat, line.start + unitStart, line.start + unitEnd);
+      index += 1;
+      return React.createElement(Text, {
+        key: unitIndex,
         x: placed[lineIndex].xs[unitIndex] - align * placed[lineIndex].width,
-        y: lineIndex * height,
-        clip: { x: -maskWidth / 2, width: maskWidth, height },
-      },
-      React.createElement(Text, {
         y: height * baseline + height * (1 - shown),
         anchorY: 'baseline',
         style: withTextRuns(lineStyle, piece, '<TextReveal>'),
         children: piece.text,
-      }),
-    );
-  }));
+      });
+    }),
+  ));
   return React.createElement(Group, groupProps, layers);
 }
 

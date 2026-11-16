@@ -12,9 +12,9 @@ unchanged), `'word'`, `'phrase'`, or `'grapheme'`.
   `'grapheme'` with `graphemes()`. Whitespace is trimmed from a piece and a
   piece of only whitespace is dropped, so spaces and empty lines make no
   unit and use no stagger step.
-- Each unit is a `Group clip` holding a `Text`, as each line is, placed at
-  its measured x in the line minus `align` times the line's width, on its
-  line's row.
+- Each line with units is one `Group clip` (the line's mask, as before)
+  holding one `Text` per unit, placed at its measured x in the line minus
+  `align` times the line's width.
 - `stagger` counts units in reading order across lines.
 - Spans are sliced per unit as they are per line.
 - An unknown `unit` throws.
@@ -34,11 +34,12 @@ frame that changes only colors or progress measures nothing. A unit's x is
 does not (the browser), it is the measured width of the line's text before
 the unit, with the font runs that fall in that prefix.
 
-The mask of a unit is as wide as a line's (four canvas widths, centred on
-the unit) rather than the unit's own box: only the vertical edges of the
-mask matter, and masks of neighbouring units do not clip each other. The
-design note suggested a box one font size wider than the unit; the wide
-mask needs no unit width and cannot cut an italic or an overshoot.
+The units of a line share the line's mask (one clip a line, four canvas
+widths wide, as for `'line'`) rather than each having a box of its own:
+only the top and bottom edges of the mask matter, so the picture is the
+same with far fewer clipped groups for `'grapheme'`. The design note
+suggested a box one font size wider than each unit; the shared mask needs
+no unit width and cannot cut an italic or an overshoot.
 
 Units are shaped separately when drawn, so kerning, ligatures, and joining
 forms across a unit boundary are lost. Right-to-left lines are not handled

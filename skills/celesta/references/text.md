@@ -529,7 +529,8 @@ arrives on its own, `'line'` by default; see below), `from`,
 `direction` (`'in'` or `'out'`), plus common props. `x`/`y` are the
 top-left of the first line box.
 
-`unit` reveals pieces finer than a line, each from behind its own mask:
+`unit` reveals pieces finer than a line, each rising on its own from behind
+its line's mask:
 
 | `unit` | One piece is… |
 | --- | --- |
@@ -558,7 +559,7 @@ top-left of the first line box.
   `unit` needs the editor, exporter, or browser preview runtime, like
   [`useTextMetrics`](#measure-text) (`inspect.mjs` needs `--native`). The
   browser preview has no glyph positions and places a piece after the
-  measured width of the text before it, without `<Span>` fonts.
+  measured width of the text before it, so positions there are approximate.
 - Each piece is shaped as text of its own: kerning and ligatures across
   pieces are lost (at rest, `'grapheme'` text can sit a fraction of a pixel
   off the same `<Text>`), and scripts whose letters join, such as Arabic,

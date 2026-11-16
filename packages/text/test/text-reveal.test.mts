@@ -155,15 +155,15 @@ function measureWidths(request: MeasureTextRequest): TextMetrics {
 
 interface Unit { text: string; x: number; y: number; textY: number; style: TextContent['style'] }
 
-/** Every revealed unit: where its mask sits and how far its text has risen. */
-const unitsOf = (scene: Scene): Unit[] => groupOf(scene.layers[0]).layers.map((mask) => {
-  const [inner] = groupOf(mask).layers;
-  const text = textOf(inner);
-  return {
-    text: text.text, x: mask.transform.position.x, y: mask.transform.position.y,
-    textY: inner.transform.position.y, style: text.style,
-  };
-});
+/** Every revealed unit: its x in its line's mask, the mask's row, and how far its text has risen. */
+const unitsOf = (scene: Scene): Unit[] => groupOf(scene.layers[0]).layers.flatMap((mask) =>
+  groupOf(mask).layers.map((inner) => {
+    const text = textOf(inner);
+    return {
+      text: text.text, x: inner.transform.position.x, y: mask.transform.position.y,
+      textY: inner.transform.position.y, style: text.style,
+    };
+  }));
 
 const linear = (t: number) => t;
 // 10 px glyphs in 30 px lines: at rest a text's baseline is at 24, and hidden one line lower, at 54.
@@ -196,6 +196,8 @@ test("unit='word' makes one masked text per word at its measured x", () => {
     { text: 'cd', x: 30, y: 0 },
     { text: 'ef', x: 0, y: 30 },
   ]);
+  // One mask a line, whatever the number of units.
+  assert.equal(groupOf(at(100).layers[0]).layers.length, 2);
   // One measurement a line, none again on another frame.
   assert.deepEqual(requests.map((request) => request.text), ['ab cd', 'ef']);
   at(101);
