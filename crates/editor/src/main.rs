@@ -55,6 +55,7 @@ mod property_panel;
 mod property_panel_view;
 mod react_audio;
 mod refresh;
+mod registry;
 mod render;
 mod scene_entries;
 mod scope;
@@ -224,18 +225,44 @@ fn run() -> anyhow::Result<()> {
         Some(request) => StartUp::AskToTrust(Box::new(request)),
         None => StartUp::Opened,
     };
+    // Read once: an overriding registry's advisories stop plugins from
+    // the first discovery on.
+    let registry_client = registry::EditorRegistry::from_env();
+    let extra_advisories = || {
+        registry_client
+            .as_ref()
+            .ok()
+            .and_then(registry::EditorRegistry::override_advisories)
+    };
     let mut editor = match (&start, &path) {
         (StartUp::Opened, Some(path)) => {
-            match EditorView::open(Some(path), property_args.clone(), args.driver) {
+            match EditorView::open(
+                Some(path),
+                property_args.clone(),
+                args.driver,
+                extra_advisories(),
+            ) {
                 Ok(editor) => editor,
                 Err(_) => {
                     start = StartUp::OpenAgain(path.clone(), property_args);
-                    EditorView::open(None, PropertyArgs::default(), args.driver)?
+                    EditorView::open(
+                        None,
+                        PropertyArgs::default(),
+                        args.driver,
+                        extra_advisories(),
+                    )?
                 }
             }
         }
-        (StartUp::Opened, None) => EditorView::open(None, property_args, args.driver)?,
-        _ => EditorView::open(None, PropertyArgs::default(), args.driver)?,
+        (StartUp::Opened, None) => {
+            EditorView::open(None, property_args, args.driver, extra_advisories())?
+        }
+        _ => EditorView::open(
+            None,
+            PropertyArgs::default(),
+            args.driver,
+            extra_advisories(),
+        )?,
     };
 
     let app = gpui_kit::application().with_assets(CelestaAssets);
@@ -305,6 +332,7 @@ fn run() -> anyhow::Result<()> {
                         editor.watch_react_entry(cx);
                         editor.refresh_scene_sources(cx);
                     }
+                    editor.attach_registry(registry_client, window, cx);
                     editor
                 });
                 // Once the root that shows dialogs is in place.

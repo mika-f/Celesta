@@ -82,7 +82,6 @@ pub(crate) struct FoundPlugins {
     pub(crate) blocked: Vec<BlockedPlugin>,
     /// The project whose lock was read: the folder the user trusts
     /// (saved, not only for now) that holds `celesta.config.json`.
-    #[allow(dead_code)] // The plugins page of a later change reads it.
     pub(crate) project: Option<PathBuf>,
     /// That project's `celesta.lock`; `None` without a project or a lock.
     #[allow(dead_code)] // The plugins page of a later change reads it.

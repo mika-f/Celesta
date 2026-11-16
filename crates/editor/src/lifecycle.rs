@@ -656,6 +656,10 @@ impl EditorView {
         self.problems.clear(Source::Project);
         self.pause();
         cx.notify();
+        let registry = self
+            .registry
+            .as_ref()
+            .map(|registry| registry.read(cx).client().clone());
         cx.spawn_in(window, async move |view, cx| {
             let load_path = path.clone();
             let retry_args = property_args.clone();
@@ -670,8 +674,10 @@ impl EditorView {
                     }
                     // Every open looks for plugins again, so ones installed
                     // since are found.
-                    let plugins =
-                        FoundPlugins::find(trusted_root(load_path.as_deref()).as_deref(), None);
+                    let plugins = FoundPlugins::find(
+                        trusted_root(load_path.as_deref()).as_deref(),
+                        registry.and_then(|client| client.override_advisories()),
+                    );
                     Ok((
                         load_source(load_path.as_deref(), property_args, &plugins),
                         plugins,
@@ -710,7 +716,13 @@ impl EditorView {
                         // takes back the focus it held, or no shortcut
                         // works until a click.
                         let page_was_open = this.export_page.is_open();
+                        // Work for the project open before is not
+                        // announced to this one.
+                        let project = next.found_plugins.project.clone();
                         this.replace_contents(next, cx);
+                        if let Some(registry) = &this.registry {
+                            registry.update(cx, |registry, _| registry.project_changed(project));
+                        }
                         if page_was_open {
                             this.focus_editor(window, cx);
                         }
@@ -746,6 +758,7 @@ impl EditorView {
         next.inline_text_focus = self.inline_text_focus.take();
         next.dock_split = self.dock_split.take();
         next.export_split = self.export_split.take();
+        next.registry = self.registry.take();
         next.body_split = self.body_split.take();
         #[cfg(not(target_os = "macos"))]
         {

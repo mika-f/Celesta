@@ -21,6 +21,7 @@ use crate::problems::{ExportNotices, Problems, Source};
 use crate::property_panel::PropertyPanelState;
 use crate::react_audio::{ReactAudioWorker, spawn_react_audio};
 use crate::refresh::{ReloadOrder, SelectionKeep};
+use crate::registry::RegistryState;
 use crate::scene_entries::SceneEdge;
 use crate::scope::{SceneCalls, Scope, ScopeChoices};
 use crate::source::{PropertyArgs, load_source};
@@ -39,6 +40,7 @@ use celesta_plugin_host::{InstalledPlugins, PluginKillSwitch};
 use celesta_react_bridge::{
     ComponentPropertyField, ComponentPropertySchema, PrimitivePropertyTable, SourcePos,
 };
+use celesta_registry_format::AdvisoryList;
 use chrono::{DateTime, Local};
 #[cfg(not(target_os = "macos"))]
 use gpui_kit::component::menu::AppMenuBar;
@@ -279,6 +281,10 @@ pub(crate) struct EditorView {
     pub(crate) dock_split: Option<Entity<ResizableState>>,
     pub(crate) export_split: Option<Entity<ResizableState>>,
     pub(crate) body_split: Option<Entity<ResizableState>>,
+    /// The window's registry work (searches, installs, updates), kept
+    /// across the projects it opens; `None` until the window makes it, and
+    /// without a user folder to install plugins in.
+    pub(crate) registry: Option<Entity<RegistryState>>,
     /// Timeline horizontal zoom (>= 1; 1 = whole composition fits) and the
     /// fraction of the composition at the left edge of the visible window.
     /// The mouse wheel over the timeline adjusts the zoom about the cursor.
@@ -423,12 +429,15 @@ pub(crate) struct EditorView {
 }
 
 impl EditorView {
+    /// Opens `path`, with plugins found with `extra_advisories` besides the
+    /// cached list (an overriding registry's).
     pub(crate) fn open(
         path: Option<&Path>,
         property_args: PropertyArgs,
         driver: GpuDriver,
+        extra_advisories: Option<AdvisoryList>,
     ) -> anyhow::Result<Self> {
-        let plugins = FoundPlugins::find(trusted_root(path).as_deref(), None);
+        let plugins = FoundPlugins::find(trusted_root(path).as_deref(), extra_advisories);
         let (document, react_preview) =
             load_source(path, property_args, &plugins).map_err(anyhow::Error::msg)?;
         Self::from_document(
@@ -586,6 +595,7 @@ impl EditorView {
             dock_split: None,
             export_split: None,
             body_split: None,
+            registry: None,
             timeline_zoom: 1.0,
             timeline_view_start: 0.0,
             timeline_pan: None,
