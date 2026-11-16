@@ -47,9 +47,8 @@ fn lock_problem_title(problem: &LockProblem) -> &'static str {
         LockProblem::OtherCelesta { .. } => {
             "The project's plugins were locked with another Celesta"
         }
-        LockProblem::Unreadable(_) | LockProblem::Config(_) => {
-            "The project's celesta.lock can't be read"
-        }
+        LockProblem::Unreadable(_) => "The project's celesta.lock can't be read",
+        LockProblem::Config(_) => "The project's celesta.config.json can't be read",
         LockProblem::Unsatisfied { .. } => "The project's locked plugins are not installed",
     }
 }
@@ -1557,7 +1556,7 @@ mod tests {
         );
         assert_eq!(
             titled(LockProblem::Config("bad".into())),
-            "The project's celesta.lock can't be read"
+            "The project's celesta.config.json can't be read"
         );
         assert_eq!(
             titled(LockProblem::Unsatisfied {

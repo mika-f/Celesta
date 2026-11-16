@@ -104,6 +104,10 @@ impl EditorView {
         } = model;
         let muted = cx.theme().muted_foreground;
         let view = cx.entity().downgrade();
+        let page_open = self.plugin_page.is_open();
+        // An outline button's own selected fill is a shade from its rest
+        // fill in this palette; the page's selected-row fill reads as on.
+        let selected_fill = cx.theme().list_active;
         let toolbar = h_flex()
             .gap_1()
             .px_3()
@@ -116,8 +120,9 @@ impl EditorView {
                     .xsmall()
                     .outline()
                     .compact_label("Find plugins…")
-                    .selected(self.plugin_page.is_open())
-                    .toggled(self.plugin_page.is_open())
+                    .selected(page_open)
+                    .toggled(page_open)
+                    .when(page_open, |button| button.bg(selected_fill))
                     .disabled(self.registry.is_none())
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.toggle_plugin_page(window, cx);
@@ -627,18 +632,20 @@ impl EditorView {
     /// its plugins are found as the settings now say. Refused, before
     /// anything is saved, while the project cannot be reopened (it is
     /// opening, an export runs, or the save panel is up), so the tab never shows a choice that has
-    /// not taken effect.
+    /// not taken effect, and while registry work is saving the settings,
+    /// which would write its own copy over this change.
     fn change_plugin_settings(
         &mut self,
         change: impl FnOnce(&mut UserSettings) -> Result<(), SettingsError>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.opening {
-            window.push_notification(
-                Toast::note("Wait for the project to open, then try again.", cx),
-                cx,
-            );
+        let settings_busy = self
+            .registry
+            .as_ref()
+            .is_some_and(|registry| registry.read(cx).settings_busy());
+        if let Some(refusal) = settings_change_refusal(self.opening, settings_busy) {
+            window.push_notification(Toast::note(refusal, cx), cx);
             return;
         }
         if !self.can_replace_contents(window, cx) {
@@ -687,6 +694,18 @@ fn note(text: &'static str, cx: &App) -> impl IntoElement {
         .child(text)
 }
 
+/// Why a change to the plugin settings waits: the project is `opening`, or
+/// registry work is saving the settings (`settings_busy`).
+fn settings_change_refusal(opening: bool, settings_busy: bool) -> Option<&'static str> {
+    if opening {
+        Some("Wait for the project to open, then try again.")
+    } else if settings_busy {
+        Some("Wait for the plugin change to finish, then try again.")
+    } else {
+        None
+    }
+}
+
 /// How far a download has come, in whole percent.
 fn percent(done: u64, total: u64) -> String {
     format!("{}%", done.saturating_mul(100) / total.max(1))
@@ -696,6 +715,19 @@ fn percent(done: u64, total: u64) -> String {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn settings_changes_wait_for_an_open_and_for_registry_work() {
+        assert_eq!(settings_change_refusal(false, false), None);
+        assert_eq!(
+            settings_change_refusal(false, true),
+            Some("Wait for the plugin change to finish, then try again.")
+        );
+        assert_eq!(
+            settings_change_refusal(true, true),
+            Some("Wait for the project to open, then try again.")
+        );
+    }
 
     #[test]
     fn a_project_plugin_row_shows_its_decoder_uses() {

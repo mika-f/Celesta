@@ -17,6 +17,7 @@ use crate::problems::Source;
 use crate::view::EditorView;
 use gpui_kit::prelude::*;
 use gpui_kit::{Context, Window};
+use std::path::Path;
 use std::sync::Arc;
 
 impl EditorView {
@@ -27,6 +28,7 @@ impl EditorView {
     pub(crate) fn attach_registry(
         &mut self,
         client: Result<EditorRegistry, String>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let client = match client {
@@ -44,8 +46,8 @@ impl EditorView {
             );
         }
         let registry = cx.new(|_| RegistryState::new(Arc::new(client)));
-        cx.subscribe(&registry, |this, _, event, cx| {
-            this.registry_event(event, cx)
+        cx.subscribe_in(&registry, window, |this, _, event, window, cx| {
+            this.registry_event(event, window, cx)
         })
         .detach();
         // The Plugins tab shows its work in flight and its search list, and
@@ -65,9 +67,15 @@ impl EditorView {
     }
 
     /// Rediscovers (and reopens) when the work changed what may run here,
-    /// once nothing stops a reopen (see [`Self::settle_changed_plugins`]); a
-    /// failure goes to Problems.
-    fn registry_event(&mut self, event: &RegistryEvent, cx: &mut Context<Self>) {
+    /// once nothing stops a reopen (see [`Self::settle_changed_plugins`]);
+    /// asks the requirements question when an update needs a requirement
+    /// rewritten; a failure goes to Problems.
+    fn registry_event(
+        &mut self,
+        event: &RegistryEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         match event {
             RegistryEvent::PluginsChanged { project } => {
                 if project.is_none() || *project == self.found_plugins.project {
@@ -75,22 +83,41 @@ impl EditorView {
                     cx.notify();
                 }
             }
-            RegistryEvent::Rewrote { project, rewrites } => {
-                let note = questions::rewrite_note(project, rewrites);
+            RegistryEvent::RequirementsUnmet {
+                project,
+                ids,
+                include_prereleases,
+                title,
+                detail,
+            } => {
                 if Some(project) == self.found_plugins.project.as_ref() {
-                    // Logged once the project opens again with them, as
-                    // the reopen starts a new Problems log.
-                    self.rewrite_note = Some(note);
-                } else {
-                    // Another project is open: nothing reopens for this one.
-                    self.problems
-                        .info_without_toast(Source::Registry, note.title, note.detail);
-                    cx.notify();
+                    self.ask_about_requirements(
+                        questions::Unmet {
+                            root: project.clone(),
+                            ids: ids.clone(),
+                            include_prereleases: *include_prereleases,
+                            title: title.clone(),
+                            detail: detail.clone(),
+                        },
+                        window,
+                        cx,
+                    );
                 }
             }
             RegistryEvent::Failed { title, detail, .. } => {
                 self.problems
                     .report(Source::Registry, title.clone(), detail.clone());
+                cx.notify();
+            }
+            RegistryEvent::FailedElsewhere {
+                project,
+                title,
+                detail,
+            } => {
+                // Another project is open: nothing reopens for this one.
+                let (title, detail) = elsewhere_note(project, title, detail);
+                self.problems
+                    .info_without_toast(Source::Registry, title, detail);
                 cx.notify();
             }
         }
@@ -116,6 +143,12 @@ impl EditorView {
     }
 }
 
+/// The Problems entry for a job that failed for `project` once another
+/// project was open: its title, and the project's folder before the reason.
+fn elsewhere_note(project: &Path, title: &str, detail: &str) -> (String, String) {
+    (title.to_owned(), format!("{}\n{detail}", project.display()))
+}
+
 /// Whether plugins registry work `changed` are reloaded now: not while a
 /// project opens (it finds them itself), nor while the save panel is up or
 /// an export runs, which a reopen would cut short.
@@ -130,7 +163,23 @@ fn plugins_reload_due(
 
 #[cfg(test)]
 mod tests {
-    use super::plugins_reload_due;
+    use super::{elsewhere_note, plugins_reload_due};
+    use std::path::Path;
+
+    #[test]
+    fn a_failure_elsewhere_names_its_project() {
+        assert_eq!(
+            elsewhere_note(
+                Path::new("/projects/old"),
+                "Couldn’t update acme.charts",
+                "no version of acme.charts satisfies ^0.5.0"
+            ),
+            (
+                "Couldn’t update acme.charts".to_owned(),
+                "/projects/old\nno version of acme.charts satisfies ^0.5.0".to_owned()
+            )
+        );
+    }
 
     #[test]
     fn changed_plugins_wait_for_the_open_and_the_export() {

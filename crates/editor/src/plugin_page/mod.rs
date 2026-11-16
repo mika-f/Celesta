@@ -9,7 +9,7 @@ use crate::export_control::show_plugins;
 use crate::inline_text_view::EditEvent;
 use crate::view::EditorView;
 use gpui_kit::component::WindowExt as _;
-use gpui_kit::{AppContext as _, Context, Entity, Subscription, Window};
+use gpui_kit::{App, AppContext as _, Context, Entity, Subscription, Window};
 pub(crate) use model::format_size;
 pub(crate) use view::registry_host;
 use view::{PluginPage, PluginPageEvent};
@@ -47,6 +47,15 @@ impl PluginPageSlot {
     /// Back to editing, keeping the page's state.
     pub(crate) fn hide(&mut self) {
         self.open = false;
+    }
+
+    /// Runs the kept page's clock while it shows, and stops it when not;
+    /// after every [`Self::show`] and [`Self::hide`].
+    pub(crate) fn sync_clock(&self, cx: &mut App) {
+        if let Some(page) = self.page() {
+            let shown = self.open;
+            page.update(cx, |page, cx| page.set_clock(shown, cx));
+        }
     }
 }
 
@@ -100,6 +109,7 @@ impl EditorView {
         };
         page.update(cx, |page, cx| page.open(select, window, cx));
         show_plugins(&mut self.plugin_page, &mut self.export_page);
+        self.plugin_page.sync_clock(cx);
         cx.notify();
     }
 
@@ -108,6 +118,7 @@ impl EditorView {
     /// on.
     pub(crate) fn close_plugin_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.plugin_page.hide();
+        self.plugin_page.sync_clock(cx);
         self.focus_editor(window, cx);
         cx.notify();
     }

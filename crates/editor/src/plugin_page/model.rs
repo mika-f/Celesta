@@ -6,7 +6,7 @@
 use celesta_plugin_host::PluginSource;
 use celesta_registry_client::{NoOffer, OfferInput, OfferScope, offered_version};
 use celesta_registry_format::{AdvisoryList, Index, SearchList, Target, VersionEntry};
-use semver::{Prerelease, Version};
+use semver::{Prerelease, Version, VersionReq};
 use time::OffsetDateTime;
 
 use crate::plugins::FoundPlugins;
@@ -24,9 +24,9 @@ pub(crate) struct ListRow {
     pub id: String,
     /// `Media`, `Content`, or `Components`.
     pub kind: &'static str,
-    /// The registry's latest version.
+    /// The registry's latest version; a pre-release's says so itself
+    /// (`-alpha.3`).
     pub latest: Option<String>,
-    pub prerelease: bool,
     /// `Installed`, `In this project`, `No build for this computer`, or
     /// `Deprecated`.
     pub note: Option<&'static str>,
@@ -76,10 +76,6 @@ pub(crate) fn list_rows(
                 id: entry.id.clone(),
                 kind: registry_kind_name(&entry.kind),
                 latest: entry.latest.as_ref().map(ToString::to_string),
-                prerelease: entry
-                    .latest
-                    .as_ref()
-                    .is_some_and(|latest| latest.pre != Prerelease::EMPTY),
                 note,
             }
         })
@@ -441,38 +437,70 @@ pub(crate) fn footer(
     let mut reason = None;
     // What the primary button would change, which another job may hold.
     let mut changes = Changes::Nothing;
-    let primary = match offer(scope) {
-        Ok(offered) => match held(id, &offered, found, !media) {
-            Held::Offered => FooterButton::disabled("Installed"),
-            Held::Older { locked } => {
-                changes = if locked {
-                    Changes::Project
-                } else {
-                    Changes::Settings
-                };
-                FooterButton::new(format!("Update to {offered}"), PageCommand::Update)
+    // A plugin this project locks updates within the version its
+    // celesta.config.json asks for, as `update` resolves it.
+    let locked = (!media)
+        .then(|| found.lock.as_ref()?.plugins.get(id))
+        .flatten()
+        .map(|locked| &locked.version);
+    let requirement = found.dependencies.get(id);
+    let primary = match (locked, requirement) {
+        (Some(locked), Some(requirement)) => {
+            let within = offered_version(&OfferInput {
+                index: &within_requirement(index, requirement),
+                advisories,
+                celesta: registry.client().celesta(),
+                host,
+                targets: project_targets,
+                // The requirement says whether a pre-release may come.
+                include_prereleases: true,
+                scope,
+            });
+            match (within, offer(scope)) {
+                (Ok(within), _) if within > *locked => {
+                    changes = Changes::Project;
+                    FooterButton::new(format!("Update to {within}"), PageCommand::Update)
+                }
+                (_, Ok(offered)) if offered > *locked => {
+                    reason = Some(format!("celesta.config.json asks for {requirement}"));
+                    FooterButton::disabled(format!("Update to {offered}"))
+                }
+                _ => FooterButton::disabled("Installed"),
             }
-            Held::No if !media && found.project.is_none() => {
-                reason = Some(OUTSIDE_A_PROJECT.to_owned());
+        }
+        _ => match offer(scope) {
+            Ok(offered) => match held(id, &offered, found, !media) {
+                Held::Offered => FooterButton::disabled("Installed"),
+                Held::Older { locked } => {
+                    changes = if locked {
+                        Changes::Project
+                    } else {
+                        Changes::Settings
+                    };
+                    FooterButton::new(format!("Update to {offered}"), PageCommand::Update)
+                }
+                Held::No if !media && found.project.is_none() => {
+                    reason = Some(OUTSIDE_A_PROJECT.to_owned());
+                    FooterButton::disabled(label)
+                }
+                Held::No => {
+                    changes = if media {
+                        Changes::Settings
+                    } else {
+                        Changes::Project
+                    };
+                    FooterButton::new(label, command(offered))
+                }
+            },
+            Err(no_offer) => {
+                reason = Some(if !media && found.project.is_none() {
+                    OUTSIDE_A_PROJECT.to_owned()
+                } else {
+                    no_offer_reason(&no_offer)
+                });
                 FooterButton::disabled(label)
             }
-            Held::No => {
-                changes = if media {
-                    Changes::Settings
-                } else {
-                    Changes::Project
-                };
-                FooterButton::new(label, command(offered))
-            }
         },
-        Err(no_offer) => {
-            reason = Some(if !media && found.project.is_none() {
-                OUTSIDE_A_PROJECT.to_owned()
-            } else {
-                no_offer_reason(&no_offer)
-            });
-            FooterButton::disabled(label)
-        }
     };
 
     let busy = |changes: Changes| match changes {
@@ -523,6 +551,15 @@ pub(crate) fn footer(
         progress: None,
         failure,
     }
+}
+
+/// `index` with only the versions `requirement` accepts.
+fn within_requirement(index: &Index, requirement: &VersionReq) -> Index {
+    let mut index = index.clone();
+    index
+        .versions
+        .retain(|entry| requirement.matches(&entry.version));
+    index
 }
 
 /// What a button writes, which one job at a time may do.
@@ -808,11 +845,10 @@ mod tests {
         ]);
         let rows = list_rows(&list, "", &FoundPlugins::default(), &host());
         assert_eq!(rows.len(), 2);
-        // By id, with the latest and whether it is a pre-release.
+        // By id, with the latest.
         assert_eq!(rows[0].id, "a.first");
         assert_eq!(rows[0].latest.as_deref(), Some("2.0.0-beta.1"));
-        assert!(rows[0].prerelease);
-        assert!(!rows[1].prerelease);
+        assert_eq!(rows[1].latest.as_deref(), Some("1.0.0"));
         assert_eq!(rows[0].kind, "Content");
     }
 
@@ -981,6 +1017,46 @@ mod tests {
         assert_eq!(update.primary.label, "Update to 1.1.0");
         assert!(!update.primary.enabled);
         assert_eq!(update.reason.as_deref(), Some(busy));
+    }
+
+    #[test]
+    fn a_locked_plugin_updates_within_its_requirement() {
+        let registry = Registry::new(false);
+        let mut found = project(vec![("acme.charts", locked("0.2.1", &[host()]))]);
+        found.dependencies =
+            BTreeMap::from([("acme.charts".to_owned(), VersionReq::parse("^0.2").unwrap())]);
+
+        // Only a version the requirement excludes is newer: said, not run.
+        let beyond = index(
+            "acme.charts",
+            false,
+            vec![entry("0.2.1", 10), entry("0.3.0", 10)],
+        );
+        let footer_for = |index: &Index| footer(index, &found, &registry.state, None, &host());
+        let held_back = footer_for(&beyond);
+        assert_eq!(held_back.primary.label, "Update to 0.3.0");
+        assert!(!held_back.primary.enabled);
+        assert_eq!(held_back.primary.command, PageCommand::None);
+        assert_eq!(
+            held_back.reason.as_deref(),
+            Some("celesta.config.json asks for ^0.2")
+        );
+
+        // A newer one within it is the update, not the newest overall.
+        let within = index(
+            "acme.charts",
+            false,
+            vec![entry("0.2.1", 10), entry("0.2.3", 10), entry("0.3.0", 10)],
+        );
+        let update = footer_for(&within);
+        assert_eq!(update.primary.label, "Update to 0.2.3");
+        assert!(update.primary.enabled);
+        assert_eq!(update.primary.command, PageCommand::Update);
+        assert_eq!(update.reason, None);
+
+        // Nothing newer at all: installed.
+        let current = index("acme.charts", false, vec![entry("0.2.1", 10)]);
+        assert_eq!(footer_for(&current).primary.label, "Installed");
     }
 
     #[test]

@@ -18,7 +18,7 @@ use crate::plugins::FoundPlugins;
 use crate::registry::{Fetch, RegistryState};
 use crate::widgets::CompactLabel as _;
 use celesta_editor_theme::metrics;
-use celesta_registry_format::{AdvisoryList, Index};
+use celesta_registry_format::{AdvisoryList, Index, SearchList};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -29,16 +29,30 @@ use gpui_kit::component::{
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, App, Context, ElementId, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
-    Hsla, KeyBinding, KeyDownEvent, SharedString, Subscription, Window, div, rems,
+    Hsla, KeyBinding, KeyDownEvent, SharedString, Subscription, Task, Window, div, rems,
 };
+use std::time::Duration;
 use time::OffsetDateTime;
 
-/// The list column's width, in `rem`: wide enough for an id and its kind,
-/// latest version, and state; the detail column takes the rest.
-const LIST_WIDTH: f32 = 16.;
+/// The list column's width, in `rem`: wide enough for an id with its
+/// state, and its kind and latest version; the detail column takes the
+/// rest.
+const LIST_WIDTH: f32 = 18.;
+
+/// The width of a row's state lane, in `rem`: wide enough for `In this
+/// project`; a longer state widens its own row's lane.
+const NOTE_LANE_WIDTH: f32 = 6.;
 
 /// The width of the versions table's version lane, in `rem`.
 const VERSION_LANE_WIDTH: f32 = 9.;
+
+/// How old a shown search list may be when the page opens before it is
+/// fetched again (it stays shown meanwhile).
+const SEARCH_MAX_AGE: time::Duration = time::Duration::minutes(10);
+
+/// How often the open page draws again, so the list's "updated N min ago"
+/// keeps up.
+const CLOCK_INTERVAL: Duration = Duration::from_secs(60);
 
 /// What the page tells its owner.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,6 +74,9 @@ pub(crate) struct PluginPage {
     /// The cached advisory list the offered version reads; `None` until
     /// read, and when there is none.
     advisories: Option<AdvisoryList>,
+    /// Draws the page again every [`CLOCK_INTERVAL`] while it shows;
+    /// dropped, so stopped, when it closes.
+    clock: Option<Task<()>>,
     _subscriptions: [Subscription; 2],
 }
 
@@ -102,6 +119,7 @@ impl PluginPage {
             registry,
             found,
             advisories: None,
+            clock: None,
             _subscriptions: subscriptions,
         };
         page.read_advisories(cx);
@@ -110,15 +128,16 @@ impl PluginPage {
 
     /// Shows the page as Find plugins… does, with `select` (Show in Find
     /// plugins) selected: the search field takes the focus, and the list
-    /// is fetched unless it is shown already.
+    /// is fetched unless one fetched in the last ten minutes is shown (an
+    /// older one stays shown while it is fetched again).
     pub(crate) fn open(
         &mut self,
         select: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let search_shown = matches!(self.registry.read(cx).search, Fetch::Loaded { .. });
-        if !search_shown {
+        let now = OffsetDateTime::now_utc();
+        if search_due(&self.registry.read(cx).search, now) {
             self.registry.update(cx, |state, cx| state.fetch_search(cx));
         }
         if let Some(id) = select {
@@ -126,6 +145,29 @@ impl PluginPage {
         }
         self.query.update(cx, |query, cx| query.focus(window, cx));
         cx.notify();
+    }
+
+    /// Starts drawing the page again every minute while it shows
+    /// (`shown`), or stops.
+    pub(crate) fn set_clock(&mut self, shown: bool, cx: &mut Context<Self>) {
+        if !shown {
+            self.clock = None;
+        } else if self.clock.is_none() {
+            self.clock = Some(cx.spawn(async move |this, cx| {
+                loop {
+                    cx.background_executor().timer(CLOCK_INTERVAL).await;
+                    if this.update(cx, |_, cx| cx.notify()).is_err() {
+                        break;
+                    }
+                }
+            }));
+        }
+    }
+
+    /// Whether the page draws itself again every minute.
+    #[cfg(test)]
+    pub(crate) fn clock_runs(&self) -> bool {
+        self.clock.is_some()
     }
 
     /// What discovery found after the work changed it (or another project
@@ -281,6 +323,18 @@ impl PluginPage {
     }
 }
 
+/// Whether the page fetches `search` again as it opens at `now`: unless a
+/// list fetched in the last ten minutes is shown. An offline copy is tried
+/// again.
+fn search_due(search: &Fetch<SearchList>, now: OffsetDateTime) -> bool {
+    match search {
+        Fetch::Loaded {
+            at, offline: false, ..
+        } => now - *at > SEARCH_MAX_AGE,
+        _ => true,
+    }
+}
+
 /// The registry's host as the list's footer names it:
 /// `registry.celesta.studio`.
 pub(crate) fn registry_host(base: &str) -> &str {
@@ -415,35 +469,67 @@ impl PluginPage {
             }))
     }
 
-    /// One plugin: its id, then its kind, the registry's latest, and a
-    /// short state.
+    /// One plugin: its id with a short state trailing, then its kind and
+    /// the registry's latest, cut short with an ellipsis when the column
+    /// is too narrow.
     fn render_row(&self, row: ListRow, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
-        let (border, active, hover) = (theme.border, theme.list_active, theme.list_hover);
+        let (border, active, hover, muted) = (
+            theme.border,
+            theme.list_active,
+            theme.list_hover,
+            theme.muted_foreground,
+        );
         let selected = self.selected.as_deref() == Some(row.id.as_str());
         let id: SharedString = row.id.clone().into();
         let selector = format!("plugin-page-row-{id}");
-        let mut meta = h_flex()
+        // A pre-release's version says so itself (`-alpha.3`).
+        let meta = h_flex()
+            .min_w_0()
+            .overflow_hidden()
             .gap_1()
             .text_sm()
-            .text_color(theme.muted_foreground)
-            .child(row.kind);
-        if let Some(latest) = row.latest {
-            meta = meta.child("·").child(
+            .text_color(muted)
+            .child(div().flex_none().child(row.kind))
+            .children(row.latest.map(|latest| {
+                h_flex()
+                    .min_w_0()
+                    .gap_1()
+                    .child(div().flex_none().child("·"))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .font_family(theme.mono_font_family.clone())
+                            .child(latest),
+                    )
+            }));
+        let heading = h_flex()
+            .min_w_0()
+            .gap_2()
+            .items_baseline()
+            .child(
                 div()
-                    .font_family(theme.mono_font_family.clone())
-                    .child(latest),
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_base()
+                    .child(row.id),
+            )
+            // A lane of its own, so the states line up down the list.
+            .child(
+                h_flex()
+                    .flex_none()
+                    .min_w(rems(NOTE_LANE_WIDTH))
+                    .justify_end()
+                    .text_sm()
+                    .text_color(muted)
+                    .children(row.note),
             );
-        }
-        if row.prerelease {
-            meta = meta.child("·").child("Pre-release");
-        }
-        if let Some(note) = row.note {
-            meta = meta.child("·").child(note);
-        }
         v_flex()
             .id((ElementId::from("plugin-page-row"), id.clone()))
             .debug_selector(move || selector.clone())
+            .min_w_0()
             .gap_0p5()
             .px(metrics::panel_padding())
             .py_1p5()
@@ -454,7 +540,7 @@ impl PluginPage {
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.select(id.to_string(), cx);
             }))
-            .child(div().text_base().child(row.id))
+            .child(heading)
             .child(meta)
             .into_any_element()
     }
@@ -955,7 +1041,7 @@ mod tests {
         assert_eq!(footer.secondary, None);
         assert!(cx.debug_bounds("plugin-page-primary").is_some());
 
-        // Up from the search field selects the row above.
+        // The click gave the page the focus; Up selects the row above.
         cx.simulate_keystrokes("up");
         cx.run_until_parked();
         assert_eq!(
@@ -969,6 +1055,103 @@ mod tests {
             footer.reason.as_deref(),
             Some("Add plugins to a project with celesta.config.json")
         );
+    }
+
+    #[gpui_kit::test]
+    fn the_arrows_move_the_selection_from_the_search_field(cx: &mut TestAppContext) {
+        let fixture = fixture(cx);
+        let cx = &mut fixture.window(cx);
+        fixture.open(cx, None);
+        let selected = |cx: &mut VisualTestContext| {
+            fixture.page.read_with(cx, |page, _| page.selected.clone())
+        };
+        cx.simulate_keystrokes("down");
+        cx.run_until_parked();
+        assert_eq!(selected(cx).as_deref(), Some("acme.charts"));
+        cx.simulate_keystrokes("down");
+        cx.run_until_parked();
+        assert_eq!(selected(cx).as_deref(), Some("acme.codec"));
+        cx.simulate_keystrokes("up");
+        cx.run_until_parked();
+        assert_eq!(selected(cx).as_deref(), Some("acme.charts"));
+        // The field keeps the focus, so typing still searches.
+        let query = fixture.page.read_with(cx, |page, _| page.query.clone());
+        cx.update(|window, cx| assert!(query.focus_handle(cx).is_focused(window)));
+    }
+
+    #[test]
+    fn a_list_older_than_ten_minutes_is_fetched_again() {
+        let now = OffsetDateTime::from_unix_timestamp(1_800_000_000).unwrap();
+        let list: SearchList = serde_json::from_value(json!({
+            "generated": "2026-11-20T00:00:00Z",
+            "plugins": [],
+        }))
+        .unwrap();
+        let loaded = |minutes: i64, offline| Fetch::Loaded {
+            value: list.clone(),
+            at: now - time::Duration::minutes(minutes),
+            offline,
+        };
+        assert!(!search_due(&loaded(9, false), now));
+        assert!(!search_due(&loaded(10, false), now));
+        assert!(search_due(&loaded(11, false), now));
+        assert!(search_due(&loaded(1, true), now), "offline is tried again");
+        assert!(search_due(&Fetch::Idle, now));
+        assert!(search_due(&Fetch::Failed("down".into()), now));
+    }
+
+    #[gpui_kit::test]
+    fn opening_fetches_a_stale_list_again_and_keeps_a_fresh_one(cx: &mut TestAppContext) {
+        let fixture = fixture(cx);
+        let cx = &mut fixture.window(cx);
+        let set_age = |cx: &mut VisualTestContext, minutes: i64| {
+            let at = OffsetDateTime::now_utc() - time::Duration::minutes(minutes);
+            fixture.registry.update(cx, |state, _| {
+                state.search = Fetch::Loaded {
+                    value: SearchList {
+                        generated: at,
+                        plugins: Vec::new(),
+                    },
+                    at,
+                    offline: false,
+                };
+            });
+            at
+        };
+        let fetched_at = |cx: &mut VisualTestContext| {
+            fixture
+                .registry
+                .read_with(cx, |state, _| match &state.search {
+                    Fetch::Loaded { at, .. } => Some(*at),
+                    _ => None,
+                })
+        };
+        let fresh = set_age(cx, 5);
+        fixture.open(cx, None);
+        assert_eq!(fetched_at(cx), Some(fresh), "a fresh list is kept");
+        assert!(fixture.ids(cx).is_empty());
+
+        let stale = set_age(cx, 30);
+        fixture.open(cx, None);
+        assert!(fetched_at(cx).is_some_and(|at| at > stale));
+        assert_eq!(fixture.ids(cx), ["acme.charts", "acme.codec"]);
+    }
+
+    #[gpui_kit::test]
+    fn the_clock_runs_only_while_the_page_shows(cx: &mut TestAppContext) {
+        let fixture = fixture(cx);
+        let cx = &mut fixture.window(cx);
+        let mut slot = PluginPageSlot::default();
+        slot.set(fixture.page.clone(), Subscription::new(|| {}));
+        let runs =
+            |cx: &mut VisualTestContext| fixture.page.read_with(cx, |page, _| page.clock_runs());
+        assert!(!runs(cx));
+        slot.show();
+        cx.update(|_, cx| slot.sync_clock(cx));
+        assert!(runs(cx));
+        slot.hide();
+        cx.update(|_, cx| slot.sync_clock(cx));
+        assert!(!runs(cx));
     }
 
     #[gpui_kit::test]

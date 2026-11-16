@@ -235,6 +235,14 @@ fn stopped_message(blocked: &BlockedPlugin) -> String {
     format!("{}: {title}.{fix}", blocked.advisory)
 }
 
+/// Whether the update a blocked plugin's notification starts offers
+/// pre-releases: as the page's checkbox (`include_prereleases`) says, and
+/// always when the advisory's `fixed` version is one, so Update to X can
+/// reach X.
+pub(crate) fn fix_offers_prereleases(include_prereleases: bool, fixed: &str) -> bool {
+    include_prereleases || Version::parse(fixed).is_ok_and(|fixed| !fixed.pre.is_empty())
+}
+
 /// How a stopped plugin is updated to its fixed version.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum BlockedUpdate {
@@ -320,16 +328,33 @@ impl EditorView {
                 (Some(fixed), Some(update)) => {
                     let plugin = blocked.id.clone();
                     let toast_id = id.clone();
-                    toast.action(format!("Update to {fixed}"), move |_, window, cx| {
+                    let label = format!("Update to {fixed}");
+                    toast.action(label, move |_, window, cx| {
                         window.remove_notification1::<BlockedToast>(toast_id.clone(), cx);
                         let plugin = plugin.clone();
                         let update = update.clone();
+                        let fixed = fixed.clone();
                         view.update(cx, |this, cx| {
-                            this.registry_work(window, cx, move |state, cx| match update {
-                                BlockedUpdate::Locked(root) => {
-                                    state.update_planned(root, BTreeSet::from([plugin]), cx)
+                            this.registry_work(window, cx, move |state, cx| {
+                                let include_prereleases =
+                                    fix_offers_prereleases(state.include_prereleases, &fixed);
+                                match update {
+                                    // Within the requirement; when the fix
+                                    // lies outside it, the requirements
+                                    // question asks first.
+                                    BlockedUpdate::Locked(root) => state.update_offering(
+                                        root,
+                                        BTreeSet::from([plugin]),
+                                        Vec::new(),
+                                        include_prereleases,
+                                        cx,
+                                    ),
+                                    BlockedUpdate::Global => state.update_global_offering(
+                                        &plugin,
+                                        include_prereleases,
+                                        cx,
+                                    ),
                                 }
-                                BlockedUpdate::Global => state.update_global(&plugin, cx),
                             });
                         })
                         .ok();
@@ -354,6 +379,13 @@ mod tests {
     use serde_json::json;
     use std::collections::BTreeMap;
     use std::path::Path;
+
+    #[test]
+    fn a_pre_release_fix_is_offered_whatever_the_checkbox() {
+        assert!(fix_offers_prereleases(false, "0.10.0-alpha.4"));
+        assert!(!fix_offers_prereleases(false, "0.10.1"));
+        assert!(fix_offers_prereleases(true, "0.10.1"));
+    }
 
     fn version(text: &str) -> Version {
         Version::parse(text).unwrap()

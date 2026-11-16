@@ -336,7 +336,7 @@ fn run() -> anyhow::Result<()> {
                         editor.watch_react_entry(cx);
                         editor.refresh_scene_sources(cx);
                     }
-                    editor.attach_registry(registry_client, cx);
+                    editor.attach_registry(registry_client, window, cx);
                     editor
                 });
                 // Once the root that shows dialogs is in place.

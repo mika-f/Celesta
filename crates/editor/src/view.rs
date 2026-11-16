@@ -18,7 +18,7 @@ use crate::plugins::{DecoderNotice, FoundPlugins, trusted_root};
 use crate::preview::{
     AudioPreview, PreviewWorker, ReactPreview, ShownPreview, TextOverride, spawn_preview,
 };
-use crate::problems::{ExportNotices, Problem, Problems, Source};
+use crate::problems::{ExportNotices, Problems, Source};
 use crate::property_panel::PropertyPanelState;
 use crate::react_audio::{ReactAudioWorker, spawn_react_audio};
 use crate::refresh::{ReloadOrder, SelectionKeep};
@@ -439,9 +439,6 @@ pub(crate) struct EditorView {
     /// The plugins an advisory stopped that a notification announced in
     /// this app run, by id, version, and advisory.
     pub(crate) announced_blocks: BTreeSet<(String, String, String)>,
-    /// The requirements an update rewrote unasked, logged in Problems once
-    /// the project opens again with them.
-    pub(crate) rewrite_note: Option<Problem>,
     /// The This project heading's Update Plugins is working out what it
     /// changes, so it takes no second click.
     pub(crate) preparing_update: bool,
@@ -674,7 +671,6 @@ impl EditorView {
             asked_plugins: HashSet::new(),
             asked_locks: BTreeSet::new(),
             announced_blocks: BTreeSet::new(),
-            rewrite_note: None,
             preparing_update: false,
         };
         editor.set_plugins(plugins);

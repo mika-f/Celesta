@@ -197,6 +197,7 @@ impl EditorView {
         };
         self.sync_export_range(cx);
         show_export(&mut self.export_page, &mut self.plugin_page);
+        self.plugin_page.sync_clock(cx);
         page.focus_handle(cx).focus(window, cx);
         cx.notify();
     }

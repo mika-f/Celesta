@@ -3,7 +3,9 @@
 //! (Download), and a lock resolved with another Celesta whose plugins
 //! cannot load (Update Plugins). The sizes and the requirement rewrites
 //! they show are fetched before the dialog opens, within
-//! [`QUESTION_BUDGET`].
+//! [`QUESTION_BUDGET`]. Then the requirements question, asked whenever an
+//! update finds a requirement no version meets any more: no requirement
+//! is rewritten without a question listing it first.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -25,7 +27,7 @@ use super::client::EditorRegistry;
 use super::state::{RegistryState, unreachable};
 use crate::plugin_page::{format_size, registry_host};
 use crate::plugins::FoundPlugins;
-use crate::problems::{Problem, error_chain};
+use crate::problems::{Source, error_chain};
 use crate::toast::Toast;
 use crate::view::EditorView;
 
@@ -52,8 +54,9 @@ pub(crate) enum LockQuestion {
         locked: String,
         ids: Vec<String>,
     },
-    /// The This project heading's Update Plugins, when requirements in
-    /// `celesta.config.json` can no longer be met.
+    /// Requirements in `celesta.config.json` can no longer be met: asked
+    /// by the This project heading's Update Plugins, and by any update that
+    /// finds one ([`EditorView::ask_about_requirements`]).
     Requirements { ids: Vec<String> },
 }
 
@@ -169,6 +172,19 @@ pub(crate) enum Plan {
     Failed(String),
 }
 
+/// An update within the requirements of the project at `root` that found
+/// one no version meets ([`super::RegistryEvent::RequirementsUnmet`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Unmet {
+    pub root: PathBuf,
+    pub ids: BTreeSet<String>,
+    /// The rewrites may move to a pre-release.
+    pub include_prereleases: bool,
+    /// Why the update failed, for when no rewrite would help after all.
+    pub title: String,
+    pub detail: String,
+}
+
 /// A question with what it shows fetched.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Prepared {
@@ -181,15 +197,26 @@ pub(crate) struct Prepared {
     pub host: String,
 }
 
+/// How long [`prepare`] may take.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Budget {
+    /// At most [`QUESTION_BUDGET`], as the question holds back a project
+    /// that just opened; what is not fetched by then is left unknown.
+    Opening,
+    /// As long as the registry takes: the user is waiting on their own
+    /// click, so the rewrites are always known (or why they cannot be).
+    Unlimited,
+}
+
 /// Fetches what `question` shows: the download sizes, or the rewrites
-/// Update Plugins makes. Blocking, for at most [`QUESTION_BUDGET`]; what
-/// is not fetched by then is left unknown.
+/// Update Plugins makes. Blocking, for as long as `budget` allows.
 pub(crate) fn prepare(
     question: LockQuestion,
     found: &FoundPlugins,
     root: PathBuf,
     client: &Arc<EditorRegistry>,
     include_prereleases: bool,
+    budget: Budget,
 ) -> Prepared {
     let host = registry_host(&client.access().base).to_owned();
     match question {
@@ -238,21 +265,35 @@ pub(crate) fn prepare(
         }
         question => {
             let ids = declared(question.ids(), found);
-            let client = client.clone();
-            let project = root.clone();
-            let planned = within(QUESTION_BUDGET, move |plan| {
-                let planned = (|| -> anyhow::Result<Vec<Rewrite>> {
-                    let registry = client.registry_within(QUESTION_BUDGET)?;
-                    let env = client.environment(&registry, None);
-                    Ok(plan_update(&env, &project, &ids, include_prereleases)?)
-                })();
-                let _ = plan.send(planned);
-            });
-            let plan = match planned.into_iter().next() {
-                None => Plan::Unknown,
-                Some(Ok(rewrites)) => Plan::Rewrites(rewrites),
-                Some(Err(error)) if unreachable(&error) => Plan::Unknown,
-                Some(Err(error)) => Plan::Failed(error_chain(error.as_ref())),
+            let plan = move |client: &EditorRegistry,
+                             project: &Path,
+                             timeout: Option<Duration>|
+                  -> anyhow::Result<Vec<Rewrite>> {
+                let registry = match timeout {
+                    Some(timeout) => client.registry_within(timeout)?,
+                    None => client.registry()?,
+                };
+                let env = client.environment(&registry, None);
+                Ok(plan_update(&env, project, &ids, include_prereleases)?)
+            };
+            let plan = match budget {
+                Budget::Opening => {
+                    let client = client.clone();
+                    let project = root.clone();
+                    let planned = within(QUESTION_BUDGET, move |sender| {
+                        let _ = sender.send(plan(&client, &project, Some(QUESTION_BUDGET)));
+                    });
+                    match planned.into_iter().next() {
+                        None => Plan::Unknown,
+                        Some(Ok(rewrites)) => Plan::Rewrites(rewrites),
+                        Some(Err(error)) if unreachable(&error) => Plan::Unknown,
+                        Some(Err(error)) => Plan::Failed(error_chain(error.as_ref())),
+                    }
+                }
+                Budget::Unlimited => match plan(client, &root, None) {
+                    Ok(rewrites) => Plan::Rewrites(rewrites),
+                    Err(error) => Plan::Failed(error_chain(error.as_ref())),
+                },
             };
             Prepared {
                 root,
@@ -473,9 +514,11 @@ fn open_question(
                             state.update(root, ids, rewrites, cx)
                         });
                     }
+                    // Within the requirements; one that cannot be met asks
+                    // the requirements question before anything changes.
                     (_, _) => {
                         start_work(&registry, window, cx, |state, cx| {
-                            state.update_planned(root, ids, cx)
+                            state.update(root, ids, Vec::new(), cx)
                         });
                     }
                 }
@@ -514,6 +557,7 @@ impl EditorView {
                         root,
                         &client,
                         include_prereleases,
+                        Budget::Opening,
                     ))
                 })
                 .await;
@@ -577,7 +621,16 @@ impl EditorView {
         cx.spawn_in(window, async move |view, cx| {
             let prepared = cx
                 .background_executor()
-                .spawn(async move { prepare(question, &found, root, &client, include_prereleases) })
+                .spawn(async move {
+                    prepare(
+                        question,
+                        &found,
+                        root,
+                        &client,
+                        include_prereleases,
+                        Budget::Opening,
+                    )
+                })
                 .await;
             view.update_in(cx, |this, window, cx| {
                 this.preparing_update = false;
@@ -590,6 +643,8 @@ impl EditorView {
                 let root = prepared.root.clone();
                 let ids: BTreeSet<String> = ids.into_iter().collect();
                 match (&prepared.question, &prepared.plan) {
+                    // Nothing to rewrite, or not known yet: within the
+                    // requirements, and one that cannot be met asks then.
                     (LockQuestion::Requirements { .. }, Plan::Rewrites(rewrites))
                         if rewrites.is_empty() =>
                     {
@@ -599,7 +654,7 @@ impl EditorView {
                     }
                     (LockQuestion::Requirements { .. }, Plan::Unknown) => {
                         this.registry_work(window, cx, |state, cx| {
-                            state.update_planned(root, ids, cx)
+                            state.update(root, ids, Vec::new(), cx)
                         });
                     }
                     _ => open_question(prepared, registry, window, cx),
@@ -612,32 +667,106 @@ impl EditorView {
     }
 }
 
-/// The Problems entry for requirements an update rewrote in the project
-/// at `root` without a question listing them first.
-pub(crate) fn rewrite_note(root: &Path, rewrites: &[Rewrite]) -> Problem {
-    let lines = rewrites
-        .iter()
-        .map(|rewrite| format!("{} from {} to {}", rewrite.id, rewrite.from, rewrite.to));
-    Problem::new(
-        "Changed requirements in celesta.config.json",
-        std::iter::once(root.display().to_string())
-            .chain(lines)
-            .collect::<Vec<_>>()
-            .join("\n"),
+/// The requirements question for `unmet`, with its rewrites planned as
+/// long as the registry takes. Blocking.
+fn requirements_question(
+    unmet: &Unmet,
+    found: &FoundPlugins,
+    client: &Arc<EditorRegistry>,
+) -> Prepared {
+    let question = LockQuestion::Requirements {
+        ids: unmet.ids.iter().cloned().collect(),
+    };
+    prepare(
+        question,
+        found,
+        unmet.root.clone(),
+        client,
+        unmet.include_prereleases,
+        Budget::Unlimited,
     )
+}
+
+/// Asks `prepared` (the requirements question for `unmet`); without a
+/// rewrite to list after all, gives back the update's failure instead.
+fn ask_requirements(
+    prepared: Prepared,
+    unmet: Unmet,
+    registry: Entity<RegistryState>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<(String, String)> {
+    match &prepared.plan {
+        Plan::Rewrites(rewrites) if rewrites.is_empty() => Some((unmet.title, unmet.detail)),
+        _ => {
+            open_question(prepared, registry, window, cx);
+            None
+        }
+    }
+}
+
+impl EditorView {
+    /// An update of the open project found a requirement no version meets
+    /// any more: plans the rewrites, as long as the registry takes, then
+    /// asks the requirements question listing them. The heading's Update
+    /// Plugins is held meanwhile. Without a rewrite to list after all, the
+    /// update's failure goes to Problems.
+    pub(crate) fn ask_about_requirements(
+        &mut self,
+        unmet: Unmet,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(registry) = self.registry.clone() else {
+            return;
+        };
+        let client = registry.read(cx).client().clone();
+        let found = self.found_plugins.clone();
+        self.preparing_update = true;
+        cx.notify();
+        cx.spawn_in(window, async move |view, cx| {
+            let (prepared, unmet) = cx
+                .background_executor()
+                .spawn(async move {
+                    let prepared = requirements_question(&unmet, &found, &client);
+                    (prepared, unmet)
+                })
+                .await;
+            view.update_in(cx, |this, window, cx| {
+                this.preparing_update = false;
+                cx.notify();
+                if this.found_plugins.project.as_ref() != Some(&prepared.root)
+                    || registry.read(cx).project_busy(&prepared.root)
+                {
+                    return;
+                }
+                if let Some((title, detail)) =
+                    ask_requirements(prepared, unmet, registry, window, cx)
+                {
+                    this.problems.report(Source::Registry, title, detail);
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::registry::RegistryEvent;
     use crate::scratch::scratch_dir;
     use celesta_plugin_host::{LockedArtifact, LockedPlugin, Lockfile};
     use celesta_registry_client::testing::{TestRegistry, plugin_files, tree_of, write_files};
     use celesta_registry_format::Hash;
     use gpui_kit::component::Root;
+    use gpui_kit::component::dialog::Confirm;
     use gpui_kit::{TestAppContext, VisualTestContext, px, size};
     use semver::Version;
+    use std::cell::RefCell;
     use std::collections::BTreeMap;
+    use std::rc::Rc;
 
     fn version(text: &str) -> Version {
         Version::parse(text).unwrap()
@@ -842,7 +971,7 @@ mod tests {
         let question = LockQuestion::Requirements {
             ids: vec!["acme.charts".to_owned(), "orphan".to_owned()],
         };
-        let prepared = prepare(question, &found, root, &client, false);
+        let prepared = prepare(question, &found, root, &client, false, Budget::Opening);
         assert_eq!(
             prepared.plan,
             Plan::Rewrites(vec![Rewrite {
@@ -896,9 +1025,23 @@ mod tests {
                 .unwrap()
         };
         set_mode(0o000);
-        let prepared = prepare(question, &found, root, &client, false);
+        let opening = prepare(
+            question.clone(),
+            &found,
+            root.clone(),
+            &client,
+            false,
+            Budget::Opening,
+        );
+        let clicked = prepare(question, &found, root, &client, false, Budget::Unlimited);
         set_mode(0o700);
-        assert_eq!(prepared.plan, Plan::Unknown);
+        assert_eq!(opening.plan, Plan::Unknown);
+        // Asked after a click, the question says why instead.
+        assert!(
+            matches!(&clicked.plan, Plan::Failed(reason) if !reason.is_empty()),
+            "{:?}",
+            clicked.plan
+        );
     }
 
     #[test]
@@ -928,6 +1071,7 @@ mod tests {
             user.0.join("prism"),
             &client,
             false,
+            Budget::Opening,
         );
         let LockQuestion::Download { items, .. } = prepared.question else {
             panic!("a download question");
@@ -1001,6 +1145,164 @@ mod tests {
         let asked_later = cx
             .update(|window, cx| ask_once(&mut asked, other.clone(), registry.clone(), window, cx));
         assert!(asked_later);
+    }
+
+    #[gpui_kit::test]
+    fn an_update_that_needs_a_rewrite_asks_before_changing_anything(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            celesta_editor_theme::init(cx);
+        });
+        let served = TestRegistry::file();
+        served.publish("acme.charts", "1.0.0", &["any"]);
+        let user = Folder(scratch_dir("lock-question"));
+        let root = user.0.join("prism");
+        std::fs::create_dir_all(&root).unwrap();
+        let config_path = root.join(celesta_plugin_host::PROJECT_CONFIG);
+        std::fs::write(
+            &config_path,
+            r#"{ "plugins": { "dependencies": { "acme.charts": "^0.5.0" } } }"#,
+        )
+        .unwrap();
+        let config = std::fs::read(&config_path).unwrap();
+        let client = Arc::new(EditorRegistry::for_test(&served, &user.0));
+        let registry = cx.new(|_| RegistryState::new(client.clone()));
+        let unmet = Rc::new(RefCell::new(None));
+        cx.update(|cx| {
+            let unmet = unmet.clone();
+            cx.subscribe(&registry, move |_, event: &RegistryEvent, _| {
+                if let RegistryEvent::RequirementsUnmet {
+                    project,
+                    ids,
+                    include_prereleases,
+                    title,
+                    detail,
+                } = event
+                {
+                    *unmet.borrow_mut() = Some(Unmet {
+                        root: project.clone(),
+                        ids: ids.clone(),
+                        include_prereleases: *include_prereleases,
+                        title: title.clone(),
+                        detail: detail.clone(),
+                    });
+                }
+            })
+            .detach();
+        });
+        let handle = cx.open_window(size(px(1000.), px(800.)), |window, cx| {
+            let view = cx.new(|_| Empty);
+            Root::new(view, window, cx)
+        });
+        let mut cx = VisualTestContext::from_window(handle.into(), cx);
+        registry.update(&mut cx, |state, cx| {
+            state.project_changed(Some(root.clone()), cx);
+            // A blocked plugin's Update to X: within the requirement.
+            state.update_offering(
+                root.clone(),
+                BTreeSet::from(["acme.charts".to_owned()]),
+                Vec::new(),
+                true,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        let unmet = unmet.borrow_mut().take().expect("the requirement is unmet");
+        assert_eq!(std::fs::read(&config_path).unwrap(), config, "nothing ran");
+
+        // The view's flow: plan, then ask, listing the rewrite.
+        let found = FoundPlugins {
+            project: Some(root.clone()),
+            dependencies: BTreeMap::from([("acme.charts".to_owned(), "^0.5.0".parse().unwrap())]),
+            ..FoundPlugins::default()
+        };
+        let prepared = requirements_question(&unmet, &found, &client);
+        assert_eq!(prepared.question.title(), "Update this project’s plugins?");
+        assert_eq!(
+            prepared.plan,
+            Plan::Rewrites(vec![Rewrite {
+                id: "acme.charts".to_owned(),
+                from: "^0.5.0".to_owned(),
+                to: "^1.0.0".to_owned(),
+            }])
+        );
+        let failure =
+            cx.update(|window, cx| ask_requirements(prepared, unmet, registry.clone(), window, cx));
+        cx.run_until_parked();
+        assert_eq!(failure, None);
+        assert!(cx.update(|window, cx| window.has_active_dialog(cx)));
+        assert_eq!(std::fs::read(&config_path).unwrap(), config, "asked first");
+
+        // Update Plugins applies the rewrite the question listed.
+        cx.dispatch_action(Confirm { secondary: false });
+        cx.run_until_parked();
+        let written = std::fs::read_to_string(&config_path).unwrap();
+        assert!(written.contains(r#""acme.charts": "^1.0.0""#), "{written}");
+    }
+
+    #[gpui_kit::test]
+    fn an_unknown_plan_rewrites_nothing_the_question_did_not_list(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            celesta_editor_theme::init(cx);
+        });
+        let served = TestRegistry::file();
+        served.publish("acme.charts", "1.0.0", &["any"]);
+        let user = Folder(scratch_dir("lock-question"));
+        let root = user.0.join("prism");
+        std::fs::create_dir_all(&root).unwrap();
+        let config_path = root.join(celesta_plugin_host::PROJECT_CONFIG);
+        std::fs::write(
+            &config_path,
+            r#"{ "plugins": { "dependencies": { "acme.charts": "^0.5.0" } } }"#,
+        )
+        .unwrap();
+        let config = std::fs::read(&config_path).unwrap();
+        let client = Arc::new(EditorRegistry::for_test(&served, &user.0));
+        let registry = cx.new(|_| RegistryState::new(client));
+        let events = Rc::new(RefCell::new(Vec::new()));
+        cx.update(|cx| {
+            let events = events.clone();
+            cx.subscribe(&registry, move |_, event: &RegistryEvent, _| {
+                events.borrow_mut().push(event.clone());
+            })
+            .detach();
+        });
+        let handle = cx.open_window(size(px(1000.), px(800.)), |window, cx| {
+            let view = cx.new(|_| Empty);
+            Root::new(view, window, cx)
+        });
+        let mut cx = VisualTestContext::from_window(handle.into(), cx);
+        registry.update(&mut cx, |state, cx| {
+            state.project_changed(Some(root.clone()), cx);
+        });
+        // The other-Celesta question, opened before the rewrites were known.
+        let prepared = Prepared {
+            root: root.clone(),
+            question: LockQuestion::OtherCelesta {
+                project: "prism".to_owned(),
+                locked: "0.9".to_owned(),
+                ids: vec!["acme.charts".to_owned()],
+            },
+            plan: Plan::Unknown,
+            host: "registry.celesta.studio".to_owned(),
+        };
+        cx.update(|window, cx| open_question(prepared, registry.clone(), window, cx));
+        cx.run_until_parked();
+        cx.dispatch_action(Confirm { secondary: false });
+        cx.run_until_parked();
+
+        // Update Plugins ran within the requirement: nothing is rewritten,
+        // and the requirements question is due instead.
+        assert_eq!(std::fs::read(&config_path).unwrap(), config);
+        assert!(
+            matches!(
+                events.borrow().as_slice(),
+                [RegistryEvent::RequirementsUnmet { project, .. }] if *project == root
+            ),
+            "{:?}",
+            events.borrow()
+        );
     }
 
     struct Empty;

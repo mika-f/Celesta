@@ -11,11 +11,11 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use celesta_plugin_host::{Lockfile, UserSettings, project_dependencies};
+use celesta_plugin_host::{Lockfile, UserSettings};
 use celesta_registry_client::{
-    ClientError, OfferInput, OfferScope, Progress, Registry, Rewrite, TransportError,
+    ClientError, OfferInput, OfferScope, Progress, Registry, ResolveError, Rewrite, TransportError,
     add_dependency, install_global, install_locked, offered_requirement, offered_version,
-    plan_update, prereleases_by_default, remove_dependency, update_dependencies,
+    prereleases_by_default, remove_dependency, update_dependencies,
 };
 use celesta_registry_format::{Index, SearchList};
 use gpui_kit::{Context, EventEmitter, Task};
@@ -77,14 +77,28 @@ pub(crate) enum Fetch<T> {
 pub(crate) enum RegistryEvent {
     /// Store or settings changed: rediscover; `project` is Some(root) when its lock changed, so it reloads.
     PluginsChanged { project: Option<PathBuf> },
-    /// An update rewrote these requirements in the project's
-    /// `celesta.config.json` without a question listing them first.
-    Rewrote {
+    /// An update within the requirements of the open project at `project`
+    /// found a requirement in `celesta.config.json` that no version meets
+    /// any more; nothing was changed. The requirements question lists the
+    /// rewrites (planned offering pre-releases when `include_prereleases`)
+    /// before any runs; without one to list, `title` and `detail` say why
+    /// the update failed.
+    RequirementsUnmet {
         project: PathBuf,
-        rewrites: Vec<Rewrite>,
+        ids: BTreeSet<String>,
+        include_prereleases: bool,
+        title: String,
+        detail: String,
     },
     Failed {
         id: Option<String>,
+        title: String,
+        detail: String,
+    },
+    /// A job for the project at `project`, no longer open, failed; nothing
+    /// reopens for it.
+    FailedElsewhere {
+        project: PathBuf,
         title: String,
         detail: String,
     },
@@ -134,6 +148,10 @@ struct Job {
     /// What the page says when it fails, unless the registry could not be
     /// reached.
     failure: String,
+    /// An update within the requirements: when one cannot be met, the
+    /// requirements question is asked (planned offering pre-releases when
+    /// `true`) instead of reporting a failure.
+    asks_rewrites: Option<bool>,
     run: Run,
 }
 
@@ -147,15 +165,12 @@ struct Done {
     changed: bool,
     /// The ids that have no newer version after all.
     no_newer: Vec<String>,
-    /// The requirements it rewrote that no question showed beforehand.
-    rewrote: Vec<Rewrite>,
 }
 
 impl Done {
     const CHANGED: Self = Self {
         changed: true,
         no_newer: Vec::new(),
-        rewrote: Vec::new(),
     };
 }
 
@@ -311,6 +326,7 @@ impl RegistryState {
                 ids: vec![id.to_owned()],
                 project: None,
                 failure: format!("Couldn’t install {id}"),
+                asks_rewrites: None,
                 run: Box::new(move |client, progress| {
                     let registry = client.registry()?;
                     let env = client.environment(&registry, Some(progress));
@@ -345,6 +361,7 @@ impl RegistryState {
                 } else {
                     format!("Couldn’t add {id} to this project")
                 },
+                asks_rewrites: None,
                 run: Box::new(move |client, progress| {
                     let registry = client.registry()?;
                     let env = client.environment(&registry, Some(progress));
@@ -356,9 +373,11 @@ impl RegistryState {
         )
     }
 
-    /// Applies `rewrites` to the project at `root` and locks and installs
-    /// `ids` again; an id whose locked version stays is one with no newer
-    /// version.
+    /// Applies `rewrites` (ones a question listed) to the project at
+    /// `root` and locks and installs `ids` again; an id whose locked
+    /// version stays is one with no newer version. Without rewrites, a
+    /// requirement no version meets any more asks the requirements question
+    /// ([`RegistryEvent::RequirementsUnmet`]); nothing is rewritten unseen.
     pub(crate) fn update(
         &mut self,
         root: PathBuf,
@@ -366,35 +385,26 @@ impl RegistryState {
         rewrites: Vec<Rewrite>,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.update_with(root, ids, Some(rewrites), cx)
+        let include_prereleases = self.include_prereleases;
+        self.update_offering(root, ids, rewrites, include_prereleases, cx)
     }
 
-    /// [`Self::update`] with the rewrites `plan_update` finds when it runs,
-    /// for ids that can no longer be resolved within their requirement;
-    /// the rewrites it made are announced ([`RegistryEvent::Rewrote`]).
-    pub(crate) fn update_planned(
+    /// [`Self::update`] whose requirements question, if it asks one,
+    /// offers pre-releases when `include_prereleases`, whatever the page's
+    /// checkbox says.
+    pub(crate) fn update_offering(
         &mut self,
         root: PathBuf,
         ids: BTreeSet<String>,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        self.update_with(root, ids, None, cx)
-    }
-
-    /// [`Self::update`] with `rewrites`, or, with `None`, the ones planned
-    /// when the job runs.
-    fn update_with(
-        &mut self,
-        root: PathBuf,
-        ids: BTreeSet<String>,
-        rewrites: Option<Vec<Rewrite>>,
+        rewrites: Vec<Rewrite>,
+        include_prereleases: bool,
         cx: &mut Context<Self>,
     ) -> bool {
         let failure = match ids.iter().collect::<Vec<_>>().as_slice() {
             [id] => format!("Couldn’t update {id}"),
             _ => "Couldn’t update this project’s plugins".to_owned(),
         };
-        let include_prereleases = self.include_prereleases;
+        let asks_rewrites = rewrites.is_empty().then_some(include_prereleases);
         let project = root.clone();
         let updated = ids.clone();
         self.start(
@@ -403,27 +413,11 @@ impl RegistryState {
                 ids: ids.into_iter().collect(),
                 project: Some(root),
                 failure,
+                asks_rewrites,
                 run: Box::new(move |client, progress| {
                     let before = Lockfile::load(&project)?;
                     let registry = client.registry()?;
                     let env = client.environment(&registry, Some(progress));
-                    let (rewrites, planned) = match rewrites {
-                        Some(rewrites) => (rewrites, false),
-                        None => {
-                            // A locked plugin celesta.config.json no longer
-                            // names has no requirement to plan for.
-                            let declared = project_dependencies(&project)?.dependencies;
-                            let planned: BTreeSet<String> = updated
-                                .iter()
-                                .filter(|id| declared.contains_key(*id))
-                                .cloned()
-                                .collect();
-                            (
-                                plan_update(&env, &project, &planned, include_prereleases)?,
-                                true,
-                            )
-                        }
-                    };
                     let outcome = update_dependencies(&env, &project, &updated, &rewrites)?;
                     let version = |lock: &Lockfile, id: &str| {
                         lock.plugins.get(id).map(|locked| locked.version.clone())
@@ -439,7 +433,6 @@ impl RegistryState {
                     Ok(Done {
                         changed: true,
                         no_newer,
-                        rewrote: if planned { rewrites } else { Vec::new() },
                     })
                 }),
             },
@@ -452,6 +445,18 @@ impl RegistryState {
     /// one; otherwise `id` has no newer version.
     pub(crate) fn update_global(&mut self, id: &str, cx: &mut Context<Self>) -> bool {
         let include_prereleases = self.include_prereleases;
+        self.update_global_offering(id, include_prereleases, cx)
+    }
+
+    /// [`Self::update_global`] offering pre-releases when
+    /// `include_prereleases`, whatever the page's checkbox says: a blocked
+    /// plugin's fix may be one.
+    pub(crate) fn update_global_offering(
+        &mut self,
+        id: &str,
+        include_prereleases: bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let plugin = id.to_owned();
         self.start(
             Job {
@@ -459,6 +464,7 @@ impl RegistryState {
                 ids: vec![id.to_owned()],
                 project: None,
                 failure: format!("Couldn’t update {id}"),
+                asks_rewrites: None,
                 run: Box::new(move |client, progress| {
                     let settings = UserSettings::load(client.settings_path())?;
                     let installed = settings
@@ -492,7 +498,6 @@ impl RegistryState {
                         _ => Ok(Done {
                             changed: false,
                             no_newer: vec![plugin],
-                            rewrote: Vec::new(),
                         }),
                     }
                 }),
@@ -511,6 +516,7 @@ impl RegistryState {
                 ids: vec![id.to_owned()],
                 project: Some(root),
                 failure: format!("Couldn’t remove {id} from this project"),
+                asks_rewrites: None,
                 run: Box::new(move |_, _| {
                     remove_dependency(&project, &plugin)?;
                     Ok(Done::CHANGED)
@@ -530,6 +536,7 @@ impl RegistryState {
                 ids: vec![id.to_owned()],
                 project: None,
                 failure: format!("Couldn’t uninstall {id}"),
+                asks_rewrites: None,
                 run: Box::new(move |client, _| {
                     let path = client.settings_path();
                     let mut settings = UserSettings::load(path)?;
@@ -544,7 +551,6 @@ impl RegistryState {
                     Ok(Done {
                         changed,
                         no_newer: Vec::new(),
-                        rewrote: Vec::new(),
                     })
                 }),
             },
@@ -562,6 +568,7 @@ impl RegistryState {
                 ids: Vec::new(),
                 project: Some(root),
                 failure: "Couldn’t download this project’s plugins".to_owned(),
+                asks_rewrites: None,
                 run: Box::new(move |client, progress| {
                     let registry = client.registry()?;
                     let env = client.environment(&registry, Some(progress));
@@ -652,6 +659,7 @@ impl RegistryState {
             ids,
             project,
             failure,
+            asks_rewrites,
             run,
         } = job;
         for id in &ids {
@@ -709,18 +717,8 @@ impl RegistryState {
                     }
                 }
             });
-            let mut result = task.await;
+            let result = task.await;
             this.update(cx, |state, cx| {
-                // Rewritten files are worth a note even when another
-                // project is open now.
-                if let (Ok(done), Some(root)) = (&mut result, &project)
-                    && !done.rewrote.is_empty()
-                {
-                    cx.emit(RegistryEvent::Rewrote {
-                        project: root.clone(),
-                        rewrites: std::mem::take(&mut done.rewrote),
-                    });
-                }
                 for id in ids.iter().chain(adopted.borrow().iter()) {
                     state.in_flight.remove(id);
                 }
@@ -731,9 +729,17 @@ impl RegistryState {
                     None => state.settings_busy = false,
                 }
                 // The files on disk are consistent either way; another
-                // project open now does not hear about this one's.
-                if project.is_none() || project == state.project {
-                    state.finish(ids, project, failure, result, cx);
+                // project open now hears only of this one's failure.
+                match (&project, result) {
+                    (Some(root), Err(error)) if project != state.project => {
+                        cx.emit(RegistryEvent::FailedElsewhere {
+                            project: root.clone(),
+                            title: failure_title(&ids, failure, &error),
+                            detail: error_chain(error.as_ref()),
+                        });
+                    }
+                    (Some(_), Ok(_)) if project != state.project => {}
+                    (_, result) => state.finish(ids, project, failure, asks_rewrites, result, cx),
                 }
                 cx.notify();
             })
@@ -764,6 +770,7 @@ impl RegistryState {
         ids: Vec<String>,
         project: Option<PathBuf>,
         failure: String,
+        asks_rewrites: Option<bool>,
         result: anyhow::Result<Done>,
         cx: &mut Context<Self>,
     ) {
@@ -775,14 +782,19 @@ impl RegistryState {
                 }
             }
             Err(error) => {
-                let title = if unreachable(&error) {
-                    match ids.as_slice() {
-                        [id] => format!("Couldn’t download {id}. Check your connection and try again."),
-                        _ => "Couldn’t download this project’s plugins. Check your connection and try again.".to_owned(),
-                    }
-                } else {
-                    failure
-                };
+                let title = failure_title(&ids, failure, &error);
+                if let (Some(include_prereleases), Some(root)) = (asks_rewrites, &project)
+                    && requirement_unmet(&error)
+                {
+                    cx.emit(RegistryEvent::RequirementsUnmet {
+                        project: root.clone(),
+                        ids: ids.into_iter().collect(),
+                        include_prereleases,
+                        title,
+                        detail: error_chain(error.as_ref()),
+                    });
+                    return;
+                }
                 for id in &ids {
                     self.failures.insert(id.clone(), title.clone());
                 }
@@ -830,6 +842,30 @@ fn fetch<T>(
         }
         Err(error) => Fetch::Failed(error_chain(&error)),
     }
+}
+
+/// What a failed job's `failure` says: unless the registry could not be
+/// reached, when it says to try again.
+fn failure_title(ids: &[String], failure: String, error: &anyhow::Error) -> String {
+    if !unreachable(error) {
+        return failure;
+    }
+    match ids {
+        [id] => format!("Couldn’t download {id}. Check your connection and try again."),
+        _ => "Couldn’t download this project’s plugins. Check your connection and try again."
+            .to_owned(),
+    }
+}
+
+/// Whether `error` is a requirement in `celesta.config.json` that no
+/// version meets.
+fn requirement_unmet(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<ResolveError>(),
+            Some(ResolveError::NoVersion { .. })
+        )
+    })
 }
 
 /// Whether `error` comes from the registry or an archive not being
@@ -1125,41 +1161,112 @@ mod tests {
         );
     }
 
-    #[gpui_kit::test]
-    fn an_update_planned_as_it_runs_announces_its_rewrites(cx: &mut TestAppContext) {
-        let fixture = Fixture::new(cx);
-        let root = fixture.project("old");
-        // Nothing the registry has meets this requirement.
+    /// A project at `name` whose `celesta.config.json` asks for an
+    /// `acme.charts` the registry does not have (`^0.5.0`).
+    fn unmet_project(fixture: &Fixture, name: &str) -> PathBuf {
+        let root = fixture.project(name);
         std::fs::write(
             root.join(PROJECT_CONFIG),
             r#"{ "plugins": { "dependencies": { "acme.charts": "^0.5.0" } } }"#,
         )
         .unwrap();
+        root
+    }
+
+    #[gpui_kit::test]
+    fn an_unmet_requirement_asks_instead_of_rewriting(cx: &mut TestAppContext) {
+        let fixture = Fixture::new(cx);
+        let root = unmet_project(&fixture, "old");
+        let config = std::fs::read(root.join(PROJECT_CONFIG)).unwrap();
         fixture.open(cx, Some(&root));
+        let include = fixture.read(cx, |state| state.include_prereleases);
+        let ids = BTreeSet::from(["acme.charts".to_owned()]);
         let started = fixture.state.update(cx, |state, cx| {
-            // acme.codec is no dependency (a lock's orphan, say): nothing
-            // is planned for it.
-            let ids = BTreeSet::from(["acme.charts".to_owned(), "acme.codec".to_owned()]);
-            state.update_planned(root.clone(), ids, cx)
+            state.update(root.clone(), ids.clone(), Vec::new(), cx)
         });
         assert!(started);
         cx.run_until_parked();
 
+        let events = fixture.events();
+        let [
+            RegistryEvent::RequirementsUnmet {
+                project,
+                ids: asked,
+                include_prereleases,
+                title,
+                detail,
+            },
+        ] = events.as_slice()
+        else {
+            panic!("{events:?}");
+        };
+        assert_eq!(project, &root);
+        assert_eq!(asked, &ids);
+        assert_eq!(*include_prereleases, include);
+        assert_eq!(title, "Couldn’t update acme.charts");
+        assert!(detail.contains("^0.5.0"), "{detail}");
+        // Nothing was rewritten, and the page shows no failure: the
+        // question comes instead.
+        assert_eq!(std::fs::read(root.join(PROJECT_CONFIG)).unwrap(), config);
+        assert!(!root.join(LOCK_FILE).exists());
+        assert!(fixture.read(cx, |state| state.failures.is_empty()));
+        assert!(!fixture.read(cx, |state| state.project_busy(&root)));
+    }
+
+    #[gpui_kit::test]
+    fn the_question_can_offer_pre_releases_for_a_fix(cx: &mut TestAppContext) {
+        let fixture = Fixture::new(cx);
+        let root = unmet_project(&fixture, "fix");
+        fixture.open(cx, Some(&root));
+        fixture.state.update(cx, |state, cx| {
+            state.include_prereleases = false;
+            state.update_offering(
+                root.clone(),
+                BTreeSet::from(["acme.charts".to_owned()]),
+                Vec::new(),
+                true,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        assert!(
+            matches!(
+                fixture.events().as_slice(),
+                [RegistryEvent::RequirementsUnmet {
+                    include_prereleases: true,
+                    ..
+                }]
+            ),
+            "{:?}",
+            fixture.events()
+        );
+    }
+
+    #[gpui_kit::test]
+    fn rewrites_a_question_listed_are_applied(cx: &mut TestAppContext) {
+        let fixture = Fixture::new(cx);
+        let root = unmet_project(&fixture, "asked");
+        fixture.open(cx, Some(&root));
+        let rewrites = vec![Rewrite {
+            id: "acme.charts".to_owned(),
+            from: "^0.5.0".to_owned(),
+            to: "^1.0.0".to_owned(),
+        }];
+        fixture.state.update(cx, |state, cx| {
+            state.update(
+                root.clone(),
+                BTreeSet::from(["acme.charts".to_owned()]),
+                rewrites,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
         assert_eq!(
             fixture.events(),
-            [
-                RegistryEvent::Rewrote {
-                    project: root.clone(),
-                    rewrites: vec![Rewrite {
-                        id: "acme.charts".to_owned(),
-                        from: "^0.5.0".to_owned(),
-                        to: "^1.0.0".to_owned(),
-                    }],
-                },
-                RegistryEvent::PluginsChanged {
-                    project: Some(root.clone())
-                },
-            ]
+            [RegistryEvent::PluginsChanged {
+                project: Some(root.clone())
+            }]
         );
         let config = std::fs::read_to_string(root.join(PROJECT_CONFIG)).unwrap();
         assert!(config.contains(r#""acme.charts": "^1.0.0""#), "{config}");
@@ -1168,34 +1275,38 @@ mod tests {
     }
 
     #[gpui_kit::test]
-    fn rewrites_for_a_project_no_longer_open_are_still_announced(cx: &mut TestAppContext) {
+    fn a_failure_for_a_project_no_longer_open_is_still_announced(cx: &mut TestAppContext) {
         let fixture = Fixture::new(cx);
-        let root = fixture.project("old");
+        let root = unmet_project(&fixture, "old");
         let other = fixture.project("other");
-        std::fs::write(
-            root.join(PROJECT_CONFIG),
-            r#"{ "plugins": { "dependencies": { "acme.charts": "^0.5.0" } } }"#,
-        )
-        .unwrap();
         fixture.open(cx, Some(&root));
         fixture.state.update(cx, |state, cx| {
-            state.update_planned(root.clone(), BTreeSet::from(["acme.charts".to_owned()]), cx)
+            state.update(
+                root.clone(),
+                BTreeSet::from(["acme.charts".to_owned()]),
+                Vec::new(),
+                cx,
+            )
         });
         fixture.open(cx, Some(&other));
         cx.run_until_parked();
 
-        // The rewrite is announced; the reload is not, as the project closed.
-        assert_eq!(
-            fixture.events(),
-            [RegistryEvent::Rewrote {
-                project: root,
-                rewrites: vec![Rewrite {
-                    id: "acme.charts".to_owned(),
-                    from: "^0.5.0".to_owned(),
-                    to: "^1.0.0".to_owned(),
-                }],
-            }]
-        );
+        // No question for a project that is not open, and no reload.
+        let events = fixture.events();
+        let [
+            RegistryEvent::FailedElsewhere {
+                project,
+                title,
+                detail,
+            },
+        ] = events.as_slice()
+        else {
+            panic!("{events:?}");
+        };
+        assert_eq!(project, &root);
+        assert_eq!(title, "Couldn’t update acme.charts");
+        assert!(detail.contains("^0.5.0"), "{detail}");
+        assert!(fixture.read(cx, |state| state.failures.is_empty()));
     }
 
     #[gpui_kit::test]

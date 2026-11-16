@@ -729,13 +729,6 @@ impl EditorView {
                         if page_was_open {
                             this.focus_editor(window, cx);
                         }
-                        if let Some(note) = this.rewrite_note.take() {
-                            this.problems.info_without_toast(
-                                Source::Registry,
-                                note.title,
-                                note.detail,
-                            );
-                        }
                         this.ask_about_pending_plugins(window, cx);
                         // After the approval question: one that is up holds
                         // this one back until the project opens again.
@@ -795,7 +788,6 @@ impl EditorView {
         next.asked_plugins = std::mem::take(&mut self.asked_plugins);
         next.asked_locks = std::mem::take(&mut self.asked_locks);
         next.announced_blocks = std::mem::take(&mut self.announced_blocks);
-        next.rewrite_note = self.rewrite_note.take();
         next.preparing_update = self.preparing_update;
         // A reload of the same entry keeps its history; another file starts empty.
         next.edit_history = std::mem::take(&mut self.edit_history);
