@@ -17,8 +17,8 @@
 - Tests: Vitest, TypeScript (`.test.mts`), `import assert from 'node:assert/strict'`, importing `../src`. During red/green run only the new test file; run the package's full `pnpm --filter <pkg> test` once at the end of the task. Never chain a commit and a test run in one command.
 - Run `pnpm install && pnpm run build:runtime` once before the first test run (packages resolve each other's `dist`).
 - Each task updates, in the same branch: the skill reference(s) under `skills/celesta/references/` (and `skills/celesta/SKILL.md`'s package table when a new name is exported), the user guide in both `packages/website/content/en/` and `packages/website/content/ja/` (the pages that already document the neighbouring API), and a new note `docs/handoff/2026-11-16-<task>.md` (specification, implementation details, checks run).
-- Committed text is public: no scratch paths, no mention of where the ideas came from, no cleanup narration.
-- Never amend. Commit messages end with `Co-Authored-By: Claude Mythos 5.2 <noreply@anthropic.com>`.
+- Committed text is public: no scratch paths and no cleanup narration.
+- Never amend.
 - Branches: Task 1 `claude/easing-factories` (exists, checked out), Task 2 `claude/keyframes-helper`, Task 3 `claude/typewriter-frames`, Task 4 `claude/text-reveal-units`. Start each later task with `gh stack add <branch>` from the previous task's branch. Do not push or open PRs inside a task.
 
 ## Review Focus
@@ -339,4 +339,4 @@ Write each with concrete numbers from the stub (no placeholders in the committed
 ## After the last task
 
 - `gh stack view --json`: four branches, none needing a rebase. Run `pnpm run test:runtime` on the top branch only.
-- `gh stack submit --auto --remote origin`, then `gh pr edit` each PR: a body a reviewer can reproduce from (what the API is, the test command, the example to open), screenshots attached with `gh pr edit --attach` for Tasks 2 and 4, ending with the attribution line. No mention of the stack's inspiration.
+- `gh stack submit --auto --remote origin`, then `gh pr edit` each PR: a body a reviewer can reproduce from (what the API is, the test command, the example to open), screenshots attached with `gh pr edit --attach` for Tasks 2 and 4.
