@@ -3,7 +3,7 @@
 import * as React from 'react';
 import type { ReactNode } from 'react';
 
-import { Easings, Group, Text, progress, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
+import { Easings, Group, Text, progress, textCaret, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
 import type { CommonProps, TextStyle } from '@celesta.studio/react';
 import {
   CompositionRuntimeContext,
@@ -18,6 +18,14 @@ import {
   withTextRuns,
 } from '@celesta.studio/react/internal';
 import type { FlatText, MeasureTextRequest } from '@celesta.studio/react/internal';
+
+import { graphemes } from './emphasis';
+import { phrases } from './phrases';
+
+/** What `<TextReveal>` reveals on its own. */
+export type TextRevealUnit = 'line' | 'word' | 'phrase' | 'grapheme';
+
+const TEXT_REVEAL_UNITS: readonly string[] = ['line', 'word', 'phrase', 'grapheme'];
 
 export interface TextRevealProps extends CommonProps {
   /**
@@ -46,11 +54,29 @@ export interface TextRevealProps extends CommonProps {
   baseline?: number;
   /** Horizontal pivot of every line: 0 left, 0.5 center, 1 right. Defaults to 0. */
   align?: number;
-  /** Frame the first line starts moving. Defaults to 0. */
+  /**
+   * What is revealed on its own, one after another:
+   *
+   * - `'line'` (default): each line.
+   * - `'word'`: each run of characters between spaces, punctuation kept
+   *   with its word. Text without spaces, such as Japanese, is one word per
+   *   line.
+   * - `'phrase'`: each Japanese phrase (文節), as `phrases()` splits a line.
+   * - `'grapheme'`: each character as a reader sees it (an emoji or a
+   *   letter with its accents is one).
+   *
+   * Units finer than a line are placed by measuring each line, so they need
+   * the editor, the exporter, or the browser preview runtime. Each unit is
+   * drawn as text of its own: kerning and ligatures across units are lost,
+   * and scripts whose letters join (Arabic) should stay with `'line'` or
+   * `'word'`.
+   */
+  unit?: TextRevealUnit;
+  /** Frame the first line (or unit) starts moving. Defaults to 0. */
   from?: number;
-  /** Frames between one line and the next. Defaults to 4. */
+  /** Frames between one line (or unit) and the next, counted in reading order across lines. Defaults to 4. */
   stagger?: number;
-  /** Frames each line takes to arrive. Defaults to 20. */
+  /** Frames each line (or unit) takes to arrive. Defaults to 20. */
   durationInFrames?: number;
   easing?: (t: number) => number;
   /** `'in'` (default) rises into place; `'out'` sinks away. */
@@ -77,6 +103,7 @@ export function TextReveal({
   lineHeight,
   baseline = 0.8,
   align = 0,
+  unit = 'line',
   from = 0,
   stagger = 4,
   durationInFrames = 20,
@@ -84,6 +111,9 @@ export function TextReveal({
   direction = 'in',
   ...groupProps
 }: TextRevealProps): React.ReactElement {
+  if (!TEXT_REVEAL_UNITS.includes(unit)) {
+    throw new Error(`<TextReveal> unit must be 'line', 'word', 'phrase', or 'grapheme', got ${JSON.stringify(unit)}`);
+  }
   const theme = React.useContext(ThemeContext);
   style = themedTextStyle(style, {}, theme, '<TextReveal>');
   const flat = flattenTextContent(themeTextContent(children, theme), '<TextReveal> children');
@@ -96,13 +126,21 @@ export function TextReveal({
   }
   // Each line is its own single-line Text, so the multi-line spacing is ours.
   const { lineHeight: _lineHeight, ...lineStyle } = style ?? {};
+  const ranges = useLineRanges(flat, style ?? {}, maxWidth);
+  // Line widths are not needed, so the mask spans far past any line's width.
+  const maskWidth = width * 4;
+  if (unit !== 'line') {
+    // A component of its own: it measures every line, which the lines alone never need.
+    return React.createElement(RevealUnits, {
+      groupProps, flat, ranges, style: style ?? {}, lineStyle, unit, height, baseline, align, maskWidth,
+      frame, from, stagger, durationInFrames, easing, direction,
+    });
+  }
   // Each line keeps the runs inside it, rebased to its first code point.
-  const lines = useLineRanges(flat, style ?? {}, maxWidth).map(([start, end]) => {
+  const lines = ranges.map(([start, end]) => {
     const line = sliceTextRuns(flat, start, end);
     return { text: line.text, style: withTextRuns(lineStyle, line, '<TextReveal>') };
   });
-  // Line widths are not needed, so the mask spans far past any line's width.
-  const maskWidth = width * 4;
   return React.createElement(
     Group,
     groupProps,
@@ -122,6 +160,149 @@ export function TextReveal({
       );
     }),
   );
+}
+
+interface RevealUnitsProps {
+  groupProps: CommonProps;
+  flat: FlatText;
+  /** Code-point range of each line in `flat`. */
+  ranges: [number, number][];
+  style: TextStyle;
+  /** `style` without its `lineHeight`: what each piece is drawn with. */
+  lineStyle: TextStyle;
+  unit: Exclude<TextRevealUnit, 'line'>;
+  height: number;
+  baseline: number;
+  align: number;
+  maskWidth: number;
+  frame: number;
+  from: number;
+  stagger: number;
+  durationInFrames: number;
+  easing: (t: number) => number;
+  direction: 'in' | 'out';
+}
+
+/**
+ * `<TextReveal>` for a unit finer than a line: every unit is a clipped,
+ * sliding `Text` of its own, placed where the measured line puts it.
+ */
+function RevealUnits({
+  groupProps, flat, ranges, style, lineStyle, unit, height, baseline, align, maskWidth,
+  frame, from, stagger, durationInFrames, easing, direction,
+}: RevealUnitsProps): React.ReactElement {
+  const runtime = React.useContext(CompositionRuntimeContext);
+  const fonts = useMeasurementFonts();
+  // What moves a glyph: not color, and not the alignment or leading of a
+  // paragraph, since each line is measured alone.
+  const { colorRuns, visibleCharacters, fill, stroke, align: _align, lineHeight: _lineHeight, ...layoutStyle } =
+    withInheritedText(style, runtime ?? {});
+  const characters = Array.from(flat.text);
+  const lines = ranges.map(([start, end]) => {
+    const line = sliceTextRuns(flat, start, end);
+    const lineCharacters = characters.slice(start, end);
+    return {
+      start,
+      text: line.text,
+      characters: lineCharacters,
+      units: unitRanges(lineCharacters, unit),
+      // The line as it is measured: its font runs, without its colors.
+      request: { text: line.text, style: withTextRuns(layoutStyle, { ...line, colorRuns: [] }, '<TextReveal>'), fonts },
+    };
+  });
+  const key = JSON.stringify(lines.map((line) => ({ request: line.request, units: line.units })));
+  const placed = React.useMemo(() => {
+    const measure = synchronousMeasurer('<TextReveal unit>');
+    const parsed = JSON.parse(key) as { request: MeasureTextRequest; units: [number, number][] }[];
+    return parsed.map(({ request, units }) => {
+      if (units.length === 0) return { width: 0, xs: [] as number[] };
+      const metrics = measure(request);
+      const glyphs = glyphsOf(metrics);
+      const lineCharacters = Array.from(request.text);
+      const xs = units.map(([unitStart]) => {
+        if (unitStart === 0) return 0;
+        if (glyphs && glyphs.length > 0) return textCaret(metrics, unitStart).x;
+        // No glyph positions (the browser): the width of the text before the unit.
+        const before = sliceTextRuns({ text: request.text, colorRuns: [], fontRuns: request.style.fontRuns ?? [] }, 0, unitStart);
+        return measure({
+          ...request,
+          text: lineCharacters.slice(0, unitStart).join(''),
+          style: { ...request.style, fontRuns: before.fontRuns.length > 0 ? before.fontRuns : undefined },
+        }).width;
+      });
+      return { width: metrics.width, xs };
+    });
+  }, [key]);
+
+  let index = 0;
+  const layers = lines.flatMap((line, lineIndex) => line.units.map(([unitStart, unitEnd], unitIndex) => {
+    const p = progress(frame, from + index * stagger, durationInFrames, easing);
+    const shown = direction === 'in' ? p : 1 - p;
+    const piece = sliceTextRuns(flat, line.start + unitStart, line.start + unitEnd);
+    index += 1;
+    return React.createElement(
+      Group,
+      {
+        key: `${lineIndex}-${unitIndex}`,
+        x: placed[lineIndex].xs[unitIndex] - align * placed[lineIndex].width,
+        y: lineIndex * height,
+        clip: { x: -maskWidth / 2, width: maskWidth, height },
+      },
+      React.createElement(Text, {
+        y: height * baseline + height * (1 - shown),
+        anchorY: 'baseline',
+        style: withTextRuns(lineStyle, piece, '<TextReveal>'),
+        children: piece.text,
+      }),
+    );
+  }));
+  return React.createElement(Group, groupProps, layers);
+}
+
+/** The shaped clusters, or null where the measurer has none (the browser). */
+function glyphsOf(metrics: { glyphs: unknown[] }): unknown[] | null {
+  try {
+    return metrics.glyphs;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The code-point range of each unit in a line, in reading order. Whitespace
+ * belongs to no unit: it keeps its width in the line but is never drawn.
+ */
+function unitRanges(characters: readonly string[], unit: Exclude<TextRevealUnit, 'line'>): [number, number][] {
+  const blank = (character: string): boolean => /^\s+$/u.test(character);
+  // Trims whitespace from both ends of a range; null when nothing is left.
+  const trimmed = (start: number, end: number): [number, number] | null => {
+    while (start < end && blank(characters[start])) start += 1;
+    while (end > start && blank(characters[end - 1])) end -= 1;
+    return start < end ? [start, end] : null;
+  };
+  const ranges: [number, number][] = [];
+  if (unit === 'word') {
+    let start = -1;
+    characters.forEach((character, index) => {
+      if (blank(character)) {
+        if (start >= 0) ranges.push([start, index]);
+        start = -1;
+      } else if (start < 0) {
+        start = index;
+      }
+    });
+    if (start >= 0) ranges.push([start, characters.length]);
+    return ranges;
+  }
+  const text = characters.join('');
+  let offset = 0;
+  for (const part of unit === 'phrase' ? phrases(text) : graphemes(text)) {
+    const length = Array.from(part).length;
+    const range = trimmed(offset, offset + length);
+    if (range) ranges.push(range);
+    offset += length;
+  }
+  return ranges;
 }
 
 /**
