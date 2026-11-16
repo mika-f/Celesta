@@ -50,6 +50,7 @@
         "commit": "0123456789abcdef0123456789abcdef01234567",
         "workflow": ".github/workflows/package.yml"
       },
+      "license": "MIT OR Apache-2.0",
       "targets": {
         "macos-aarch64": {
           "url": "https://registry.celesta.studio/archives/vrm/0.2.3/macos-aarch64.zip",

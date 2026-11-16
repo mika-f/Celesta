@@ -163,7 +163,7 @@ Celesta は、ロックしたバージョンを、`--plugin-dir` と `CELESTA_PL
 | コマンド | 内容 |
 | --- | --- |
 | `celesta plugin search <text>` | id か説明にその文字列を含むレジストリのプラグインを、最新バージョンと説明と一緒に一覧表示します。 |
-| `celesta plugin info <id>` | プラグインの公開者と役割、各バージョンの対応する Celesta のバージョン・ターゲット・状態（`published`、`deprecated`、`yanked`、`withdrawn`、`blocked (<advisory>)`）、このプロジェクトがロックしているか、すべてのプロジェクト用に入っているかを表示します。 |
+| `celesta plugin info <id>` | プラグインの公開者と役割、最も新しいバージョンのライセンス（宣言がなければ `license: not declared`）、各バージョンの対応する Celesta のバージョン・ターゲット・状態（`published`、`deprecated`、`yanked`、`withdrawn`、`blocked (<advisory>)`）、このプロジェクトがロックしているか、すべてのプロジェクト用に入っているかを表示します。 |
 | `celesta plugin add <id>[@<req>]` | プラグインを `plugins.dependencies` に加えてロックし、ダウンロードします。要件を省略すると、選んだバージョンを `"1.2.3"`（1.2.3 以降の 1.x）のように書きます。途中で失敗したときは、`celesta.config.json` と `celesta.lock` は元のままです。 |
 | `celesta plugin remove <id>` | プラグインを `plugins.dependencies` と `celesta.lock` から外します。ネットワークは使いません。ダウンロードしたものは `gc` まで残ります。 |
 | `celesta plugin install` | `celesta.lock` にあるものをダウンロードします。ロックが `celesta.config.json` と合わないとき（まだない、または要件が変わった）は、先にプロジェクトをロックし直し、まだ合うロック済みのバージョンはそのまま残して、`wrote celesta.lock` と表示します。 |
@@ -516,6 +516,19 @@ export default function Root() {
 `name` はモジュールが export するコンポーネント名で、英大文字で始まり、英字・数字・`_` が続きます。`label` はメニューに表示する名前です（省略すると `name`）。`src`（`"image"` または `"video"`）があると Image と同じように追加され、アプリはファイルを尋ねて `src`・`x`・`y`・`width` を書きます。`"src": "model"` は、3D モデルのようにプラグインが自分で読むファイルのためのものです。受け取るファイルの種類を `extensions` に（英小文字と数字、ドットなし、重複なし。`["glb"]` など）、レイヤーの幅÷高さを `aspect` に（1/16384〜16384。省略できません）書くと、アプリはその縦横比で枠を描きます。アプリはその種類のファイルだけを受け付け、Image と同じく `src`・`x`・`y`・`width` を書きます。`height` は書かないので、コンポーネント自身の既定の縦横比を `aspect` と同じにしてください。違うと、描いた枠とレイヤーが一致しません。`src` がなければ四角形として描かれ、`x`・`y`・`width`・`height` を書きます。`props` はそのあとに書かれる props です。名前には英字・数字・`_` を使い、値は文字列・数値・真偽値のいずれかで、描いた範囲から書く props と同じ名前は使えません。`components` を持つマニフェストには `module` も必要です。
 
 マニフェストには必ず `celesta` を書き、プラグインが動く Celesta のバージョンを `">=0.9.0, <0.10.0"` のような Cargo のバージョン範囲で示します。この範囲は、プログラムがプロトコルの上に頼る機能（`protocol` はメッセージの形式だけを表します。コンテンツプラグインは `1` で、3D シーンのような機能が加わっても `1` のままです。[メディアプラグイン](#メディアプラグイン)は `2` です）と、モジュールが使う `react` や `@celesta.studio/*` の API の両方を表します。これらの API は Celesta と同じバージョンで同梱されます。`0.10.0-beta.1` のような Celesta のプレリリースは、範囲の端が同じバージョンのプレリリースを指すとき（`">=0.10.0-beta.1, <0.11.0"` など）だけ範囲に入ります。リポジトリの `scripts/plugins/build.mts` は、ビルドに使った Celesta から、その次のマイナーリリース（1.0 より前）またはメジャーリリースの手前までの範囲を自動で書きます。
+
+マニフェストには `license` を書けます。プラグインを配布するときのライセンスを [SPDX ライセンス式](https://spdx.github.io/spdx-spec/v3.0.1/annexes/spdx-license-expressions/)で示します。`"MIT"`、利用者が選べるときは `"MIT OR Apache-2.0"`、複数が同時に適用されるときは `"(MIT OR Apache-2.0) AND LGPL-2.1-or-later"` のように書きます。ソースだけでなく、同梱物を含めた配布物全体のライセンスを書いてください。プロプライエタリなライセンスなど、[SPDX のライセンス一覧](https://spdx.org/licenses/)にないものは、`LicenseRef-` で始まる独自の識別子を書き、それが何を指すかを `licenseRefs` に書きます。
+
+```json
+{
+  "license": "GPL-3.0-only OR LicenseRef-Acme-Commercial",
+  "licenseRefs": {
+    "LicenseRef-Acme-Commercial": { "name": "Acme Commercial License", "url": "https://acme.example/license" }
+  }
+}
+```
+
+式に書いた `LicenseRef-` の識別子には、それぞれ `name` を持つ項目が必要です。`url` は省略でき、`https://` で始めます。Celesta 本体はこれらの項目を読みません。レジストリはバージョンの公開時に検査し、読めないものは拒否します。`AND`・`OR`・`WITH` は大文字で、空白は 1 つずつにし、識別子は SPDX の一覧と同じつづりで、現行のものを使ってください（非推奨の `GPL-2.0` ではなく `GPL-2.0-only` か `GPL-2.0-or-later`）。レジストリのサイトと `celesta plugin info` がライセンスを表示し、宣言のないバージョンは未宣言と表示されます。リポジトリのプラグインでは、`plugin.json` に同じ 2 つのキーを書くと `scripts/plugins/build.mts` がマニフェストへ写します（`licenses` キーは別のもので、プラグインの `licenses/` フォルダーへコピーするライセンスファイルの一覧です）。
 
 プラグインの id には英小文字・数字・`-`・`_`・`.` を使い、先頭は英小文字か数字にします。`builtin` は Celesta に組み込みのもののために予約されています。マニフェストで指定するファイルはすべて、プラグインのフォルダー内を指す相対パスにします。`..` を含むパスや、フォルダーの外へ向かうリンクは使えません。これに反するプラグイン、`celesta` の範囲がないか動いている Celesta を含まないプラグイン、`protocol` が役割のものと違うプラグイン、コンテンツとメディアの両方の役割を持つプラグイン、上の決まりに反するコンポーネントを持つプラグインは、理由を示したうえで読み飛ばされます。
 

@@ -53,6 +53,9 @@
           },
           "deprecated": {
             "$ref": "#/$defs/deprecated"
+          },
+          "license": {
+            "$ref": "#/$defs/license"
           }
         }
       }
@@ -124,6 +127,15 @@
           }
         }
       ]
+    },
+    "license": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9.+:() -]+$",
+      "description": "The license of the plugin's highest published version: an SPDX license expression, or null when it declares none."
     }
   }
 }

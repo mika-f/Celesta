@@ -1,6 +1,10 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
-import { buildsOn, celestaRange, checkPluginSource, pluginManifest, pluginVersion } from '../manifest.mts';
+import { buildsOn, celestaRange, checkLicense, checkPluginSource, pluginManifest, pluginVersion } from '../manifest.mts';
 import type { PluginSource } from '../manifest.mts';
 
 const sourcePath = '/repo/plugins/vrm/plugin.json';
@@ -243,7 +247,7 @@ describe('checkPluginSource', () => {
   it('refuses a key plugin.json may not have, listing the keys it may', () => {
     const source = { id: 'x', version: '0.1.0', module: 'js/index.ts', modules: 'js/index.ts', exe: 'x' };
     expect(() => checkPluginSource(source, sourcePath)).toThrow(
-      `${sourcePath}: unknown keys modules, exe; plugin.json may have id, name, version, cargoPackage, module, roles, licenses, components, media`,
+      `${sourcePath}: unknown keys modules, exe; plugin.json may have id, name, version, cargoPackage, module, roles, licenses, license, licenseRefs, components, media`,
     );
   });
 });
@@ -281,5 +285,110 @@ describe('celestaRange', () => {
 
   it.each(['0.9', 'v0.9.0', '0.09.0', '', '0.9.0-01', '0.9.0-alpha..1', '0.9.0-', '0.9.0+', '0.9.0+a..b'])('refuses %j, which is not a semver version', (version) => {
     expect(() => celestaRange(version)).toThrow(`Celesta's version ${JSON.stringify(version)} is not a semver version`);
+  });
+});
+
+describe('license', () => {
+  const refs = { 'LicenseRef-Acme-Commercial': { name: 'Acme Commercial License', url: 'https://acme.example/license' } };
+  const check = (license: unknown, licenseRefs?: unknown) => () =>
+    checkLicense({ license, licenseRefs } as Pick<PluginSource, 'license' | 'licenseRefs'>, sourcePath);
+
+  it('copies the license and what its LicenseRefs name into the manifest', () => {
+    const source: PluginSource = { id: 'vrm', version: '0.1.0', module: 'js/index.ts' };
+    const license = 'GPL-3.0-only OR LicenseRef-Acme-Commercial';
+    const declared = pluginManifest({ ...source, license, licenseRefs: refs }, { celestaVersion }, sourcePath);
+    expect(declared.license).toBe(license);
+    expect(declared.licenseRefs).toEqual(refs);
+
+    const plain = pluginManifest({ ...source, license: 'MIT OR Apache-2.0', licenseRefs: {} }, { celestaVersion }, sourcePath);
+    expect(plain.license).toBe('MIT OR Apache-2.0');
+    expect(plain).not.toHaveProperty('licenseRefs');
+
+    const undeclared = pluginManifest(source, { celestaVersion }, sourcePath);
+    expect(undeclared).not.toHaveProperty('license');
+    expect(undeclared).not.toHaveProperty('licenseRefs');
+  });
+
+  it.each(['MIT', 'MIT OR Apache-2.0', '(MIT OR Apache-2.0) AND LGPL-2.1-or-later', 'GPL-2.0-or-later WITH Classpath-exception-2.0'])(
+    'accepts %j',
+    (license) => {
+      expect(check(license)).not.toThrow();
+    },
+  );
+
+  it.each(['', ' MIT', 'MIT ', 'MIT  OR Apache-2.0', 'MIT/Apache-2.0', 'MIT\nOR ISC', 7, null, ['MIT']])('refuses the license %j', (license) => {
+    expect(check(license)).toThrow(`${sourcePath}: license must be an SPDX license expression`);
+  });
+
+  it('wants an entry for each LicenseRef the license names, and no other', () => {
+    expect(check('GPL-3.0-only OR LicenseRef-Acme-Commercial', refs)).not.toThrow();
+    expect(check('(LicenseRef-Acme-Commercial)', refs)).not.toThrow();
+    expect(check('GPL-3.0-only OR LicenseRef-Acme-Commercial')).toThrow(
+      `${sourcePath}: licenseRefs has no entry for LicenseRef-Acme-Commercial, which license names`,
+    );
+    expect(check('MIT', refs)).toThrow(`${sourcePath}: licenseRefs has LicenseRef-Acme-Commercial, which license does not name`);
+    expect(check(undefined, refs)).toThrow(`${sourcePath}: licenseRefs needs a license that names them`);
+  });
+
+  it('checks each licenseRefs entry', () => {
+    const license = 'LicenseRef-A';
+    expect(check(license, [])).toThrow(`${sourcePath}: licenseRefs must be an object`);
+    expect(check('LicenseRef-A OR Acme', { Acme: { name: 'Acme' }, 'LicenseRef-A': { name: 'A' } })).toThrow(
+      `${sourcePath}: licenseRefs key "Acme" is not LicenseRef-`,
+    );
+    expect(check(license, { 'LicenseRef-A': 'A' })).toThrow(`${sourcePath}: licenseRefs.LicenseRef-A must be an object with a name`);
+    expect(check(license, { 'LicenseRef-A': { name: 'A', file: 'LICENSE' } })).toThrow(
+      `${sourcePath}: licenseRefs.LicenseRef-A has the unknown key file`,
+    );
+    for (const name of [undefined, '', '  ', 7]) {
+      expect(check(license, { 'LicenseRef-A': { name } })).toThrow(
+        `${sourcePath}: licenseRefs.LicenseRef-A.name must be a string with more than blanks in it`,
+      );
+    }
+    for (const url of ['http://acme.example', 'acme.example', 7]) {
+      expect(check(license, { 'LicenseRef-A': { name: 'A', url } })).toThrow(
+        `${sourcePath}: licenseRefs.LicenseRef-A.url must start with https://`,
+      );
+    }
+  });
+
+  // The build does not parse expressions (it runs without installed
+  // packages), so this is where this repository's own are parsed: the
+  // registry would refuse an invalid one only when the plugin is published.
+  it("parses every plugin's license as an SPDX license expression", () => {
+    const require = createRequire(import.meta.url);
+    type Node = { license: string; exception?: string } | { left: Node; right: Node };
+    const parse = require('spdx-expression-parse') as (expression: string) => Node;
+    const identifiers = (node: Node): string[] =>
+      'license' in node ? [node.license, ...(node.exception === undefined ? [] : [node.exception])] : [...identifiers(node.left), ...identifiers(node.right)];
+    // The parser takes deprecated identifiers (GPL-2.0), which the registry refuses.
+    const deprecated = require('spdx-license-ids/deprecated.json') as string[];
+    const plugins = join(import.meta.dirname, '../../../plugins');
+    const sources = readdirSync(plugins, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => join(plugins, entry.name, 'plugin.json'))
+      .flatMap((path) => {
+        try {
+          return [{ path, source: JSON.parse(readFileSync(path, 'utf8')) as PluginSource }];
+        } catch {
+          return []; // target/ and other folders that are not plugins
+        }
+      });
+    expect(sources.length).toBeGreaterThanOrEqual(5);
+    for (const { path, source } of sources) {
+      expect(source.license, `${path} declares no license`).toBeTypeOf('string');
+      expect(() => checkLicense(source, path)).not.toThrow();
+      expect(() => parse(source.license!), `${path}: ${source.license}`).not.toThrow();
+      // The registry wants upper-case operators, which the parser does not check.
+      // The registry's form: each part between spaces, without its parentheses, is
+      // AND, OR, or WITH, or an identifier the parser read (it reads an operator
+      // in any case, with or without a space after it), and none is deprecated.
+      const read = identifiers(parse(source.license!));
+      for (const part of source.license!.split(' ')) {
+        const bare = part.replace(/^\(+/, '').replace(/\)+$/, '').replace(/\+$/, '');
+        if (!['AND', 'OR', 'WITH'].includes(bare)) expect(read, `${path}: ${part}`).toContain(bare);
+        expect(deprecated, `${path}: ${part} is deprecated`).not.toContain(bare);
+      }
+    }
   });
 });

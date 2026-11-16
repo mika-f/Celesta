@@ -315,3 +315,70 @@ fn a_version_is_deprecated_by_itself_else_by_its_plugin() {
         Some(&deprecation("version"))
     );
 }
+
+#[test]
+fn a_version_carries_its_license() {
+    let vrm = Index::parse(&fixture("index-vrm.json"), "vrm").unwrap();
+    assert_eq!(vrm.versions[0].license, None);
+    assert_eq!(
+        vrm.versions[1].license.as_deref(),
+        Some("MIT OR Apache-2.0")
+    );
+    assert!(vrm.versions[1].license_refs.is_empty());
+
+    let third = Index::parse(&fixture("index-third-party.json"), "acme.fancy-title").unwrap();
+    let version = &third.versions[0];
+    assert_eq!(
+        version.license.as_deref(),
+        Some("GPL-3.0-only OR LicenseRef-Acme-Commercial")
+    );
+    let named = &version.license_refs["LicenseRef-Acme-Commercial"];
+    assert_eq!(named.name, "Acme Commercial License");
+    assert_eq!(
+        named.url.as_deref(),
+        Some("https://example.com/fancy-title/license")
+    );
+
+    let search = SearchList::parse(&fixture("search.json")).unwrap();
+    let licenses: Vec<Option<&str>> = search
+        .plugins
+        .iter()
+        .map(|plugin| plugin.license.as_deref())
+        .collect();
+    assert_eq!(
+        licenses,
+        [
+            Some("MIT OR Apache-2.0"),
+            Some("GPL-3.0-only OR LicenseRef-Acme-Commercial"),
+            None
+        ]
+    );
+}
+
+#[test]
+fn a_license_of_the_wrong_shape_is_refused() {
+    for license in ["", "MIT\nOR Apache-2.0", "MIT/Apache-2.0"] {
+        let bytes = tweak("index-vrm.json", |v| {
+            v["versions"][1]["license"] = license.into();
+        });
+        let err = Index::parse(&bytes, "vrm").unwrap_err();
+        assert!(
+            matches!(&err, FormatError::InvalidLicense(given) if given == license),
+            "{license:?}: {err:?}"
+        );
+    }
+    for (id, name) in [
+        ("Acme", "Acme License"),
+        ("LicenseRef-", "x"),
+        ("LicenseRef-Acme", ""),
+    ] {
+        let bytes = tweak("index-vrm.json", |v| {
+            v["versions"][1]["licenseRefs"] = serde_json::json!({ id: { "name": name } });
+        });
+        let err = Index::parse(&bytes, "vrm").unwrap_err();
+        assert!(
+            matches!(&err, FormatError::InvalidLicense(given) if given == id),
+            "{id:?}: {err:?}"
+        );
+    }
+}

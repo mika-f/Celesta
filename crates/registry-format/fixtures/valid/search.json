@@ -14,7 +14,8 @@
       },
       "description": "Loads VRM avatars into compositions.",
       "latest": "0.2.3",
-      "deprecated": null
+      "deprecated": null,
+      "license": "MIT OR Apache-2.0"
     },
     {
       "id": "acme.fancy-title",
@@ -31,7 +32,8 @@
       "deprecated": {
         "message": "Superseded by acme.titles.",
         "replacement": "acme.titles"
-      }
+      },
+      "license": "GPL-3.0-only OR LicenseRef-Acme-Commercial"
     },
     {
       "id": "old-thing",
@@ -48,7 +50,8 @@
       "deprecated": {
         "message": "Retired.",
         "replacement": null
-      }
+      },
+      "license": null
     }
   ]
 }

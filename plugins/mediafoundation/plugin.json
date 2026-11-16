@@ -2,6 +2,7 @@
   "id": "mediafoundation",
   "name": "Media Foundation",
   "version": "0.10.0-alpha.3",
+  "license": "MIT OR Apache-2.0",
   "cargoPackage": "celesta-codec-mediafoundation",
   "roles": ["media"],
   "os": ["windows"],

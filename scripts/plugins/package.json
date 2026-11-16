@@ -10,6 +10,8 @@
   },
   "devDependencies": {
     "@types/node": "^26.0.0",
+    "spdx-expression-parse": "^5.0.0",
+    "spdx-license-ids": "^3.0.24",
     "typescript": "^5.8.0",
     "vitest": "^5.0.3"
   }

@@ -31,6 +31,13 @@
         "commit": "fedcba9876543210fedcba9876543210fedcba98",
         "workflow": ".github/workflows/release.yml"
       },
+      "license": "GPL-3.0-only OR LicenseRef-Acme-Commercial",
+      "licenseRefs": {
+        "LicenseRef-Acme-Commercial": {
+          "name": "Acme Commercial License",
+          "url": "https://example.com/fancy-title/license"
+        }
+      },
       "targets": {
         "any": {
           "url": "https://registry.celesta.studio/archives/acme.fancy-title/1.0.0/any.zip",

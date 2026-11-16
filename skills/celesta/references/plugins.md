@@ -432,6 +432,17 @@ it builds against. A repository plugin's `plugin.json` may list `os`
 (`["macos"]`, `["windows"]`): `build.mts` then builds it on those systems
 only and skips it elsewhere.
 
+A manifest may give `license`, an SPDX license expression for the plugin
+as distributed (`"MIT OR Apache-2.0"`, `"(MIT OR Apache-2.0) AND
+LGPL-2.1-or-later"`). A license outside the SPDX list is a `LicenseRef-…`
+identifier in the expression with an entry in `licenseRefs`
+(`{ "LicenseRef-Acme": { "name": "Acme License", "url": "https://…" } }`,
+`url` optional). Celesta does not read them; the registry checks them at
+publish (capital `AND`/`OR`/`WITH`, single spaces, current SPDX identifiers
+in the list's spelling) and its site and `celesta plugin info` show them.
+`plugin.json` takes the same keys and `build.mts` copies them (its
+`licenses` key is the license files to copy, a separate thing).
+
 A component that draws a layer for the plugin's program renders
 `<PluginLayer plugin="<id>" assets={{ name: src }} data={json} />` from
 `@celesta.studio/react` (`time` defaults to the enclosing sequence's; the

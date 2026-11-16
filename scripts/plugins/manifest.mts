@@ -20,6 +20,14 @@ export interface PluginSource {
   roles?: string[];
   /** Files, relative to the plugin's folder, copied by name into licenses/. */
   licenses?: string[];
+  /**
+   * The license the plugin is distributed under, as an SPDX license
+   * expression such as `(MIT OR Apache-2.0) AND LGPL-2.1-or-later`. The
+   * registry checks it when the plugin is published; see {@link checkLicense}.
+   */
+  license?: string;
+  /** What each `LicenseRef-*` identifier in `license` names. */
+  licenseRefs?: Record<string, LicenseRef>;
   components?: object[];
   /** What a media plugin offers: its decoders, copied as they are. */
   media?: object;
@@ -29,6 +37,14 @@ export interface PluginSource {
    * everywhere. Not copied into the manifest.
    */
   os?: string[];
+}
+
+/** A license outside the SPDX license list, which a `LicenseRef-*` identifier stands for. */
+export interface LicenseRef {
+  /** The license's name, for display. */
+  name: string;
+  /** Where its text or terms are: an `https://` URL. */
+  url?: string;
 }
 
 /** What the build made. */
@@ -54,6 +70,8 @@ export interface PluginManifest {
   /** The Celesta versions it works with: {@link celestaRange} of the one it was built against. */
   celesta: string;
   roles?: string[];
+  license?: string;
+  licenseRefs?: Record<string, LicenseRef>;
   executable?: Record<string, string>;
   module?: 'js/index.js';
   types?: 'js/index.d.ts';
@@ -62,7 +80,20 @@ export interface PluginManifest {
 }
 
 /** The keys plugin.json may have, as PluginSource lists them. */
-const PLUGIN_SOURCE_KEYS = ['id', 'name', 'version', 'cargoPackage', 'module', 'roles', 'licenses', 'components', 'media', 'os'];
+const PLUGIN_SOURCE_KEYS = [
+  'id',
+  'name',
+  'version',
+  'cargoPackage',
+  'module',
+  'roles',
+  'licenses',
+  'license',
+  'licenseRefs',
+  'components',
+  'media',
+  'os',
+];
 
 /**
  * Celesta's rule for a plugin id (`is_valid_id` in
@@ -81,7 +112,8 @@ const PLUGIN_ID = /^[a-z0-9][a-z0-9._-]*$/;
  * list of objects, and has something to build: a module, a Cargo package, or
  * both, and a module for any components, since Celesta skips a plugin
  * listing components it cannot import (an empty `components` list, which
- * Celesta accepts, needs none).
+ * Celesta accepts, needs none). Its `license` and `licenseRefs` are checked
+ * by {@link checkLicense}.
  */
 export function checkPluginSource(source: PluginSource, sourcePath: string): void {
   const unknown = Object.keys(source).filter((key) => !PLUGIN_SOURCE_KEYS.includes(key));
@@ -110,6 +142,7 @@ export function checkPluginSource(source: PluginSource, sourcePath: string): voi
   if (source.roles?.includes('content') && source.roles.includes('media')) {
     throw new Error(`${sourcePath}: a plugin is either content or media`);
   }
+  checkLicense(source, sourcePath);
   const components: unknown = source.components;
   if (
     components !== undefined &&
@@ -135,6 +168,65 @@ export function checkPluginSource(source: PluginSource, sourcePath: string): voi
   }
   if (source.module === undefined && source.cargoPackage === undefined) {
     throw new Error(`${sourcePath}: it has neither a module nor a cargoPackage to build`);
+  }
+}
+
+/** `LicenseRef-` and an SPDX idstring: letters, digits, `.`, and `-`. */
+const LICENSE_REF = /^LicenseRef-[A-Za-z0-9.-]+$/;
+
+/**
+ * Checks the shape of `source`'s `license` and `licenseRefs` (read from
+ * `sourcePath`, which errors name): `license` is an SPDX license expression's
+ * characters with single spaces, and `licenseRefs` has an entry, with a
+ * `name` and at most an `https://` `url`, for each `LicenseRef-*` identifier
+ * the expression names and for nothing else. It does not parse the
+ * expression, so that the build needs no installed package: the registry
+ * refuses an invalid one when the plugin is published, and this repository's
+ * tests parse its own plugins'.
+ */
+export function checkLicense(source: Pick<PluginSource, 'license' | 'licenseRefs'>, sourcePath: string): void {
+  // plugin.json is read as JSON, so both may be anything at all.
+  const license: unknown = source.license;
+  const refs: unknown = source.licenseRefs;
+  if (license === undefined) {
+    if (refs !== undefined) throw new Error(`${sourcePath}: licenseRefs needs a license that names them`);
+    return;
+  }
+  if (typeof license !== 'string' || !/^[A-Za-z0-9.+:()-]+( [A-Za-z0-9.+:()-]+)*$/.test(license)) {
+    throw new Error(
+      `${sourcePath}: license must be an SPDX license expression, such as "MIT OR Apache-2.0", with single spaces between its parts`,
+    );
+  }
+  if (refs !== undefined && (typeof refs !== 'object' || refs === null || Array.isArray(refs))) {
+    throw new Error(`${sourcePath}: licenseRefs must be an object`);
+  }
+  const entries = Object.entries((refs ?? {}) as Record<string, unknown>);
+  const named = new Set(license.split(/[ ()]+/).filter((part) => part.startsWith('LicenseRef-')));
+  for (const [id, entry] of entries) {
+    if (!LICENSE_REF.test(id)) {
+      throw new Error(`${sourcePath}: licenseRefs key ${JSON.stringify(id)} is not LicenseRef- and letters, digits, ., or -`);
+    }
+    if (!named.has(id)) {
+      throw new Error(`${sourcePath}: licenseRefs has ${id}, which license does not name`);
+    }
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      throw new Error(`${sourcePath}: licenseRefs.${id} must be an object with a name`);
+    }
+    const unknown = Object.keys(entry).filter((key) => key !== 'name' && key !== 'url');
+    if (unknown.length > 0) {
+      throw new Error(`${sourcePath}: licenseRefs.${id} has the unknown key${unknown.length === 1 ? '' : 's'} ${unknown.join(', ')}`);
+    }
+    const { name, url } = entry as { name?: unknown; url?: unknown };
+    if (typeof name !== 'string' || name.trim() === '') {
+      throw new Error(`${sourcePath}: licenseRefs.${id}.name must be a string with more than blanks in it`);
+    }
+    if (url !== undefined && (typeof url !== 'string' || !url.startsWith('https://'))) {
+      throw new Error(`${sourcePath}: licenseRefs.${id}.url must start with https://`);
+    }
+  }
+  const missing = [...named].filter((id) => !entries.some(([key]) => key === id));
+  if (missing.length > 0) {
+    throw new Error(`${sourcePath}: licenseRefs has no entry for ${missing.join(', ')}, which license names`);
   }
 }
 
@@ -204,6 +296,8 @@ export function pluginManifest(
     protocol: source.roles?.includes('media') ? 2 : 1,
     celesta: celestaRange(celestaVersion),
     ...(source.name !== undefined ? { name: source.name } : {}),
+    ...(source.license !== undefined ? { license: source.license } : {}),
+    ...(source.licenseRefs !== undefined && Object.keys(source.licenseRefs).length > 0 ? { licenseRefs: source.licenseRefs } : {}),
     ...(source.roles ? { roles: source.roles } : {}),
     ...(executable ? { executable } : {}),
     ...(source.module !== undefined ? { module: 'js/index.js', types: 'js/index.d.ts' } : {}),

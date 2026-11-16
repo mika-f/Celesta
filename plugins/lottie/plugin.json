@@ -2,6 +2,7 @@
   "id": "lottie",
   "name": "Lottie",
   "version": "0.10.0-alpha.3",
+  "license": "MIT OR Apache-2.0",
   "module": "../../packages/lottie/src/index.ts",
   "licenses": ["../../LICENSE-MIT", "../../LICENSE-APACHE"]
 }

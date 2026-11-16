@@ -83,6 +83,9 @@ fn info_shows_states_and_source() {
     registry.edit("acme.charts", "1.3.0", |entry| {
         entry["deprecated"] = json!({ "message": "no longer kept" })
     });
+    registry.edit("acme.charts", "2.0.0", |entry| {
+        entry["license"] = json!("MIT OR Apache-2.0")
+    });
     registry.advisories(json!([advisory(
         "CELESTA-2026-0001",
         "acme.charts",
@@ -98,6 +101,7 @@ fn info_shows_states_and_source() {
         [
             "acme.charts by acme: A test plugin.".to_owned(),
             "roles: content".to_owned(),
+            "license: MIT OR Apache-2.0".to_owned(),
             format!("2.0.0  celesta {range}  linux-x86_64, macos-aarch64  published"),
             format!("1.3.0  celesta {range}  any  deprecated"),
             format!("1.2.0  celesta {range}  any  withdrawn"),
