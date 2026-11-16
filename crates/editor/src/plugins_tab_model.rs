@@ -994,6 +994,7 @@ mod tests {
                             },
                             description: String::new(),
                             latest: Some(version(latest)),
+                            license: None,
                             deprecated: None,
                         })
                         .collect(),
