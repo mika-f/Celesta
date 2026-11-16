@@ -283,7 +283,7 @@ impl PluginPage {
 
 /// The registry's host as the list's footer names it:
 /// `registry.celesta.studio`.
-fn registry_host(base: &str) -> &str {
+pub(crate) fn registry_host(base: &str) -> &str {
     base.split_once("://")
         .map_or(base, |(_, rest)| rest)
         .trim_end_matches('/')

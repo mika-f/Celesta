@@ -291,7 +291,11 @@ impl<'a> Reading<'a> {
             })
         } else if matches!(
             found.lock_problem,
-            Some(LockProblem::NoLock | LockProblem::OutOfDate { .. })
+            Some(
+                LockProblem::NoLock
+                    | LockProblem::OutOfDate { .. }
+                    | LockProblem::OtherCelesta { .. }
+            )
         ) {
             Some(SectionAction::UpdatePlugins)
         } else if missing > 0 {
@@ -1081,6 +1085,19 @@ mod tests {
         assert_eq!(section.lock_label, "No celesta.lock");
         assert_eq!(section.action, Some(SectionAction::UpdatePlugins));
         assert!(section.rows.is_empty());
+
+        // After Not Now on the other-Celesta question, the heading asks
+        // again.
+        let other_celesta = FoundPlugins {
+            lock_problem: Some(LockProblem::OtherCelesta {
+                locked: version("0.9.0"),
+                running: version("0.10.0"),
+                ids: vec!["vrm".to_owned()],
+            }),
+            ..project(lockfile(Vec::new()))
+        };
+        let section = tab_model(&other_celesta, None).project.unwrap();
+        assert_eq!(section.action, Some(SectionAction::UpdatePlugins));
     }
 
     #[test]

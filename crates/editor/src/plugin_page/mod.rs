@@ -10,6 +10,8 @@ use crate::inline_text_view::EditEvent;
 use crate::view::EditorView;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{AppContext as _, Context, Entity, Subscription, Window};
+pub(crate) use model::format_size;
+pub(crate) use view::registry_host;
 use view::{PluginPage, PluginPageEvent};
 
 /// The plugin page, kept with its search and selection for the window's

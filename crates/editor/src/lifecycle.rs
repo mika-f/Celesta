@@ -729,7 +729,17 @@ impl EditorView {
                         if page_was_open {
                             this.focus_editor(window, cx);
                         }
+                        if let Some(note) = this.rewrite_note.take() {
+                            this.problems.info_without_toast(
+                                Source::Registry,
+                                note.title,
+                                note.detail,
+                            );
+                        }
                         this.ask_about_pending_plugins(window, cx);
+                        // After the approval question: one that is up holds
+                        // this one back until the project opens again.
+                        this.ask_about_lock(window, cx);
                     }
                     Err(error) => {
                         let error = match note {
@@ -783,6 +793,9 @@ impl EditorView {
         next.toasted_sources = std::mem::take(&mut self.toasted_sources);
         next.interactive = self.interactive;
         next.asked_plugins = std::mem::take(&mut self.asked_plugins);
+        next.asked_locks = std::mem::take(&mut self.asked_locks);
+        next.announced_blocks = std::mem::take(&mut self.announced_blocks);
+        next.rewrite_note = self.rewrite_note.take();
         // A reload of the same entry keeps its history; another file starts empty.
         next.edit_history = std::mem::take(&mut self.edit_history);
         if self.react_entry().is_none() || self.react_entry() != next.react_entry() {
@@ -798,6 +811,8 @@ impl EditorView {
         // The constructor's sweep ran before Select layers carried over.
         self.refresh_occurrences(false);
         self.sync_plugin_page(cx);
+        // The registry moved over with what it fetched.
+        self.sync_registry_notices(cx);
     }
 }
 

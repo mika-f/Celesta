@@ -18,7 +18,7 @@ use crate::plugins::{DecoderNotice, FoundPlugins, trusted_root};
 use crate::preview::{
     AudioPreview, PreviewWorker, ReactPreview, ShownPreview, TextOverride, spawn_preview,
 };
-use crate::problems::{ExportNotices, Problems, Source};
+use crate::problems::{ExportNotices, Problem, Problems, Source};
 use crate::property_panel::PropertyPanelState;
 use crate::react_audio::{ReactAudioWorker, spawn_react_audio};
 use crate::refresh::{ReloadOrder, SelectionKeep};
@@ -48,7 +48,7 @@ use gpui_kit::component::menu::AppMenuBar;
 use gpui_kit::component::resizable::ResizableState;
 use gpui_kit::{Bounds, Entity, FocusHandle, Pixels, ScrollHandle, SharedString};
 use std::cell::Cell;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Instant;
@@ -434,6 +434,14 @@ pub(crate) struct EditorView {
     /// about in this window, so "Not Now" is not asked again until they
     /// change.
     pub(crate) asked_plugins: HashSet<(PathBuf, String)>,
+    /// The projects whose lock was asked about in this app run.
+    pub(crate) asked_locks: BTreeSet<PathBuf>,
+    /// The plugins an advisory stopped that a notification announced in
+    /// this app run, by id, version, and advisory.
+    pub(crate) announced_blocks: BTreeSet<(String, String, String)>,
+    /// The requirements an update rewrote unasked, logged in Problems once
+    /// the project opens again with them.
+    pub(crate) rewrite_note: Option<Problem>,
     /// The project-decoder files shown in Problems.
     pub(crate) decoder_notice: DecoderNotice,
 }
@@ -661,6 +669,9 @@ impl EditorView {
             found_plugins: FoundPlugins::default(),
             decoder_notice: DecoderNotice::default(),
             asked_plugins: HashSet::new(),
+            asked_locks: BTreeSet::new(),
+            announced_blocks: BTreeSet::new(),
+            rewrite_note: None,
         };
         editor.set_plugins(plugins);
         editor.refresh_preview();

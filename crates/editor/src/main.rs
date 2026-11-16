@@ -348,7 +348,10 @@ fn run() -> anyhow::Result<()> {
                             StartUp::OpenAgain(path, property_args) => {
                                 this.load_path_with(Some(path), property_args, window, cx)
                             }
-                            StartUp::Opened => this.ask_about_pending_plugins(window, cx),
+                            StartUp::Opened => {
+                                this.ask_about_pending_plugins(window, cx);
+                                this.ask_about_lock(window, cx);
+                            }
                         });
                     }
                 });

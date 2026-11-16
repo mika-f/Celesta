@@ -17,9 +17,7 @@ use crate::toast::Toast;
 use crate::view::EditorView;
 use crate::widgets::CompactLabel as _;
 use celesta_media::DecoderUse;
-use celesta_plugin_host::{
-    LockProblem, SettingsError, UserSettings, create_private_dir_all, user_plugin_dir,
-};
+use celesta_plugin_host::{SettingsError, UserSettings, create_private_dir_all, user_plugin_dir};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{
@@ -286,17 +284,7 @@ impl EditorView {
                 .outline()
                 .compact_label("Update Plugins")
                 .on_click(cx.listener(|this, _, window, cx| {
-                    let found = &this.found_plugins;
-                    let Some(root) = found.project.clone() else {
-                        return;
-                    };
-                    let ids: BTreeSet<String> = match &found.lock_problem {
-                        Some(LockProblem::OutOfDate { ids }) => ids.iter().cloned().collect(),
-                        _ => found.dependencies.keys().cloned().collect(),
-                    };
-                    this.registry_work(window, cx, |state, cx| {
-                        state.update(root, ids, Vec::new(), cx)
-                    });
+                    this.update_project_plugins(window, cx);
                 }))
                 .into_any_element(),
             SectionAction::Working { label, done, total } => h_flex()
@@ -554,7 +542,7 @@ impl EditorView {
 
     /// Starts registry work with `start`; work it refuses (more for the same
     /// plugin, project, or settings is running) is said so in a note.
-    fn registry_work(
+    pub(crate) fn registry_work(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,

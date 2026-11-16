@@ -37,6 +37,7 @@ impl Render for EditorView {
         self.sync_property_panel(window, cx);
         self.sync_decoder_notice();
         self.announce_problems(window, cx);
+        self.announce_blocks(window, cx);
         self.sync_preview_error_scroll();
         if self.preview_worker.pending()
             || self.media_probe_worker.pending()

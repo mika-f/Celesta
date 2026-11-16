@@ -6,6 +6,7 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use celesta_plugin_host::{
     ADVISORIES_CACHE, CELESTA_VERSION, bundled_plugin_dir, load_cached_advisories,
@@ -98,6 +99,12 @@ impl EditorRegistry {
         self.access.client(&self.cache, None)
     }
 
+    /// [`Self::registry`] whose every request gives up after `timeout`, for
+    /// what a question fetches before it opens.
+    pub(crate) fn registry_within(&self, timeout: Duration) -> io::Result<Registry> {
+        self.access.client(&self.cache, Some(timeout))
+    }
+
     /// What the registry-client operations work with, now.
     pub(crate) fn environment<'a>(
         &'a self,
@@ -130,7 +137,6 @@ impl EditorRegistry {
         &self.access
     }
 
-    #[allow(dead_code)] // The Plugins tab of a later change reads it.
     pub(crate) fn store(&self) -> &Store {
         &self.store
     }
@@ -147,7 +153,6 @@ impl EditorRegistry {
         &self.host
     }
 
-    #[allow(dead_code)] // The Plugins tab of a later change reads it.
     pub(crate) fn bundled(&self) -> Option<&Path> {
         self.bundled.as_deref()
     }

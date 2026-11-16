@@ -18,9 +18,9 @@ use celesta_media::{DecoderUse, MediaRegistry};
 use celesta_plugin_host::{
     CELESTA_VERSION, DiscoveryError, InstalledPlugins, LockProblem, Lockfile, PendingPlugin,
     PluginEntry, PluginRole, PluginSource, ProjectConfigError, ProjectDependencies,
-    RegistryContext, RegistryPlugin, SearchPath, SettingsError, UserSettings, bundled_plugin_dir,
-    check_lock, discover_in, from_the_internet, has_project_config, project_dependencies,
-    project_plugin_paths, project_root,
+    RegistryContext, RegistryPlugin, SearchPath, SettingsError, UserSettings, advisories_stale,
+    bundled_plugin_dir, check_lock, discover_in, from_the_internet, has_project_config,
+    project_dependencies, project_plugin_paths, project_root,
 };
 use celesta_registry_format::{AdvisoryList, Target};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -32,6 +32,7 @@ use semver::VersionReq;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
+use time::OffsetDateTime;
 
 /// Wide enough for a plugin's folder on one or two lines.
 /// Designed against a 16px `rem`; see [`metrics::scaled`].
@@ -125,6 +126,9 @@ pub(crate) struct FoundPlugins {
     /// The media plugins that may run, which record the files a project's
     /// decoders read; none until [`Self::find`] makes it.
     pub(crate) registry: Option<Arc<MediaRegistry>>,
+    /// The newest verified advisory list discovery read is more than seven
+    /// days old, so newer advisories may be missing.
+    pub(crate) advisories_stale: bool,
 }
 
 impl FoundPlugins {
@@ -156,7 +160,14 @@ impl FoundPlugins {
         if let Some(extra) = extra_advisories {
             registry.merge_advisories(extra);
         }
-        Self::find_with_context(project, settings, settings_error, registry, registry_errors)
+        let advisories_stale = registry
+            .advisories
+            .as_ref()
+            .is_some_and(|list| advisories_stale(list, OffsetDateTime::now_utc()).is_some());
+        Self {
+            advisories_stale,
+            ..Self::find_with_context(project, settings, settings_error, registry, registry_errors)
+        }
     }
 
     /// The project folder whose lock is read: trusted by the user's saved
@@ -255,6 +266,7 @@ impl FoundPlugins {
             lock_problem,
             missing_decoder: false,
             registry: None,
+            advisories_stale: false,
         }
     }
 
@@ -602,6 +614,8 @@ impl EditorView {
     /// was skipped.
     pub(crate) fn set_plugins(&mut self, found: FoundPlugins) {
         self.problems.set(Source::Plugins, found.problem());
+        self.problems
+            .set(Source::Advisories, crate::registry::blocked_problem(&found));
         self.plugins = found.installed.clone();
         self.found_plugins = found;
         // A new registry starts its own list.

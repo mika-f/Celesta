@@ -4,9 +4,12 @@
 //! the editor rediscovers its plugins when the work changed them.
 
 mod client;
+mod notices;
+mod questions;
 mod state;
 
 pub(crate) use client::EditorRegistry;
+pub(crate) use notices::blocked_problem;
 pub(crate) use state::{Fetch, InFlight, RegistryEvent, RegistryState, Work};
 
 use crate::actions::ReloadPlugins;
@@ -45,14 +48,20 @@ impl EditorView {
             this.registry_event(event, cx)
         })
         .detach();
-        // The Plugins tab shows its work in flight and its search list.
-        cx.observe(&registry, |_, _, cx| cx.notify()).detach();
+        // The Plugins tab shows its work in flight and its search list, and
+        // Problems what the list and the indexes say of the plugins found.
+        cx.observe(&registry, |this, _, cx| {
+            this.sync_registry_notices(cx);
+            cx.notify();
+        })
+        .detach();
         let project = self.found_plugins.project.clone();
         registry.update(cx, |state, cx| {
             state.project_changed(project, cx);
             state.start_timers(cx);
         });
         self.registry = Some(registry);
+        self.sync_registry_notices(cx);
     }
 
     /// Rediscovers (and reopens) when the work changed what may run here,
@@ -64,6 +73,13 @@ impl EditorView {
                 if project.is_none() || *project == self.found_plugins.project {
                     self.plugins_changed = true;
                     cx.notify();
+                }
+            }
+            RegistryEvent::Rewrote { project, rewrites } => {
+                // Logged once the project opens again with them, as the
+                // reopen starts a new Problems log.
+                if Some(project) == self.found_plugins.project.as_ref() {
+                    self.rewrite_note = Some(questions::rewrite_note(rewrites));
                 }
             }
             RegistryEvent::Failed { title, detail, .. } => {

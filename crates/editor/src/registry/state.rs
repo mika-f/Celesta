@@ -11,11 +11,11 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use celesta_plugin_host::{Lockfile, UserSettings};
+use celesta_plugin_host::{Lockfile, UserSettings, project_dependencies};
 use celesta_registry_client::{
     ClientError, OfferInput, OfferScope, Progress, Registry, Rewrite, TransportError,
     add_dependency, install_global, install_locked, offered_requirement, offered_version,
-    prereleases_by_default, remove_dependency, update_dependencies,
+    plan_update, prereleases_by_default, remove_dependency, update_dependencies,
 };
 use celesta_registry_format::{Index, SearchList};
 use gpui_kit::{Context, EventEmitter, Task};
@@ -77,6 +77,12 @@ pub(crate) enum Fetch<T> {
 pub(crate) enum RegistryEvent {
     /// Store or settings changed: rediscover; `project` is Some(root) when its lock changed, so it reloads.
     PluginsChanged { project: Option<PathBuf> },
+    /// An update rewrote these requirements in the project's
+    /// `celesta.config.json` without a question listing them first.
+    Rewrote {
+        project: PathBuf,
+        rewrites: Vec<Rewrite>,
+    },
     Failed {
         id: Option<String>,
         title: String,
@@ -138,12 +144,15 @@ struct Done {
     changed: bool,
     /// The ids that have no newer version after all.
     no_newer: Vec<String>,
+    /// The requirements it rewrote that no question showed beforehand.
+    rewrote: Vec<Rewrite>,
 }
 
 impl Done {
     const CHANGED: Self = Self {
         changed: true,
         no_newer: Vec::new(),
+        rewrote: Vec::new(),
     };
 }
 
@@ -353,10 +362,35 @@ impl RegistryState {
         rewrites: Vec<Rewrite>,
         cx: &mut Context<Self>,
     ) -> bool {
+        self.update_with(root, ids, Some(rewrites), cx)
+    }
+
+    /// [`Self::update`] with the rewrites `plan_update` finds when it runs,
+    /// for ids that can no longer be resolved within their requirement;
+    /// the rewrites it made are announced ([`RegistryEvent::Rewrote`]).
+    pub(crate) fn update_planned(
+        &mut self,
+        root: PathBuf,
+        ids: BTreeSet<String>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.update_with(root, ids, None, cx)
+    }
+
+    /// [`Self::update`] with `rewrites`, or, with `None`, the ones planned
+    /// when the job runs.
+    fn update_with(
+        &mut self,
+        root: PathBuf,
+        ids: BTreeSet<String>,
+        rewrites: Option<Vec<Rewrite>>,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let failure = match ids.iter().collect::<Vec<_>>().as_slice() {
             [id] => format!("Couldn’t update {id}"),
             _ => "Couldn’t update this project’s plugins".to_owned(),
         };
+        let include_prereleases = self.include_prereleases;
         let project = root.clone();
         let updated = ids.clone();
         self.start(
@@ -369,6 +403,23 @@ impl RegistryState {
                     let before = Lockfile::load(&project)?;
                     let registry = client.registry()?;
                     let env = client.environment(&registry, Some(progress));
+                    let (rewrites, planned) = match rewrites {
+                        Some(rewrites) => (rewrites, false),
+                        None => {
+                            // A locked plugin celesta.config.json no longer
+                            // names has no requirement to plan for.
+                            let declared = project_dependencies(&project)?.dependencies;
+                            let planned: BTreeSet<String> = updated
+                                .iter()
+                                .filter(|id| declared.contains_key(*id))
+                                .cloned()
+                                .collect();
+                            (
+                                plan_update(&env, &project, &planned, include_prereleases)?,
+                                true,
+                            )
+                        }
+                    };
                     let outcome = update_dependencies(&env, &project, &updated, &rewrites)?;
                     let version = |lock: &Lockfile, id: &str| {
                         lock.plugins.get(id).map(|locked| locked.version.clone())
@@ -384,6 +435,7 @@ impl RegistryState {
                     Ok(Done {
                         changed: true,
                         no_newer,
+                        rewrote: if planned { rewrites } else { Vec::new() },
                     })
                 }),
             },
@@ -436,6 +488,7 @@ impl RegistryState {
                         _ => Ok(Done {
                             changed: false,
                             no_newer: vec![plugin],
+                            rewrote: Vec::new(),
                         }),
                     }
                 }),
@@ -487,6 +540,7 @@ impl RegistryState {
                     Ok(Done {
                         changed,
                         no_newer: Vec::new(),
+                        rewrote: Vec::new(),
                     })
                 }),
             },
@@ -700,6 +754,12 @@ impl RegistryState {
         match result {
             Ok(done) => {
                 self.no_newer.extend(done.no_newer);
+                if let Some(root) = project.as_ref().filter(|_| !done.rewrote.is_empty()) {
+                    cx.emit(RegistryEvent::Rewrote {
+                        project: root.clone(),
+                        rewrites: done.rewrote,
+                    });
+                }
                 if done.changed {
                     cx.emit(RegistryEvent::PluginsChanged { project });
                 }
@@ -764,7 +824,7 @@ fn fetch<T>(
 
 /// Whether `error` comes from the registry or an archive not being
 /// reachable, which the user may fix by trying again.
-fn unreachable(error: &anyhow::Error) -> bool {
+pub(super) fn unreachable(error: &anyhow::Error) -> bool {
     error.chain().any(|cause| {
         matches!(
             cause.downcast_ref::<TransportError>(),
@@ -1053,6 +1113,48 @@ mod tests {
             lock.plugins.keys().collect::<Vec<_>>(),
             ["acme.charts", "acme.codec"]
         );
+    }
+
+    #[gpui_kit::test]
+    fn an_update_planned_as_it_runs_announces_its_rewrites(cx: &mut TestAppContext) {
+        let fixture = Fixture::new(cx);
+        let root = fixture.project("old");
+        // Nothing the registry has meets this requirement.
+        std::fs::write(
+            root.join(PROJECT_CONFIG),
+            r#"{ "plugins": { "dependencies": { "acme.charts": "^0.5.0" } } }"#,
+        )
+        .unwrap();
+        fixture.open(cx, Some(&root));
+        let started = fixture.state.update(cx, |state, cx| {
+            // acme.codec is no dependency (a lock's orphan, say): nothing
+            // is planned for it.
+            let ids = BTreeSet::from(["acme.charts".to_owned(), "acme.codec".to_owned()]);
+            state.update_planned(root.clone(), ids, cx)
+        });
+        assert!(started);
+        cx.run_until_parked();
+
+        assert_eq!(
+            fixture.events(),
+            [
+                RegistryEvent::Rewrote {
+                    project: root.clone(),
+                    rewrites: vec![Rewrite {
+                        id: "acme.charts".to_owned(),
+                        from: "^0.5.0".to_owned(),
+                        to: "^1.0.0".to_owned(),
+                    }],
+                },
+                RegistryEvent::PluginsChanged {
+                    project: Some(root.clone())
+                },
+            ]
+        );
+        let config = std::fs::read_to_string(root.join(PROJECT_CONFIG)).unwrap();
+        assert!(config.contains(r#""acme.charts": "^1.0.0""#), "{config}");
+        let lock = Lockfile::load(&root).unwrap().unwrap();
+        assert_eq!(lock.plugins["acme.charts"].version, version("1.0.0"));
     }
 
     #[gpui_kit::test]

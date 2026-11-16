@@ -29,10 +29,8 @@ pub(crate) enum Source {
     /// Registry work that failed, or a registry that could not be used.
     Registry,
     /// Deprecated and yanked registry plugins, and a stale advisory list.
-    #[allow(dead_code)] // The Plugins tab of a later change reports them.
     RegistryNotices,
     /// Plugins a security advisory stops; their notification announces them.
-    #[allow(dead_code)] // The Blocked notification of a later change reports them.
     Advisories,
 }
 

@@ -151,7 +151,7 @@ fn size_unit(bytes: u64) -> Option<usize> {
 }
 
 /// A byte count in decimal units with one decimal: `1.2 MB`.
-fn format_size(bytes: u64) -> String {
+pub(crate) fn format_size(bytes: u64) -> String {
     match size_unit(bytes) {
         Some(at) => format!("{:.1} {}", bytes as f64 / UNITS[at].1, UNITS[at].0),
         None => format!("{bytes} B"),
