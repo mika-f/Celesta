@@ -14,6 +14,8 @@ use crate::plugins_tab_model::registry_kind_name;
 use crate::registry::{Fetch, RegistryState};
 
 /// What the footer says when no project is open to add a plugin to.
+const PROJECT_BUSY: &str = "Another plugin change is running for this project";
+const SETTINGS_BUSY: &str = "Another plugin change is running";
 const OUTSIDE_A_PROJECT: &str = "Add plugins to a project with celesta.config.json";
 
 /// One row of the list column.
@@ -133,13 +135,20 @@ fn ago(elapsed: time::Duration) -> String {
 
 /// A byte count in decimal units with one decimal: `1.2 MB`.
 fn format_size(bytes: u64) -> String {
-    const UNITS: [(&str, f64); 3] = [("GB", 1e9), ("MB", 1e6), ("kB", 1e3)];
-    for (unit, size) in UNITS {
-        if bytes as f64 >= size {
-            return format!("{:.1} {unit}", bytes as f64 / size);
+    const UNITS: [(&str, f64); 3] = [("kB", 1e3), ("MB", 1e6), ("GB", 1e9)];
+    // The largest unit the size reaches, then one more when it rounds up
+    // to 1000 of that one (999 999 B is 1.0 MB, not 1000.0 kB).
+    let mut unit = UNITS.iter().rposition(|(_, size)| bytes as f64 >= *size);
+    if let Some(at) = unit {
+        let rounded = (bytes as f64 / UNITS[at].1 * 10.0).round() / 10.0;
+        if rounded >= 1000.0 && at + 1 < UNITS.len() {
+            unit = Some(at + 1);
         }
     }
-    format!("{bytes} B")
+    match unit {
+        Some(at) => format!("{:.1} {}", bytes as f64 / UNITS[at].1, UNITS[at].0),
+        None => format!("{bytes} B"),
+    }
 }
 
 /// The detail column's fields.
@@ -180,11 +189,19 @@ pub(crate) fn details(
     include_prereleases: bool,
 ) -> Details {
     let id = index.id.as_str();
-    let latest = index
-        .versions
-        .iter()
-        .filter(|entry| !entry.yanked && !entry.withdrawn)
-        .max_by(|a, b| a.version.cmp(&b.version));
+    let alive = || {
+        index
+            .versions
+            .iter()
+            .filter(|entry| !entry.yanked && !entry.withdrawn)
+    };
+    // Without the checkbox the header agrees with the table, unless only
+    // pre-releases exist: then the newest of them, so it is not empty.
+    let stable = |entry: &&VersionEntry| include_prereleases || entry.version.pre.is_empty();
+    let latest = alive()
+        .filter(stable)
+        .max_by(|a, b| a.version.cmp(&b.version))
+        .or_else(|| alive().max_by(|a, b| a.version.cmp(&b.version)));
     let mut versions: Vec<&VersionEntry> = index
         .versions
         .iter()
@@ -400,15 +417,31 @@ pub(crate) fn footer(
         ("Add to this project", OfferScope::Project, PageCommand::Add)
     };
     let mut reason = None;
+    // What the primary button would change, which another job may hold.
+    let mut changes = Changes::Nothing;
     let primary = match offer(scope) {
         Ok(offered) => match held(id, &offered, found) {
             Held::Offered => FooterButton::disabled("Installed"),
-            Held::Older => FooterButton::new(format!("Update to {offered}"), PageCommand::Update),
+            Held::Older { locked } => {
+                changes = if locked {
+                    Changes::Project
+                } else {
+                    Changes::Settings
+                };
+                FooterButton::new(format!("Update to {offered}"), PageCommand::Update)
+            }
             Held::No if !media && found.project.is_none() => {
                 reason = Some(OUTSIDE_A_PROJECT.to_owned());
                 FooterButton::disabled(label)
             }
-            Held::No => FooterButton::new(label, command(offered)),
+            Held::No => {
+                changes = if media {
+                    Changes::Settings
+                } else {
+                    Changes::Project
+                };
+                FooterButton::new(label, command(offered))
+            }
         },
         Err(no_offer) => {
             reason = Some(if !media && found.project.is_none() {
@@ -419,6 +452,24 @@ pub(crate) fn footer(
             FooterButton::disabled(label)
         }
     };
+
+    let busy = |changes: Changes| match changes {
+        Changes::Project
+            if found
+                .project
+                .as_deref()
+                .is_some_and(|root| registry.project_busy(root)) =>
+        {
+            Some(PROJECT_BUSY)
+        }
+        Changes::Settings if registry.settings_busy() => Some(SETTINGS_BUSY),
+        _ => None,
+    };
+    let mut primary = primary;
+    if let Some(why) = busy(changes) {
+        primary = FooterButton::disabled(primary.label);
+        reason = Some(why.to_owned());
+    }
 
     let secondary = (media && found.project.is_some()).then(|| {
         let locked_at = |version: &Version| {
@@ -436,6 +487,11 @@ pub(crate) fn footer(
         }
     });
 
+    let secondary = secondary.map(|button| match busy(Changes::Project) {
+        Some(_) if button.enabled => FooterButton::disabled(button.label),
+        _ => button,
+    });
+
     Footer {
         primary,
         secondary,
@@ -445,13 +501,25 @@ pub(crate) fn footer(
     }
 }
 
+/// What a button writes, which one job at a time may do.
+#[derive(Clone, Copy)]
+enum Changes {
+    Nothing,
+    /// The project's `celesta.config.json` and `celesta.lock`.
+    Project,
+    /// The user's settings (`registryPlugins`).
+    Settings,
+}
+
 /// Whether the store holds the offered version of a plugin.
 enum Held {
-    /// This version is installed, for every project or in this project's
-    /// lock. A bundled copy does not count.
+    /// This version, or a newer one, is installed, for every project or in
+    /// this project's lock. A bundled copy does not count.
     Offered,
-    /// Only an older version is.
-    Older,
+    /// Only an older version is; `locked` when this project's lock holds it.
+    Older {
+        locked: bool,
+    },
     No,
 }
 
@@ -466,14 +534,21 @@ fn held(id: &str, offered: &Version, found: &FoundPlugins) -> Held {
         .iter()
         .filter_map(|lock| lock.plugins.get(id))
         .map(|locked| &locked.version);
+    // An older one in the lock is what an update rewrites, if both exist.
     let mut older = false;
-    for version in installed.chain(locked) {
-        if version == offered {
+    let mut from_lock = locked.peekable();
+    let in_lock = from_lock.peek().is_some();
+    for version in installed.chain(from_lock) {
+        if version >= offered {
             return Held::Offered;
         }
-        older |= version < offered;
+        older = true;
     }
-    if older { Held::Older } else { Held::No }
+    if older {
+        Held::Older { locked: in_lock }
+    } else {
+        Held::No
+    }
 }
 
 fn no_offer_reason(no_offer: &NoOffer) -> String {
@@ -498,7 +573,7 @@ mod tests {
         PluginEntry, PluginRole, RegistryPlugin,
     };
     use celesta_registry_client::testing::TestRegistry;
-    use celesta_registry_format::{Advisory, Artifact, Deprecation, Hash, Kind, SearchEntry};
+    use celesta_registry_format::{Artifact, Deprecation, Hash, Kind, SearchEntry};
     use semver::VersionReq;
     use serde_json::json;
 
@@ -804,7 +879,124 @@ mod tests {
     }
 
     #[test]
+    fn ago_changes_unit_at_the_boundaries() {
+        let minutes = |m| ago(time::Duration::minutes(m));
+        assert_eq!(ago(time::Duration::seconds(59)), "just now");
+        assert_eq!(minutes(1), "1 min ago");
+        assert_eq!(minutes(59), "59 min ago");
+        assert_eq!(minutes(60), "1 h ago");
+        assert_eq!(minutes(24 * 60 - 1), "23 h ago");
+        assert_eq!(minutes(24 * 60), "1 d ago");
+    }
+
+    #[test]
+    fn a_newer_held_version_is_not_downgraded() {
+        let registry = Registry::new(false);
+        let index = index(
+            "celesta.avf",
+            true,
+            vec![entry("1.0.0", 10), entry("2.0.0-beta.1", 10)],
+        );
+        let found = FoundPlugins {
+            registry_plugins: vec![installed("celesta.avf", "2.0.0-beta.1")],
+            ..FoundPlugins::default()
+        };
+        let footer = footer(&index, &found, &registry.state, None, &host());
+        assert_eq!(footer.primary.label, "Installed");
+        assert!(!footer.primary.enabled);
+    }
+
+    #[test]
+    fn a_busy_project_disables_the_project_buttons() {
+        let mut registry = Registry::new(false);
+        registry
+            .state
+            .set_project_busy(PathBuf::from("/projects/demo"));
+        let busy = "Another plugin change is running for this project";
+        let add = footer(
+            &index("acme.charts", false, vec![entry("1.0.0", 10)]),
+            &project(Vec::new()),
+            &registry.state,
+            None,
+            &host(),
+        );
+        assert_eq!(add.primary.label, "Add to this project");
+        assert!(!add.primary.enabled);
+        assert_eq!(add.primary.command, PageCommand::None);
+        assert_eq!(add.reason.as_deref(), Some(busy));
+
+        // A media plugin installs for the user, but pins in the project.
+        let media = footer(
+            &index("celesta.avf", true, vec![entry("1.0.0", 10)]),
+            &project(Vec::new()),
+            &registry.state,
+            None,
+            &host(),
+        );
+        assert!(media.primary.enabled);
+        let pin = media.secondary.unwrap();
+        assert_eq!(pin.label, "Pin to this project");
+        assert!(!pin.enabled);
+
+        // An update of the locked version rewrites the lock.
+        let newer = index(
+            "acme.charts",
+            false,
+            vec![entry("1.0.0", 10), entry("1.1.0", 10)],
+        );
+        let update = footer(
+            &newer,
+            &project(vec![("acme.charts", locked("1.0.0", &[host()]))]),
+            &registry.state,
+            None,
+            &host(),
+        );
+        assert_eq!(update.primary.label, "Update to 1.1.0");
+        assert!(!update.primary.enabled);
+        assert_eq!(update.reason.as_deref(), Some(busy));
+    }
+
+    #[test]
+    fn busy_settings_disable_the_global_buttons() {
+        let mut registry = Registry::new(false);
+        registry.state.set_settings_busy(true);
+        let index = index("celesta.avf", true, vec![entry("1.0.0", 10)]);
+        let footer = footer(&index, &project(Vec::new()), &registry.state, None, &host());
+        assert_eq!(footer.primary.label, "Install");
+        assert!(!footer.primary.enabled);
+        assert_eq!(
+            footer.reason.as_deref(),
+            Some("Another plugin change is running")
+        );
+        // Pinning writes the project, not the settings.
+        assert!(footer.secondary.unwrap().enabled);
+    }
+
+    #[test]
+    fn the_header_follows_the_checkbox() {
+        let both = index(
+            "celesta.avf",
+            true,
+            vec![entry("1.0.0", 10), entry("1.1.0-beta.1", 10)],
+        );
+        let found = FoundPlugins::default();
+        assert_eq!(details(&both, &found, None, &host(), false).latest, "1.0.0");
+        assert_eq!(
+            details(&both, &found, None, &host(), true).latest,
+            "1.1.0-beta.1"
+        );
+        // Only pre-releases: the newest of them rather than nothing.
+        let alpha = index("a.b", false, vec![entry("0.1.0-alpha.1", 10)]);
+        assert_eq!(
+            details(&alpha, &found, None, &host(), false).latest,
+            "0.1.0-alpha.1"
+        );
+    }
+
+    #[test]
     fn sizes_use_decimal_units() {
+        assert_eq!(format_size(999_999), "1.0 MB");
+        assert_eq!(format_size(949_000), "949.0 kB");
         assert_eq!(format_size(1_215_625), "1.2 MB");
         assert_eq!(format_size(999), "999 B");
         assert_eq!(format_size(12_400), "12.4 kB");
@@ -1083,7 +1275,6 @@ mod tests {
             details.advisories,
             ["CEL-1 · Reads any file · <1.1.0 · fixed in 1.1.0"]
         );
-        let _: Option<&Advisory> = list.advisories.first();
     }
 
     #[test]

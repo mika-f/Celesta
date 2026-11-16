@@ -180,6 +180,22 @@ impl RegistryState {
         self.busy_projects.contains(root)
     }
 
+    /// Whether a job is changing the user's settings, which refuses another
+    /// until it ends.
+    pub(crate) fn settings_busy(&self) -> bool {
+        self.settings_busy
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_project_busy(&mut self, root: PathBuf) {
+        self.busy_projects.insert(root);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_settings_busy(&mut self, busy: bool) {
+        self.settings_busy = busy;
+    }
+
     /// A project opened (`None`: none, or one whose lock is not read):
     /// what other projects' work finds is not announced while it is open.
     /// Opening another project checks `search.json` for updates.
