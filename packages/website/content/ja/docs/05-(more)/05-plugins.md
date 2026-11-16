@@ -144,6 +144,12 @@ celesta plugin --help
 
 `plugins.dependencies` は `celesta plugin add` と `remove` が書き込みます。ファイルのほかのキーは、順番も含めてそのまま残ります。Celesta は要件ごとに、要件に合い、動いている Celesta で使え、取り下げ（yank）もセキュリティアドバイザリーの対象にもなっておらず、すべてのターゲット向けのビルド（または `any` 向けのビルド）がある、いちばん新しいバージョンを選びます。すべてのターゲット向けのビルドがあるバージョンがなければ、このコンピューター向けのビルドがあるいちばん新しいバージョンを選び、足りないターゲットを警告します。
 
+`0.10.0-alpha.3` のようなプレリリースに要件が合うのは、`@0.10.0-alpha.3` のように同じバージョンのプレリリースを要件が指すときだけです。そのため、要件なしの `add` と `install --global` はプレリリースを選びません。要件がほかの点では許すプレリリースしかないプラグインでは、エラーが指定すべきバージョンを示します。
+
+```text
+celesta: error: no version of acme.codec satisfies *: only pre-releases match; ask for acme.codec@0.10.0-alpha.3
+```
+
 `celesta.config.json` のないエントリーには、レジストリの依存関係はありません。すべてのプロジェクト用に入れたプラグインだけを使います。
 
 ### `celesta.lock`

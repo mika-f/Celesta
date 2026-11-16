@@ -102,6 +102,10 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   versions. Never edit `celesta.lock`, and do not delete it to get past an
   error. `add` refuses a media plugin: install it with
   `install --global <id>`, or `add <id> --pin` to lock it to one project.
+  A requirement (Cargo semantics) matches a pre-release only when it names
+  one, so `add`/`install --global` without one skip pre-releases; on
+  `only pre-releases match; ask for <id>@<version>`, retry with that
+  spec only if the user wants the pre-release.
 - Before exporting or inspecting a project with
   `plugins.dependencies`, make sure its plugins are downloaded: run
   `celesta plugin install`, or `celesta plugin install --locked` to use
