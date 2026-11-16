@@ -141,7 +141,7 @@ const typed = useTypewriter('はい、できました。', { from: 10, framesPer
 typed.frames; // [10, 12, 14, 22, 24, …]: the frame each character appears on
 
 const clicks = typewriterFrames('npm run build', { from: 10, framesPerChar: 2 });
-clicks.map((at) => <Sequence key={at} from={at}><Audio src="./key.wav" /></Sequence>);
+clicks.map((at, i) => <Sequence key={i} from={at}><Audio src="./key.wav" /></Sequence>);
 ```
 
 - New option `pauses?: Record<string, number>`: extra frames to wait

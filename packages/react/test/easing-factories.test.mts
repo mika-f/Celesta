@@ -72,6 +72,13 @@ test('elastic takes an amplitude and a period', () => {
   const slow = Easings.elastic({ period: 0.6 });
   assert.notEqual(slow.easeOut(0.3), Easings.easeOutElastic(0.3));
   assert.notEqual(slow.easeInOut(0.3), Easings.easeInOutElastic(0.3));
+  // The general form is the named curves' own: their amplitude and period give them back.
+  const named = Easings.elastic({ amplitude: 1, period: 0.3 });
+  for (const t of sweep) {
+    assert.ok(Math.abs(named.easeIn(t) - Easings.easeInElastic(t)) < 1e-12);
+    assert.ok(Math.abs(named.easeOut(t) - Easings.easeOutElastic(t)) < 1e-12);
+    assert.ok(Math.abs(named.easeInOut(t) - Easings.easeInOutElastic(t)) < 1e-12);
+  }
   assert.throws(() => Easings.elastic({ amplitude: 0.5 }), /amplitude/);
   assert.throws(() => Easings.elastic({ period: 0 }), /period/);
 });
