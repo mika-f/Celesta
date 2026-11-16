@@ -442,6 +442,9 @@ pub(crate) struct EditorView {
     /// The requirements an update rewrote unasked, logged in Problems once
     /// the project opens again with them.
     pub(crate) rewrite_note: Option<Problem>,
+    /// The This project heading's Update Plugins is working out what it
+    /// changes, so it takes no second click.
+    pub(crate) preparing_update: bool,
     /// The project-decoder files shown in Problems.
     pub(crate) decoder_notice: DecoderNotice,
 }
@@ -672,6 +675,7 @@ impl EditorView {
             asked_locks: BTreeSet::new(),
             announced_blocks: BTreeSet::new(),
             rewrite_note: None,
+            preparing_update: false,
         };
         editor.set_plugins(plugins);
         editor.refresh_preview();

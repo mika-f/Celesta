@@ -114,6 +114,9 @@ pub(crate) struct RegistryState {
     settings_busy: bool,
     /// `search.json` is being fetched.
     searching: bool,
+    /// The last advisory refresh ended without a verified list to use:
+    /// it failed and nothing was cached. `false` until a refresh ends.
+    pub(crate) advisories_missing: bool,
     /// The daily advisory and search list refresh.
     timers: Option<Task<()>>,
 }
@@ -174,6 +177,7 @@ impl RegistryState {
             busy_projects: BTreeSet::new(),
             settings_busy: false,
             searching: false,
+            advisories_missing: false,
             timers: None,
         }
     }
@@ -575,30 +579,32 @@ impl RegistryState {
     pub(crate) fn refresh_advisories(&mut self, cx: &mut Context<Self>) {
         let client = self.client.clone();
         cx.spawn(async move |this, cx| {
-            let changed = cx
+            let (changed, missing) = cx
                 .background_executor()
                 .spawn(async move {
                     let Ok(registry) = client.registry() else {
-                        return false;
+                        return (false, true);
                     };
+                    let cached = registry.cached_advisories().ok().flatten();
+                    let had_list = cached.is_some();
                     // No cached list stops nothing, as an empty one does.
-                    let before = registry
-                        .cached_advisories()
-                        .ok()
-                        .flatten()
-                        .map(|list| list.advisories)
-                        .unwrap_or_default();
-                    registry
-                        .refresh_advisories(OffsetDateTime::now_utc())
-                        .is_ok_and(|list| list.advisories != before)
+                    let before = cached.map(|list| list.advisories).unwrap_or_default();
+                    match registry.refresh_advisories(OffsetDateTime::now_utc()) {
+                        Ok(list) => (list.advisories != before, false),
+                        Err(_) => (false, !had_list),
+                    }
                 })
                 .await;
-            if changed {
-                this.update(cx, |_, cx| {
+            this.update(cx, |state, cx| {
+                if state.advisories_missing != missing {
+                    state.advisories_missing = missing;
+                    cx.notify();
+                }
+                if changed {
                     cx.emit(RegistryEvent::PluginsChanged { project: None });
-                })
-                .ok();
-            }
+                }
+            })
+            .ok();
         })
         .detach();
     }
@@ -703,8 +709,18 @@ impl RegistryState {
                     }
                 }
             });
-            let result = task.await;
+            let mut result = task.await;
             this.update(cx, |state, cx| {
+                // Rewritten files are worth a note even when another
+                // project is open now.
+                if let (Ok(done), Some(root)) = (&mut result, &project)
+                    && !done.rewrote.is_empty()
+                {
+                    cx.emit(RegistryEvent::Rewrote {
+                        project: root.clone(),
+                        rewrites: std::mem::take(&mut done.rewrote),
+                    });
+                }
                 for id in ids.iter().chain(adopted.borrow().iter()) {
                     state.in_flight.remove(id);
                 }
@@ -754,12 +770,6 @@ impl RegistryState {
         match result {
             Ok(done) => {
                 self.no_newer.extend(done.no_newer);
-                if let Some(root) = project.as_ref().filter(|_| !done.rewrote.is_empty()) {
-                    cx.emit(RegistryEvent::Rewrote {
-                        project: root.clone(),
-                        rewrites: done.rewrote,
-                    });
-                }
                 if done.changed {
                     cx.emit(RegistryEvent::PluginsChanged { project });
                 }
@@ -1155,6 +1165,58 @@ mod tests {
         assert!(config.contains(r#""acme.charts": "^1.0.0""#), "{config}");
         let lock = Lockfile::load(&root).unwrap().unwrap();
         assert_eq!(lock.plugins["acme.charts"].version, version("1.0.0"));
+    }
+
+    #[gpui_kit::test]
+    fn rewrites_for_a_project_no_longer_open_are_still_announced(cx: &mut TestAppContext) {
+        let fixture = Fixture::new(cx);
+        let root = fixture.project("old");
+        let other = fixture.project("other");
+        std::fs::write(
+            root.join(PROJECT_CONFIG),
+            r#"{ "plugins": { "dependencies": { "acme.charts": "^0.5.0" } } }"#,
+        )
+        .unwrap();
+        fixture.open(cx, Some(&root));
+        fixture.state.update(cx, |state, cx| {
+            state.update_planned(root.clone(), BTreeSet::from(["acme.charts".to_owned()]), cx)
+        });
+        fixture.open(cx, Some(&other));
+        cx.run_until_parked();
+
+        // The rewrite is announced; the reload is not, as the project closed.
+        assert_eq!(
+            fixture.events(),
+            [RegistryEvent::Rewrote {
+                project: root,
+                rewrites: vec![Rewrite {
+                    id: "acme.charts".to_owned(),
+                    from: "^0.5.0".to_owned(),
+                    to: "^1.0.0".to_owned(),
+                }],
+            }]
+        );
+    }
+
+    #[gpui_kit::test]
+    fn a_refresh_that_leaves_no_advisory_list_is_marked(cx: &mut TestAppContext) {
+        let fixture = Fixture::new(cx);
+        // Until a refresh ends, no list is not yet missing.
+        assert!(!fixture.read(cx, |state| state.advisories_missing));
+        // The registry serves no list, and none is cached.
+        fixture
+            .state
+            .update(cx, |state, cx| state.refresh_advisories(cx));
+        cx.run_until_parked();
+        assert!(fixture.read(cx, |state| state.advisories_missing));
+
+        // A refresh that verifies a list clears it.
+        fixture.served.advisories(json!([]));
+        fixture
+            .state
+            .update(cx, |state, cx| state.refresh_advisories(cx));
+        cx.run_until_parked();
+        assert!(!fixture.read(cx, |state| state.advisories_missing));
     }
 
     #[gpui_kit::test]

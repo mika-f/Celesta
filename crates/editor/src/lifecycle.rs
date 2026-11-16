@@ -796,6 +796,7 @@ impl EditorView {
         next.asked_locks = std::mem::take(&mut self.asked_locks);
         next.announced_blocks = std::mem::take(&mut self.announced_blocks);
         next.rewrite_note = self.rewrite_note.take();
+        next.preparing_update = self.preparing_update;
         // A reload of the same entry keeps its history; another file starts empty.
         next.edit_history = std::mem::take(&mut self.edit_history);
         if self.react_entry().is_none() || self.react_entry() != next.react_entry() {

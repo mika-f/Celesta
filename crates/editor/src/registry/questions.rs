@@ -527,6 +527,11 @@ impl EditorView {
                 let Some(registry) = this.registry.clone() else {
                     return;
                 };
+                // A job started meanwhile (the heading's Download, say) is
+                // already doing what the question would ask for.
+                if registry.read(cx).project_busy(&prepared.root) {
+                    return;
+                }
                 if ask_once(&mut this.asked_locks, prepared, registry, window, cx) {
                     cx.notify();
                 }
@@ -539,8 +544,12 @@ impl EditorView {
     /// The This project heading's Update Plugins: resolves the plugins the
     /// lock misses or cannot load again. When requirements in
     /// `celesta.config.json` have to change for that, or an id cannot be
-    /// updated, a question says so first.
+    /// updated, a question says so first. While that is worked out the
+    /// heading's button is held ([`EditorView::preparing_update`]).
     pub(crate) fn update_project_plugins(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.preparing_update {
+            return;
+        }
         let found = &self.found_plugins;
         let Some(root) = found.project.clone() else {
             return;
@@ -548,6 +557,9 @@ impl EditorView {
         let Some(registry) = self.registry.clone() else {
             return;
         };
+        if registry.read(cx).project_busy(&root) {
+            return;
+        }
         let ids: Vec<String> = match &found.lock_problem {
             Some(LockProblem::OutOfDate { ids } | LockProblem::OtherCelesta { ids, .. }) => {
                 ids.clone()
@@ -560,13 +572,19 @@ impl EditorView {
         let client = state.client().clone();
         let include_prereleases = state.include_prereleases;
         let found = found.clone();
+        self.preparing_update = true;
+        cx.notify();
         cx.spawn_in(window, async move |view, cx| {
             let prepared = cx
                 .background_executor()
                 .spawn(async move { prepare(question, &found, root, &client, include_prereleases) })
                 .await;
             view.update_in(cx, |this, window, cx| {
-                if this.found_plugins.project.as_ref() != Some(&prepared.root) {
+                this.preparing_update = false;
+                cx.notify();
+                if this.found_plugins.project.as_ref() != Some(&prepared.root)
+                    || registry.read(cx).project_busy(&prepared.root)
+                {
                     return;
                 }
                 let root = prepared.root.clone();
@@ -594,14 +612,16 @@ impl EditorView {
     }
 }
 
-/// The Problems entry for requirements an update rewrote without a
-/// question listing them first.
-pub(crate) fn rewrite_note(rewrites: &[Rewrite]) -> Problem {
+/// The Problems entry for requirements an update rewrote in the project
+/// at `root` without a question listing them first.
+pub(crate) fn rewrite_note(root: &Path, rewrites: &[Rewrite]) -> Problem {
+    let lines = rewrites
+        .iter()
+        .map(|rewrite| format!("{} from {} to {}", rewrite.id, rewrite.from, rewrite.to));
     Problem::new(
         "Changed requirements in celesta.config.json",
-        rewrites
-            .iter()
-            .map(|rewrite| format!("{} from {} to {}", rewrite.id, rewrite.from, rewrite.to))
+        std::iter::once(root.display().to_string())
+            .chain(lines)
             .collect::<Vec<_>>()
             .join("\n"),
     )
@@ -831,6 +851,54 @@ mod tests {
                 to: "^0.11.0".to_owned(),
             }])
         );
+    }
+
+    #[test]
+    fn what_comes_after_the_budget_is_left_out() {
+        let started = Instant::now();
+        let received = within(Duration::from_millis(50), |sender| {
+            sender.send(1).unwrap();
+            std::thread::sleep(Duration::from_secs(2));
+            let _ = sender.send(2);
+        });
+        assert_eq!(received, [1]);
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "waited for the worker"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreachable_registry_leaves_the_plan_unknown() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let served = TestRegistry::file();
+        served.publish("acme.charts", "0.11.0", &["any"]);
+        let user = Folder(scratch_dir("lock-question"));
+        let root = user.0.join("prism");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join(celesta_plugin_host::PROJECT_CONFIG),
+            r#"{ "plugins": { "dependencies": { "acme.charts": "^0.10.0" } } }"#,
+        )
+        .unwrap();
+        let client = Arc::new(EditorRegistry::for_test(&served, &user.0));
+        let found = FoundPlugins {
+            project: Some(root.clone()),
+            dependencies: BTreeMap::from([("acme.charts".to_owned(), "^0.10.0".parse().unwrap())]),
+            ..FoundPlugins::default()
+        };
+        let question = LockQuestion::Requirements {
+            ids: vec!["acme.charts".to_owned()],
+        };
+        let set_mode = |mode| {
+            std::fs::set_permissions(served.served_dir(), std::fs::Permissions::from_mode(mode))
+                .unwrap()
+        };
+        set_mode(0o000);
+        let prepared = prepare(question, &found, root, &client, false);
+        set_mode(0o700);
+        assert_eq!(prepared.plan, Plan::Unknown);
     }
 
     #[test]

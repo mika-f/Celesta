@@ -129,6 +129,8 @@ pub(crate) struct FoundPlugins {
     /// The newest verified advisory list discovery read is more than seven
     /// days old, so newer advisories may be missing.
     pub(crate) advisories_stale: bool,
+    /// Discovery read no verified advisory list at all.
+    pub(crate) no_advisories: bool,
 }
 
 impl FoundPlugins {
@@ -160,12 +162,14 @@ impl FoundPlugins {
         if let Some(extra) = extra_advisories {
             registry.merge_advisories(extra);
         }
+        let registry_had_none = registry.advisories.is_none();
         let advisories_stale = registry
             .advisories
             .as_ref()
             .is_some_and(|list| advisories_stale(list, OffsetDateTime::now_utc()).is_some());
         Self {
             advisories_stale,
+            no_advisories: registry_had_none,
             ..Self::find_with_context(project, settings, settings_error, registry, registry_errors)
         }
     }
@@ -267,6 +271,7 @@ impl FoundPlugins {
             missing_decoder: false,
             registry: None,
             advisories_stale: false,
+            no_advisories: false,
         }
     }
 

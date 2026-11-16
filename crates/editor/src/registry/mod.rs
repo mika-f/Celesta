@@ -76,10 +76,16 @@ impl EditorView {
                 }
             }
             RegistryEvent::Rewrote { project, rewrites } => {
-                // Logged once the project opens again with them, as the
-                // reopen starts a new Problems log.
+                let note = questions::rewrite_note(project, rewrites);
                 if Some(project) == self.found_plugins.project.as_ref() {
-                    self.rewrite_note = Some(questions::rewrite_note(rewrites));
+                    // Logged once the project opens again with them, as
+                    // the reopen starts a new Problems log.
+                    self.rewrite_note = Some(note);
+                } else {
+                    // Another project is open: nothing reopens for this one.
+                    self.problems
+                        .info_without_toast(Source::Registry, note.title, note.detail);
+                    cx.notify();
                 }
             }
             RegistryEvent::Failed { title, detail, .. } => {

@@ -282,7 +282,9 @@ impl EditorView {
             SectionAction::UpdatePlugins => Button::new("plugins-tab-update-plugins")
                 .xsmall()
                 .outline()
-                .compact_label("Update Plugins")
+                // It may ask first (requirements to rewrite).
+                .compact_label("Update Plugins…")
+                .disabled(self.preparing_update)
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.update_project_plugins(window, cx);
                 }))

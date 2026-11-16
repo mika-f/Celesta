@@ -112,6 +112,14 @@ pub(crate) fn notices(
     }
 }
 
+/// Whether there is no verified advisory list newer than seven days: the
+/// one discovery read is older, or it read none and the advisory refresh
+/// ended without one (`refresh_left_none`). While the first refresh runs,
+/// no list is not yet a warning.
+fn advisories_stale_now(found: &FoundPlugins, refresh_left_none: bool) -> bool {
+    found.advisories_stale || (found.no_advisories && refresh_left_none)
+}
+
 /// The registry copies `found` names, each once: the locked versions, then
 /// the ones installed for every project, with the source each runs from.
 fn registry_copies(found: &FoundPlugins) -> Vec<(String, Version, PluginSource)> {
@@ -172,7 +180,7 @@ pub(crate) fn blocked_problem(found: &FoundPlugins) -> Option<Problem> {
                 .iter()
                 .map(|blocked| {
                     format!(
-                        "{} {}: {}",
+                        "{} {} — {}",
                         blocked.id,
                         blocked.version,
                         stopped_message(blocked)
@@ -281,7 +289,10 @@ impl EditorView {
                 Fetch::Loaded { value, .. } => Some(value.clone()),
                 _ => None,
             },
-            self.found_plugins.advisories_stale,
+            advisories_stale_now(
+                &self.found_plugins,
+                state.is_some_and(|state| state.advisories_missing),
+            ),
         );
         self.problems.set(Source::RegistryNotices, problem);
     }
@@ -529,6 +540,34 @@ mod tests {
     }
 
     #[test]
+    fn no_advisory_list_is_stale_once_the_refresh_ended_without_one() {
+        let none = FoundPlugins {
+            no_advisories: true,
+            ..FoundPlugins::default()
+        };
+        // The refresh failed and nothing was cached: a warning.
+        assert!(advisories_stale_now(&none, true));
+        let problem = notices(&none, None, |_| None, advisories_stale_now(&none, true));
+        assert_eq!(
+            problem.map(|problem| problem.title),
+            Some("The advisory list is more than 7 days old".to_owned())
+        );
+        // The first refresh still runs (or it succeeded): none yet.
+        assert!(!advisories_stale_now(&none, false));
+        assert_eq!(
+            notices(&none, None, |_| None, advisories_stale_now(&none, false)),
+            None
+        );
+        // A list that is read and recent is no warning, whatever the refresh did.
+        assert!(!advisories_stale_now(&FoundPlugins::default(), true));
+        let old = FoundPlugins {
+            advisories_stale: true,
+            ..FoundPlugins::default()
+        };
+        assert!(advisories_stale_now(&old, false));
+    }
+
+    #[test]
     fn a_registry_copy_a_hand_placed_one_shadows_is_named() {
         let folder = PathBuf::from("/home/me/plugins/vrm");
         let found = FoundPlugins {
@@ -643,8 +682,8 @@ mod tests {
         assert_eq!(problem.title, "2 plugins were stopped");
         assert_eq!(
             problem.detail,
-            "vrm 0.2.1: CELESTA-2026-0003: runs files outside the project. Fixed in 0.2.3.\n\
-             beep 1.0.0: CELESTA-2026-0003: runs files outside the project."
+            "vrm 0.2.1 — CELESTA-2026-0003: runs files outside the project. Fixed in 0.2.3.\n\
+             beep 1.0.0 — CELESTA-2026-0003: runs files outside the project."
         );
         assert_eq!(blocked_problem(&FoundPlugins::default()), None);
     }
