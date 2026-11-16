@@ -1,7 +1,7 @@
 import { useContext } from 'react';
 import type { ReactNode } from 'react';
 import { FreezeFrame, Group, Rect, Sequence, Span, Text, useCurrentFrame } from '@celesta.studio/react';
-import { Lottie } from '@celesta.studio/lottie';
+import { Lottie } from '@celesta-plugin/lottie';
 import { Badge, Panel, PatternBackground } from '@celesta.studio/components';
 import { useFitText } from '@celesta.studio/text';
 import { Backdrop } from '../components/Backdrop';

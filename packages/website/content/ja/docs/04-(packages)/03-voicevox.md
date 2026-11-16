@@ -1,6 +1,18 @@
-`@celesta.studio/voicevox` は、VOICEVOX の音声合成に使った AudioQuery から、各モーラ・音素・間が WAV のどこにあるかを求め、その時刻から LipSyncTrack を作ります。ローカルの VOICEVOX Engine で台本全体を音声合成し、その音声をキャッシュすることもできます。会話のコンポーネント、WAV から作る口パク、LipSyncTrack は `@celesta.studio/character` にあります。変換機能は独立したパッケージから読み込んでください。@celesta.studio/character からは再エクスポートされません。
+`@celesta-plugin/voicevox` は、VOICEVOX の音声合成に使った AudioQuery から、各モーラ・音素・間が WAV のどこにあるかを求め、その時刻から LipSyncTrack を作ります。ローカルの VOICEVOX Engine で台本全体を音声合成し、その音声をキャッシュすることもできます。会話のコンポーネント、WAV から作る口パク、LipSyncTrack は `@celesta.studio/character` にあります。変換機能は独立したパッケージから読み込んでください。@celesta.studio/character からは再エクスポートされません。
 
-デスクトップアプリと CLI に同梱されています。ランタイムのビルド時にこのパッケージもビルドされ、File → Set Up TypeScript で型定義と読み込み設定が追加されます。非公開パッケージのため npm では配布していません。ブラウザのプレイグラウンドには対応していません。
+> [!NOTE]
+> **プラグインを追加する**
+> `@celesta-plugin/voicevox` は Celesta の[プラグインレジストリ](/ja/docs/plugins/#レジストリのプラグイン)にある公式プラグインです。`celesta` コマンドでプロジェクトに追加すると、`celesta.config.json` に宣言し、`celesta.lock` にバージョンを記録して、ダウンロードします。
+>
+> ```sh
+> celesta plugin add voicevox
+> ```
+>
+> プラグインのバージョンは Celesta と同じです。Celesta のプレリリースでは、`celesta plugin add voicevox@0.10.0-alpha.4` のようにそのバージョンを指定してください。プレリリースを含まない指定はプレリリースに一致しません。デスクトップアプリはまだ `celesta.lock` を読まないため、アプリのプレビューと書き出しには `celesta plugin install --global voicevox` でも全プロジェクト向けにインストールしてください（プレリリースでは同じくバージョンを指定します）。
+>
+> `@celesta.studio/voicevox` をインポートするコンポジションもそのまま動きます。Celesta はそのパッケージを引き続き同梱し、使うべきインポートと実行する `celesta plugin add` コマンドを警告で示します。
+
+ブラウザのプレイグラウンドには対応していません。
 
 ## 音声合成の情報に合わせて口を動かす
 
@@ -36,7 +48,7 @@ plan = await planDialogue(lines, { fps: 30 });
 | `concurrency`、`timeout`、`signal` | 同時に合成する台詞の数（既定 2）、エンジンへの各リクエストの制限時間（ミリ秒、既定 60000）、中止に使う AbortSignal です。 |
 | `revision`、`refresh` | すべての台詞を無効にするか、キャッシュに関係なく合成し直します（`true` または台詞の id のリスト）。 |
 
-**@celesta.studio/voicevox**
+**@celesta-plugin/voicevox**
 
 | API | 用途 |
 | --- | --- |

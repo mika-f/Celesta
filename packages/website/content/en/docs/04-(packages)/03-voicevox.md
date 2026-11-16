@@ -1,6 +1,18 @@
-`@celesta.studio/voicevox` reads the AudioQuery used by VOICEVOX synthesis: where each mora, phoneme, and pause falls in the WAV, and a LipSyncTrack built from that timing. It can also synthesize a whole script with a local VOICEVOX Engine and cache the voices. Dialogue components, WAV-based lip sync, and LipSyncTrack are in `@celesta.studio/character`. Import the adapter from its own package; @celesta.studio/character does not re-export it.
+`@celesta-plugin/voicevox` reads the AudioQuery used by VOICEVOX synthesis: where each mora, phoneme, and pause falls in the WAV, and a LipSyncTrack built from that timing. It can also synthesize a whole script with a local VOICEVOX Engine and cache the voices. Dialogue components, WAV-based lip sync, and LipSyncTrack are in `@celesta.studio/character`. Import the adapter from its own package; @celesta.studio/character does not re-export it.
 
-The desktop app and CLI bundle this package separately. Building the runtime builds it too, and File → Set Up TypeScript includes its declarations and import mapping. It is private and is not published to npm. The browser playground does not support it.
+> [!NOTE]
+> **Add the plugin**
+> `@celesta-plugin/voicevox` is a first-party plugin from Celesta's [plugin registry](/en/docs/plugins/#registry-plugins). Add it to the project with the `celesta` command, which declares it in `celesta.config.json`, locks it in `celesta.lock`, and downloads it:
+>
+> ```sh
+> celesta plugin add voicevox
+> ```
+>
+> The plugin's versions follow Celesta's. On a pre-release of Celesta, name that version, as in `celesta plugin add voicevox@0.10.0-alpha.4`: a requirement without a pre-release matches none. The desktop app does not read `celesta.lock` yet, so for its preview and exports also install the plugin for every project with `celesta plugin install --global voicevox` (with the same version on a pre-release).
+>
+> A composition that imports `@celesta.studio/voicevox` keeps working: Celesta still includes that package, and warns with the import to use and the `celesta plugin add` command to run.
+
+The browser playground does not support it.
 
 ## Drive a dialogue line from its synthesis query
 
@@ -36,7 +48,7 @@ Voices are cached in cacheDir, relative to the entry file. A line is synthesized
 | `concurrency`, `timeout`, `signal` | Lines synthesized at once (default 2), milliseconds per engine request (default 60000), and an AbortSignal to cancel. |
 | `revision`, `refresh` | Invalidate every line, or synthesize again regardless of the cache (`true` or a list of line ids). |
 
-**@celesta.studio/voicevox**
+**@celesta-plugin/voicevox**
 
 | API | Use it for |
 | --- | --- |

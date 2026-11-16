@@ -7,7 +7,7 @@
 // graphs cannot place is an error, so CI fails rather than skipping a plugin.
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
-import { isAbsolute, join, relative, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 
 import { cargoMetadata } from './cargo.mts';
 import type { CargoMetadata } from './cargo.mts';
@@ -50,7 +50,7 @@ export interface PluginInputs {
   /** The folder of its Cargo workspace's root, or `null` without `cargoPackage`. */
   workspace: string | null;
   cargoPackage: string | null;
-  /** The name in its js/package.json. */
+  /** The name in the package.json of the package its module belongs to (js/package.json, or a workspace package). */
   jsPackage: string | null;
   /** Sorted, without duplicates; a folder covers every path under it. */
   inputs: string[];
@@ -160,11 +160,14 @@ function pluginInputs(
   // `id`, say) is not listed as affected.
   checkPluginSource(plugin, sourceName);
   const directory = repositoryPath(root, source);
-  const packageJson = join(source, 'js', 'package.json');
+  // The package the module belongs to: the nearest package.json above it
+  // (js/package.json for plugins/vrm's js/src/index.ts, or the workspace
+  // package a first-party plugin is made from, such as packages/code).
+  const packageJson =
+    plugin.module === undefined
+      ? join(source, 'js', 'package.json')
+      : modulePackage(root, join(source, plugin.module), sourceName);
   const hasJs = existsSync(packageJson);
-  if (plugin.module !== undefined && !hasJs) {
-    throw new Error(`${sourceName}: its module needs a js/package.json that declares what the module uses`);
-  }
 
   const inputs = [directory];
   let workspace = null;
@@ -196,6 +199,25 @@ function pluginInputs(
     jsPackage,
     inputs: [...new Set(inputs)].sort(),
   };
+}
+
+/**
+ * The package.json of the package the module `module` belongs to: the
+ * nearest one in its folder or a folder above it, below the repository's
+ * root (whose package.json is the workspace's, not a package's).
+ *
+ * @param root The repository's real folder.
+ * @param sourceName The plugin.json's repository path, for error messages.
+ */
+function modulePackage(root: string, module: string, sourceName: string): string {
+  repositoryPath(root, module);
+  for (let folder = dirname(module); folder !== root; folder = dirname(folder)) {
+    const packageJson = join(folder, 'package.json');
+    if (existsSync(packageJson)) return packageJson;
+  }
+  throw new Error(
+    `${sourceName}: its module needs a package.json above it (js/package.json, say) that declares what the module uses`,
+  );
 }
 
 /**

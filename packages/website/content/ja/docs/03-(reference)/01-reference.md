@@ -1,4 +1,4 @@
-Celesta は Remotion のようにパッケージに分かれています。コアの API は `@celesta.studio/react` から、それ以外はパッケージ列のパッケージからインポートします。乱数・ノイズ・数学ヘルパーは `@celesta.studio/math`（[ガイド](/ja/docs/math/)）、色付きコードは `@celesta.studio/code`（[ガイド](/ja/docs/code/)）にあります。TypeScript 宣言で完全な props の型とエディタ補完を取得できます。
+Celesta は Remotion のようにパッケージに分かれています。コアの API は `@celesta.studio/react` から、それ以外はパッケージ列のパッケージからインポートします。乱数・ノイズ・数学ヘルパーは `@celesta.studio/math`（[ガイド](/ja/docs/math/)）、色付きコードは `@celesta-plugin/code`（[ガイド](/ja/docs/code/)）にあります。TypeScript 宣言で完全な props の型とエディタ補完を取得できます。
 
 **レイヤー**
 
@@ -14,6 +14,7 @@ Celesta は Remotion のようにパッケージに分かれています。コ�
 | `brightness`、`contrast`、`saturation`、`hue`、`grayscale`、`invert`、`tint`、`vignette` | `@celesta.studio/shader` | `shader` の配列でカスタムシェーダーの間に入れる色補正です。同名の props でどのレイヤーにも指定できます。[レイアウトの「色補正」](/ja/docs/layout/)を参照してください。 |
 | `pixelate`、`halftone`、`chromaticAberration`、`wave`、`noise`、`scanlines`、`zoomBlur`、`chromaKey` | `@celesta.studio/shader` | `shader` の配列に入れるスタイライズのエフェクトとクロマキーです。同名の props でどのレイヤーにも指定できます。[レイアウトの「スタイライズ」「クロマキー」](/ja/docs/layout/)を参照してください。 |
 | `Font` | `@celesta.studio/react` | `src` でフォントファイルやウェブフォントの CSS を読み込み、`Text` で使えるようにします。[テキストとフォント](/ja/docs/text-fonts/)も参照してください。 |
+| `PluginLayer` | `@celesta.studio/react` | コンテンツプラグインのプログラムが描くレイヤー。`plugin`（id）、`assets`（名前付きのファイル）、`data`（フレームごとの JSON）、`time`（省略時は囲むシーケンスの時刻）を渡します。プラグインのモジュール向けです。[プラグイン](/ja/docs/plugins/#プラグインを作る)を参照してください。 |
 
 **時間と動き**
 

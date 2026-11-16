@@ -14,10 +14,8 @@ import * as React from 'react';
 
 import { blinkPhase } from '@celesta.studio/character';
 import type { BlinkTiming, LipSyncTrack, MouthShape } from '@celesta.studio/character';
-import { useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
-import type { AssetInput, CommonProps, Easing, JsonValue, KeyframeAnimation, LayerContent } from '@celesta.studio/react';
-import { registerHostElement } from '@celesta.studio/react/internal';
-import type { HostNode, HostWalk } from '@celesta.studio/react/internal';
+import { PluginLayer, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
+import type { AssetInput, CommonProps, Easing, JsonValue, KeyframeAnimation, PluginLayerProps } from '@celesta.studio/react';
 
 /** VRM 1.0's mouth expressions, from the vowels a, i, u, e, o. */
 export type Vowel = 'aa' | 'ih' | 'ou' | 'ee' | 'oh';
@@ -168,8 +166,6 @@ export interface VrmMotionData {
   fadeIn?: number;
 }
 
-const ELEMENT = 'celesta-plugin-vrm';
-
 const VOWELS: Record<MouthShape, Vowel | undefined> = {
   closed: undefined,
   a: 'aa',
@@ -181,7 +177,7 @@ const VOWELS: Record<MouthShape, Vowel | undefined> = {
 
 const BLINK = { open: 0, half: 0.5, closed: 1 } as const;
 
-/** The props `<Vrm>` turns into data rather than passing to its element. */
+/** The props `<Vrm>` turns into data rather than passing to its layer. */
 const DATA_PROPS = [
   'width',
   'height',
@@ -264,22 +260,24 @@ const TRACK_AXES = ['pitch', 'yaw', 'roll', 'x', 'y', 'z'] as const;
 export function Vrm(props: VrmProps): React.ReactElement {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
-  return React.createElement(ELEMENT, vrmElementProps(props, frame, fps));
+  return React.createElement(PluginLayer, vrmElementProps(props, frame, fps));
 }
 
 /**
- * The host element's props: the common ones and `src`, the time, `vrmData`,
- * and with motions their `.vrma` files by asset name (`clips`).
+ * The `<PluginLayer>` it renders: the common props, plugin `vrm`, the `.vrm`
+ * as asset `model` and each motion's `.vrma` as asset `motion<i>`, the time,
+ * and `vrmData` (JSON, though its interfaces do not say so).
  */
-export function vrmElementProps(props: VrmProps, frame: number, fps: number): Record<string, unknown> {
+export function vrmElementProps(props: VrmProps, frame: number, fps: number): PluginLayerProps {
   const rest: Record<string, unknown> = { ...props };
   for (const key of DATA_PROPS) delete rest[key];
-  const clips = motionClips(props.motions ?? []);
+  delete rest.src;
   return {
-    ...rest,
-    ...(Object.keys(clips).length ? { clips } : {}),
+    ...(rest as CommonProps),
+    plugin: 'vrm',
+    assets: { model: props.src, ...motionClips(props.motions ?? []) },
     time: frame / fps,
-    data: vrmData(props, frame, fps),
+    data: vrmData(props, frame, fps) as unknown as JsonValue,
   };
 }
 
@@ -487,22 +485,3 @@ function linearColor(color: string): [number, number, number] {
   };
   return [channel(0), channel(1), channel(2)];
 }
-
-/**
- * The layer the plugin draws: the `.vrm` as asset `model`, each motion's
- * `.vrma` as asset `motion<i>`, and `vrmData`.
- */
-function vrmContent(node: HostNode, walk: HostWalk): LayerContent {
-  // `data` is `vrmData`'s: JSON, though its interfaces do not say so.
-  const props = node.props as { src: unknown; clips?: Record<string, unknown>; time: number; data: JsonValue };
-  const clips = Object.entries(props.clips ?? {}).map(([name, src]) => [name, walk.resolveAsset(src)]);
-  return {
-    type: 'plugin',
-    plugin: 'vrm',
-    assets: { model: walk.resolveAsset(props.src), ...Object.fromEntries(clips) },
-    time: props.time,
-    data: props.data,
-  };
-}
-
-registerHostElement(ELEMENT, { content: vrmContent });

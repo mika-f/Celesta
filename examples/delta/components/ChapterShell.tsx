@@ -1,6 +1,6 @@
 import type { ComponentType, ReactNode } from 'react';
 import { Easings, Group, Rect, Text, interpolate, progress, useCurrentFrame, useTextMetrics } from '@celesta.studio/react';
-import type { CodeLanguage } from '@celesta.studio/code';
+import type { CodeLanguage } from '@celesta-plugin/code';
 import { useFitText } from '@celesta.studio/text';
 import { Backdrop } from './Backdrop';
 import { Delta } from './Delta';

@@ -282,9 +282,6 @@ importers:
       '@celesta.studio/character':
         specifier: workspace:*
         version: link:../../packages/character
-      '@celesta.studio/code':
-        specifier: workspace:*
-        version: link:../../packages/code
       '@celesta.studio/components':
         specifier: workspace:*
         version: link:../../packages/components
@@ -294,9 +291,6 @@ importers:
       '@celesta.studio/layout':
         specifier: workspace:*
         version: link:../../packages/layout
-      '@celesta.studio/lottie':
-        specifier: workspace:*
-        version: link:../../packages/lottie
       '@celesta.studio/math':
         specifier: workspace:*
         version: link:../../packages/math
@@ -353,9 +347,6 @@ importers:
 
   examples/font-stack:
     dependencies:
-      '@celesta.studio/code':
-        specifier: workspace:*
-        version: link:../../packages/code
       '@celesta.studio/react':
         specifier: workspace:*
         version: link:../../packages/react
@@ -485,18 +476,12 @@ importers:
       '@celesta.studio/character':
         specifier: workspace:*
         version: link:../../packages/character
-      '@celesta.studio/code':
-        specifier: workspace:*
-        version: link:../../packages/code
       '@celesta.studio/react':
         specifier: workspace:*
         version: link:../../packages/react
       '@celesta.studio/shapes':
         specifier: workspace:*
         version: link:../../packages/shapes
-      '@celesta.studio/voicevox':
-        specifier: workspace:*
-        version: link:../../packages/voicevox
       react:
         specifier: ^19.3.0
         version: 19.3.1
@@ -529,9 +514,6 @@ importers:
 
   examples/shorts-tips:
     dependencies:
-      '@celesta.studio/code':
-        specifier: workspace:*
-        version: link:../../packages/code
       '@celesta.studio/project':
         specifier: workspace:*
         version: link:../../packages/project
@@ -635,9 +617,6 @@ importers:
 
   examples/spectra:
     dependencies:
-      '@celesta.studio/code':
-        specifier: workspace:*
-        version: link:../../packages/code
       '@celesta.studio/components':
         specifier: workspace:*
         version: link:../../packages/components
@@ -666,9 +645,6 @@ importers:
 
   examples/versus:
     dependencies:
-      '@celesta.studio/code':
-        specifier: workspace:*
-        version: link:../../packages/code
       '@celesta.studio/components':
         specifier: workspace:*
         version: link:../../packages/components
@@ -706,9 +682,6 @@ importers:
       '@celesta.studio/character':
         specifier: workspace:*
         version: link:../../packages/character
-      '@celesta.studio/code':
-        specifier: workspace:*
-        version: link:../../packages/code
       '@celesta.studio/components':
         specifier: workspace:*
         version: link:../../packages/components
@@ -727,9 +700,6 @@ importers:
       '@celesta.studio/text':
         specifier: workspace:*
         version: link:../../packages/text
-      '@celesta.studio/voicevox':
-        specifier: workspace:*
-        version: link:../../packages/voicevox
       react:
         specifier: ^19.3.0
         version: 19.3.1

@@ -1,0 +1,8 @@
+{
+  "id": "voicevox",
+  "name": "VOICEVOX",
+  "version": "0.10.0-alpha.3",
+  "license": "MIT OR Apache-2.0",
+  "module": "../../packages/voicevox/src/index.ts",
+  "licenses": ["../../LICENSE-MIT", "../../LICENSE-APACHE"]
+}

@@ -296,7 +296,8 @@ fn ready_message_carries_legacy_imports() {
     let json = serde_json::json!({
         "config": config,
         "legacyImports": [
-            {"file": "scenes/Intro.tsx", "specifier": "@celesta/react", "current": "@celesta.studio/react"}
+            {"file": "scenes/Intro.tsx", "specifier": "@celesta/react", "current": "@celesta.studio/react"},
+            {"file": "Code.tsx", "specifier": "@celesta.studio/code", "current": "@celesta-plugin/code", "plugin": "code@0.10.0-alpha.4"}
         ]
     })
     .to_string();
@@ -305,15 +306,29 @@ fn ready_message_carries_legacy_imports() {
     };
     assert_eq!(
         legacy_imports,
-        [LegacyImport {
-            file: "scenes/Intro.tsx".to_owned(),
-            specifier: "@celesta/react".to_owned(),
-            current: "@celesta.studio/react".to_owned(),
-        }]
+        [
+            LegacyImport {
+                file: "scenes/Intro.tsx".to_owned(),
+                specifier: "@celesta/react".to_owned(),
+                current: "@celesta.studio/react".to_owned(),
+                plugin: None,
+            },
+            LegacyImport {
+                file: "Code.tsx".to_owned(),
+                specifier: "@celesta.studio/code".to_owned(),
+                current: "@celesta-plugin/code".to_owned(),
+                plugin: Some("code@0.10.0-alpha.4".to_owned()),
+            }
+        ]
     );
     assert_eq!(
         legacy_imports[0].to_string(),
         "scenes/Intro.tsx imports @celesta/react, an old name; import @celesta.studio/react instead"
+    );
+    assert_eq!(
+        legacy_imports[1].to_string(),
+        "Code.tsx imports @celesta.studio/code, which is now a plugin; \
+         run `celesta plugin add code@0.10.0-alpha.4` and import @celesta-plugin/code instead"
     );
 
     // An entry with only the current names sends none.

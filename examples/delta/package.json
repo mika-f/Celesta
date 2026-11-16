@@ -18,11 +18,9 @@
   },
   "dependencies": {
     "@celesta.studio/character": "workspace:*",
-    "@celesta.studio/code": "workspace:*",
     "@celesta.studio/components": "workspace:*",
     "@celesta.studio/debug": "workspace:*",
     "@celesta.studio/layout": "workspace:*",
-    "@celesta.studio/lottie": "workspace:*",
     "@celesta.studio/math": "workspace:*",
     "@celesta.studio/media-utils": "workspace:*",
     "@celesta.studio/react": "workspace:*",

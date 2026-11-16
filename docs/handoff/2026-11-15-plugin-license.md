@@ -31,8 +31,9 @@ half (the publish check, the database, the API, the site) is in
   installed packages. `spdx-expression-parse` is a dev dependency:
   `test/manifest.test.mts` parses the `license` of every `plugins/*/plugin.json`
   and requires each to declare one.
-- `plugins/*/plugin.json`: `MIT OR Apache-2.0` for `vrm`, `avfoundation`, and
-  `mediafoundation`; `(MIT OR Apache-2.0) AND LGPL-2.1-or-later` for `ffmpeg`;
+- `plugins/*/plugin.json`: `MIT OR Apache-2.0` for `vrm`, `avfoundation`,
+  `mediafoundation`, `aivis-speech`, `lottie`, and `voicevox`;
+  `(MIT OR Apache-2.0) AND MIT` for `code`, which bundles twinkleplop (MIT); `(MIT OR Apache-2.0) AND LGPL-2.1-or-later` for `ffmpeg`;
   `(MIT OR Apache-2.0) AND GPL-2.0-or-later` for `ffmpeg-x264`. These name the
   plugin's code and the FFmpeg build it links, not every bundled library.
 - `crates/registry-format`: `VersionEntry::license`, `VersionEntry::license_refs`

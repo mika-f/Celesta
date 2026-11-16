@@ -1,5 +1,5 @@
 import { Assets, Composition, Font, Group, Rect, Text, useCurrentFrame, useTextMetrics } from '@celesta.studio/react';
-import { codeThemes, highlightCode } from '@celesta.studio/code';
+import { codeThemes, highlightCode } from '@celesta-plugin/code';
 
 const source = `const message: string = 'Hello, Celesta.';
 console.log(message);`;

@@ -1,5 +1,5 @@
 import { Group, Rect, Text } from '@celesta.studio/react';
-import { Lottie } from '@celesta.studio/lottie';
+import { Lottie } from '@celesta-plugin/lottie';
 import type { DemoProps } from '../../components/ChapterShell';
 import { CUT, STAGE, enter } from '../../components/ChapterShell';
 import { C, FONT, FPS, solid } from '../../components/theme';

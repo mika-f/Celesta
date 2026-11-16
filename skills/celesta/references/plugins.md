@@ -94,7 +94,8 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   on failure, 2 on bad arguments. `celesta plugin --help` lists:
   `search <text>`, `info <id>`, `add <id>[@<req>] [--pin]`,
   `remove <id>`, `install [--locked] [--offline]`,
-  `install --global <id>[@<req>]` (a media plugin for every project),
+  `install --global <id>[@<req>]` (a plugin for every project; media
+  plugins, and what the desktop app uses since it does not read the lock),
   `update [<id>]`, `list`, `audit`, `gc [--dry-run]`.
 - Use them only for what the user asked: `add` when they want a registry
   plugin in the project (it writes the config, the lock, and downloads;
@@ -102,6 +103,10 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   versions. Never edit `celesta.lock`, and do not delete it to get past an
   error. `add` refuses a media plugin: install it with
   `install --global <id>`, or `add <id> --pin` to lock it to one project.
+  A requirement (Cargo semantics) matches a pre-release only when it names
+  one, so `add`/`install --global` without one skip pre-releases; on
+  `only pre-releases match; ask for <id>@<version>`, retry with that
+  spec only if the user wants the pre-release.
 - Before exporting or inspecting a project with
   `plugins.dependencies`, make sure its plugins are downloaded: run
   `celesta plugin install`, or `celesta plugin install --locked` to use
@@ -246,8 +251,11 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
 
 ## The VRM plugin
 
-The Celesta repository's `plugins/vrm` draws VRM 1.0 avatars (`.vrm`) as a
-3D layer, MToon-shaded as UniVRM draws them. Build it with
+The `vrm` plugin draws VRM 1.0 avatars (`.vrm`) as a 3D layer,
+MToon-shaded as UniVRM draws them. It is in the registry (`celesta plugin
+add vrm`, with Celesta's version on a pre-release; `celesta plugin install
+--global vrm` for the desktop app, which does not read `celesta.lock`
+yet). From a checkout of the Celesta repository, build `plugins/vrm` with
 `node scripts/plugins/build.mts plugins/vrm` (after `pnpm install && pnpm
 run build:runtime` at the repository root); it writes `plugins/dist/vrm`,
 which the user copies into a plugin folder, or name `plugins/dist` with
@@ -434,6 +442,12 @@ publish (capital `AND`/`OR`/`WITH`, single spaces, current SPDX identifiers
 in the list's spelling) and its site and `celesta plugin info` show them.
 `plugin.json` takes the same keys and `build.mts` copies them (its
 `licenses` key is the license files to copy, a separate thing).
+
+A component that draws a layer for the plugin's program renders
+`<PluginLayer plugin="<id>" assets={{ name: src }} data={json} />` from
+`@celesta.studio/react` (`time` defaults to the enclosing sequence's; the
+other props place the layer). Never import `@celesta.studio/react/internal`
+in a plugin module: it is not stable.
 
 The manifest's optional `components` puts a component in the app's Add
 menu: `{ "name": "Flag", "label": "Flag", "src": "image", "props": {

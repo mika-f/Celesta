@@ -1,14 +1,16 @@
-# Syntax-highlighted code (@celesta.studio/code)
+# Syntax-highlighted code (@celesta-plugin/code)
 
-`@celesta.studio/code` draws syntax-highlighted source code with Celesta's `Text`
+`@celesta-plugin/code` draws syntax-highlighted source code with Celesta's `Text`
 and `Rect` layers: code walkthroughs, typing animations, highlighted lines,
-and carets. It is a separate, optional package; `@celesta.studio/react` does not
-re-export it. Celesta's runtime supplies it (like `@celesta.studio/react`), so
-**never `npm install` it**, and **File → Set Up TypeScript** / `--init` add
-its type declarations.
+and carets. It is a first-party plugin from Celesta's registry, not part of
+`@celesta.studio/react`: **never `npm install` it**. A project declares it
+with `celesta plugin add code` (`code@<Celesta version>` on a pre-release),
+when the user wants it added; Celesta then copies its declarations for
+**File → Set Up TypeScript** / `--init`. The old `@celesta.studio/code`
+import still works and warns.
 
 ```tsx
-import { Code, codeThemes, useCodePoint, codeCharacterCount, tokenizeCode, highlightCode, codeLines } from '@celesta.studio/code';
+import { Code, codeThemes, useCodePoint, codeCharacterCount, tokenizeCode, highlightCode, codeLines } from '@celesta-plugin/code';
 ```
 
 ## Contents
@@ -24,7 +26,7 @@ import { Code, codeThemes, useCodePoint, codeCharacterCount, tokenizeCode, highl
 
 ```tsx
 import { Assets, Composition, Font, Rect } from '@celesta.studio/react';
-import { Code, codeThemes } from '@celesta.studio/code';
+import { Code, codeThemes } from '@celesta-plugin/code';
 
 const source = `const message: string = 'Hello, Celesta.';\nconsole.log(message);\n`;
 const style = { fontFamily: 'JetBrains Mono', fontSize: 32, lineHeight: 48 };
@@ -164,7 +166,7 @@ like `Code`'s `visibleCharacters`:
 
 ```tsx
 import { Group, Text, useTextMetrics } from '@celesta.studio/react';
-import { codeThemes, highlightCode } from '@celesta.studio/code';
+import { codeThemes, highlightCode } from '@celesta-plugin/code';
 
 const style = { fontFamily: 'JetBrains Mono', fontSize: 32, lineHeight: 48 };
 const theme = codeThemes.dark;
@@ -240,4 +242,4 @@ same-type tokens: `{ type, text, column }`, where `text` is tab-expanded and
   shaping is cached). A line wider than the GPU texture limit is rasterized
   below 1x and can look softer. Show the part of a file that matters rather
   than hundreds of lines.
-- The browser playground (`@celesta.studio/web`) does not support `@celesta.studio/code`.
+- The browser playground (`@celesta.studio/web`) does not support `@celesta-plugin/code`.

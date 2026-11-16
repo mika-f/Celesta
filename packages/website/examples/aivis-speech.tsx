@@ -6,7 +6,7 @@ import type { CharacterViewReference, LipSyncTrack } from '@celesta.studio/chara
 
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { lipSyncFromAivisSpeech } from '@celesta.studio/aivis-speech';
+import { lipSyncFromAivisSpeech } from '@celesta-plugin/aivis-speech';
 import query from './aivis-speech-query.json';
 
 // The WAV is needed too: AivisSpeech queries hold no phoneme lengths.

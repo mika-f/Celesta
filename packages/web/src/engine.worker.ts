@@ -18,7 +18,7 @@ import * as transitions from '../../transitions/src/index';
 import type { CompileOptions } from './engine';
 import { audioBytes, decodeAudioBytes } from './audio-decode';
 import { currentPackageName } from '../../react/src/package-scope';
-import { projectFiles, runtimeModules } from './project-files';
+import { projectFiles, runtimeModules, servedModuleName } from './project-files';
 import { loadFonts, loadedFamilies, requireLoadedFonts, resetFonts } from './fonts';
 import { loadFeatureFonts, textMeasurer, withLoadedFallback } from './text-layout';
 
@@ -82,7 +82,8 @@ async function handle(data: Request) {
           warned.add(name);
           console.warn(`${name} is an old name; import ${current} instead.`);
         }
-        if (Object.hasOwn(modules, current)) return modules[current as keyof typeof modules];
+        const served = servedModuleName(name);
+        if (Object.hasOwn(modules, served)) return modules[served as keyof typeof modules];
         throw new Error(`Import ${JSON.stringify(name)} is unavailable in the web editor. Use ${runtimeModules.join(', ')}.`);
       };
       // Visitor-authored code runs in a dedicated worker, away from the page DOM.
