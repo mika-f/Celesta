@@ -328,6 +328,44 @@ test('wrapped lines are split into units too', () => {
   ]);
 });
 
+test('a right-to-left line puts each unit at its leftmost glyph', () => {
+  // The first character sits at the right end: glyph i of n is at (n - 1 - i) * size.
+  install((request) => {
+    const metrics = measureGlyphs(request);
+    const n = metrics.glyphs.length;
+    return { ...metrics, glyphs: metrics.glyphs.map((glyph, i) => ({ ...glyph, rtl: true, x: (n - 1 - i) * 10 })) };
+  });
+  const at = renderFrames(React.createElement(TextReveal, { ...unitProps, unit: 'word', children: 'אב גד' }));
+  // Drawn: גד at 0–20, a space, אב at 30–50. Reading order is still אב first.
+  assert.deepEqual(unitsOf(at(100)).map(place), [
+    { text: 'אב', x: 30, y: 0 },
+    { text: 'גד', x: 0, y: 0 },
+  ]);
+  const aligned = renderFrames(React.createElement(TextReveal, { ...unitProps, unit: 'word', align: 1, children: 'אב גד' }));
+  assert.deepEqual(unitsOf(aligned(100)).map((unit) => unit.x), [-20, -50]);
+});
+
+test('the split is not computed again on a later frame', () => {
+  install(measureGlyphs);
+  const segment = Intl.Segmenter.prototype.segment;
+  let calls = 0;
+  Intl.Segmenter.prototype.segment = function (this: Intl.Segmenter, input: string) {
+    calls += 1;
+    return segment.call(this, input);
+  };
+  try {
+    const at = renderFrames(React.createElement(TextReveal, { ...unitProps, unit: 'grapheme', children: 'abc\ndef' }));
+    at(0);
+    const first = calls;
+    assert.ok(first > 0);
+    at(1);
+    at(2);
+    assert.equal(calls, first);
+  } finally {
+    Intl.Segmenter.prototype.segment = segment;
+  }
+});
+
 test('an unknown unit throws', () => {
   install(measureGlyphs);
   assert.throws(

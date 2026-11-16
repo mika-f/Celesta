@@ -564,6 +564,8 @@ its line's mask:
   pieces are lost (at rest, `'grapheme'` text can sit a fraction of a pixel
   off the same `<Text>`), and scripts whose letters join, such as Arabic,
   should use `'line'` or `'word'`.
+- Right-to-left text is placed correctly in the editor and the exporter.
+  The browser preview places pieces as if the line read left to right.
 
 Runnable: [`packages/cli/examples/with-text-reveal.tsx`](../../../packages/cli/examples/with-text-reveal.tsx).
 

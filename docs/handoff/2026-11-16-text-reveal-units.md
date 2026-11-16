@@ -29,8 +29,9 @@ for `'line'`.
 `RevealUnits` builds one measurement request per line that has units (the
 line's text, the layout style with the line's font runs, without colors,
 `align`, or `lineHeight`) and memoises all of them on their JSON, so a
-frame that changes only colors or progress measures nothing. A unit's x is
-`textCaret(metrics, start).x` where the measurer reports glyphs; where it
+frame that changes only colors or progress measures nothing. The split
+into units is memoised on the text, the line ranges, and `unit`. A unit's x is
+the smallest `x` of the glyphs it covers where the measurer reports glyphs; where it
 does not (the browser), it is the measured width of the line's text before
 the unit, with the font runs that fall in that prefix.
 
@@ -42,8 +43,12 @@ suggested a box one font size wider than each unit; the shared mask needs
 no unit width and cannot cut an italic or an overshoot.
 
 Units are shaped separately when drawn, so kerning, ligatures, and joining
-forms across a unit boundary are lost. Right-to-left lines are not handled
-(the caret x of a unit's first code point is its right edge there).
+forms across a unit boundary are lost. With glyph positions a unit's x is
+its leftmost glyph, so right-to-left and mixed-direction lines are placed
+correctly; the prefix-width fallback assumes left to right. The glyph rule
+is tested with a stub measurer that reports `rtl` glyphs, and a Hebrew line
+with a Latin word in it, exported with `unit="word"` and with
+`unit="line"`, looks the same at rest.
 
 ## Checks
 

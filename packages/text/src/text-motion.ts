@@ -3,8 +3,8 @@
 import * as React from 'react';
 import type { ReactNode } from 'react';
 
-import { Easings, Group, Text, progress, textCaret, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
-import type { CommonProps, TextStyle } from '@celesta.studio/react';
+import { Easings, Group, Text, progress, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
+import type { CommonProps, TextMetrics, TextStyle } from '@celesta.studio/react';
 import {
   CompositionRuntimeContext,
   ThemeContext,
@@ -69,7 +69,9 @@ export interface TextRevealProps extends CommonProps {
    * the editor, the exporter, or the browser preview runtime. Each unit is
    * drawn as text of its own: kerning and ligatures across units are lost,
    * and scripts whose letters join (Arabic) should stay with `'line'` or
-   * `'word'`.
+   * `'word'`. Right-to-left text is placed correctly in the editor and the
+   * exporter; the browser preview, which has no glyph positions, places
+   * units as if the line read left to right.
    */
   unit?: TextRevealUnit;
   /** Frame the first line (or unit) starts moving. Defaults to 0. */
@@ -198,15 +200,17 @@ function RevealUnits({
   // paragraph, since each line is measured alone.
   const { colorRuns, visibleCharacters, fill, stroke, align: _align, lineHeight: _lineHeight, ...layoutStyle } =
     withInheritedText(style, runtime ?? {});
-  const characters = Array.from(flat.text);
-  const lines = ranges.map(([start, end]) => {
+  // Splitting (BudouX, the grapheme segmenter) depends on the text alone, not on the frame.
+  const unitsKey = JSON.stringify([flat.text, ranges, unit]);
+  const lineUnits = React.useMemo(() => {
+    const characters = Array.from(flat.text);
+    return ranges.map(([start, end]) => unitRanges(characters.slice(start, end), unit));
+  }, [unitsKey]);
+  const lines = ranges.map(([start, end], lineIndex) => {
     const line = sliceTextRuns(flat, start, end);
-    const lineCharacters = characters.slice(start, end);
     return {
       start,
-      text: line.text,
-      characters: lineCharacters,
-      units: unitRanges(lineCharacters, unit),
+      units: lineUnits[lineIndex],
       // The line as it is measured: its font runs, without its colors.
       request: { text: line.text, style: withTextRuns(layoutStyle, { ...line, colorRuns: [] }, '<TextReveal>'), fonts },
     };
@@ -220,10 +224,14 @@ function RevealUnits({
       const metrics = measure(request);
       const glyphs = glyphsOf(metrics);
       const lineCharacters = Array.from(request.text);
-      const xs = units.map(([unitStart]) => {
+      const xs = units.map(([unitStart, unitEnd]) => {
+        // The unit's left edge as drawn: the leftmost of its glyphs, which
+        // for right-to-left text is its last character, not its first.
+        const own = (glyphs ?? []).filter((glyph) => glyph.end > unitStart && glyph.start < unitEnd);
+        if (own.length > 0) return Math.min(...own.map((glyph) => glyph.x));
         if (unitStart === 0) return 0;
-        if (glyphs && glyphs.length > 0) return textCaret(metrics, unitStart).x;
-        // No glyph positions (the browser): the width of the text before the unit.
+        // No glyph positions (the browser): the width of the text before
+        // the unit, which is right for left-to-right text only.
         const before = sliceTextRuns({ text: request.text, colorRuns: [], fontRuns: request.style.fontRuns ?? [] }, 0, unitStart);
         return measure({
           ...request,
@@ -259,7 +267,7 @@ function RevealUnits({
 }
 
 /** The shaped clusters, or null where the measurer has none (the browser). */
-function glyphsOf(metrics: { glyphs: unknown[] }): unknown[] | null {
+function glyphsOf(metrics: TextMetrics): TextMetrics['glyphs'] | null {
   try {
     return metrics.glyphs;
   } catch {
