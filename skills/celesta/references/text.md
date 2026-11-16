@@ -633,7 +633,9 @@ const CLICKS = typewriterFrames(LINE, TYPING);
 
 <TypewriterText {...TYPING}>{LINE}</TypewriterText>
 {CLICKS.map((at, i) => <Sequence key={i} from={at}><Audio src="./key.wav" /></Sequence>)}
-``` For typed text with a caret, use
+```
+
+For typed text with a caret, use
 [`<TypewriterText>`](#typewritertext). For code, pass `length` to
 `<Code visibleCharacters>` ([code.md](code.md)).
 

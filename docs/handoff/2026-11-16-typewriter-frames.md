@@ -15,7 +15,11 @@ Design: [`docs/superpowers/specs/2026-11-16-animation-text-helpers-design.md`](.
 - Without `pauses`, `length`, `text`, `done`, and `caretVisible` are what
   they were on every frame, fractional frames inside `<MotionBlur>`
   included.
-- `from` must now be finite (a `NaN` used to give a `NaN` length).
+- A `NaN` `from` now throws (it used to give a `NaN` length). An infinite
+  `from` still works as before: `Infinity` types nothing and `-Infinity`
+  shows the whole text, and `frames` is then all `Infinity` or `-Infinity`.
+- `frames` beyond 2^53, where a frame and the next are the same number, are
+  the unrounded estimate rather than a corrected frame.
 
 ## Implementation
 

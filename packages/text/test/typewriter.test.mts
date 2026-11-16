@@ -96,13 +96,36 @@ test('without pauses the hook is as before', () => {
   assert.equal(typewriterAt('abc', 0, { from: 5 }).length, 0);
 });
 
+test('an infinite from means never, or always', () => {
+  // `from: cue?.at ?? Infinity` is how a composition says "not yet".
+  const never = typewriterAt('abc', 500, { from: Infinity });
+  assert.equal(never.length, 0);
+  assert.equal(never.done, false);
+  assert.equal(never.caretVisible, false);
+  assert.deepEqual(never.frames, [Infinity, Infinity, Infinity]);
+  const always = typewriterAt('abc', 0, { from: -Infinity });
+  assert.equal(always.text, 'abc');
+  assert.equal(always.done, true);
+  assert.deepEqual(always.frames, [-Infinity, -Infinity, -Infinity]);
+  assert.deepEqual(typewriterFrames('ab', { from: Infinity }), [Infinity, Infinity]);
+});
+
+test('frames far beyond where whole frames exist do not hang', () => {
+  // Past 2^53 a frame and the next are the same number.
+  assert.equal(typewriterFrames('ab', { from: 1e16 }).length, 2);
+  assert.equal(typewriterFrames('xx', { pauses: { x: Number.MAX_SAFE_INTEGER } }).length, 2);
+  assert.equal(typewriterFrames('ab', { framesPerChar: 1e300 }).length, 2);
+  assert.equal(typewriterAt('ab', 0, { from: 1e16 }).length, 0);
+});
+
 test('pauses and speeds are validated', () => {
   assert.throws(() => typewriterFrames('a', { pauses: { ab: 3 } }), /one character/);
   assert.throws(() => typewriterFrames('a', { pauses: { '': 3 } }), /one character/);
   assert.throws(() => typewriterFrames('a', { pauses: { a: -1 } }), /pauses/);
   assert.throws(() => typewriterFrames('a', { pauses: { a: NaN } }), /pauses/);
   assert.throws(() => typewriterFrames('a', { framesPerChar: 0 }), /positive framesPerChar/);
-  assert.throws(() => typewriterFrames('a', { from: NaN }), /finite from/);
+  assert.throws(() => typewriterFrames('a', { from: NaN }), /from that is a number/);
+  assert.throws(() => typewriterAt('a', 0, { from: NaN }), /from that is a number/);
   assert.throws(() => typewriterAt('a', 0, { pauses: { ab: 3 } }), /one character/);
   // An emoji of one code point is one character.
   assert.deepEqual(typewriterFrames('😀a', { pauses: { '😀': 5 } }), [0, 6]);

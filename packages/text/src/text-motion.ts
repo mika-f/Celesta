@@ -208,8 +208,9 @@ type TypingOptions = Pick<TypewriterOptions, 'from' | 'framesPerChar' | 'pauses'
  */
 function pausesBefore(characters: readonly string[], options: TypingOptions, caller: string): number[] {
   const { from = 0, framesPerChar = 1, pauses = {} } = options;
-  if (!Number.isFinite(from)) {
-    throw new Error(`${caller} requires a finite from`);
+  // An infinite `from` is allowed: typing that never starts, or has always been done.
+  if (typeof from !== 'number' || Number.isNaN(from)) {
+    throw new Error(`${caller} requires a from that is a number`);
   }
   if (!Number.isFinite(framesPerChar) || framesPerChar <= 0) {
     throw new Error(`${caller} requires a positive framesPerChar`);
@@ -255,8 +256,12 @@ function countTyped(length: number, frame: number, from: number, framesPerChar: 
 function typingFrames(length: number, from: number, framesPerChar: number, paused: readonly number[]): number[] {
   return Array.from({ length }, (_, index) => {
     let frame = Math.ceil(from + paused[index] + index * framesPerChar);
-    while (isTyped(index, frame - 1, from, framesPerChar, paused[index])) frame -= 1;
-    while (!isTyped(index, frame, from, framesPerChar, paused[index])) frame += 1;
+    // Past 2^53 (or with an infinite `from`) there is no frame before or
+    // after to step to, and the estimate is as exact as a number gets.
+    if (!Number.isSafeInteger(frame)) return frame;
+    // Rounding can leave the estimate one frame off; never more.
+    for (let step = 0; step < 2 && isTyped(index, frame - 1, from, framesPerChar, paused[index]); step += 1) frame -= 1;
+    for (let step = 0; step < 2 && !isTyped(index, frame, from, framesPerChar, paused[index]); step += 1) frame += 1;
     return frame;
   });
 }
@@ -269,7 +274,7 @@ function typingFrames(length: number, from: number, framesPerChar: number, pause
  *
  * ```tsx
  * const clicks = typewriterFrames('npm run build', { from: 10, framesPerChar: 2 });
- * clicks.map((at) => <Sequence key={at} from={at}><Audio src="./key.wav" /></Sequence>);
+ * clicks.map((at, i) => <Sequence key={i} from={at}><Audio src="./key.wav" /></Sequence>);
  * ```
  */
 export function typewriterFrames(text: string, options: TypingOptions = {}): number[] {
