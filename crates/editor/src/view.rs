@@ -13,6 +13,7 @@ use crate::layer_select::{InstanceDue, PendingInstance, PickMode, SourceLookup};
 use crate::media_probe::{MediaAssetInfo, MediaProbeWorker, spawn_media_probe};
 use crate::meter::MasterLevels;
 use crate::occurrences::{OccurrenceState, OccurrenceWorker, spawn_occurrences};
+use crate::plugin_page::PluginPageSlot;
 use crate::plugins::{DecoderNotice, FoundPlugins, trusted_root};
 use crate::preview::{
     AudioPreview, PreviewWorker, ReactPreview, ShownPreview, TextOverride, spawn_preview,
@@ -21,6 +22,7 @@ use crate::problems::{ExportNotices, Problems, Source};
 use crate::property_panel::PropertyPanelState;
 use crate::react_audio::{ReactAudioWorker, spawn_react_audio};
 use crate::refresh::{ReloadOrder, SelectionKeep};
+use crate::registry::RegistryState;
 use crate::scene_entries::SceneEdge;
 use crate::scope::{SceneCalls, Scope, ScopeChoices};
 use crate::source::{PropertyArgs, load_source};
@@ -39,13 +41,14 @@ use celesta_plugin_host::{InstalledPlugins, PluginKillSwitch};
 use celesta_react_bridge::{
     ComponentPropertyField, ComponentPropertySchema, PrimitivePropertyTable, SourcePos,
 };
+use celesta_registry_format::AdvisoryList;
 use chrono::{DateTime, Local};
 #[cfg(not(target_os = "macos"))]
 use gpui_kit::component::menu::AppMenuBar;
 use gpui_kit::component::resizable::ResizableState;
 use gpui_kit::{Bounds, Entity, FocusHandle, Pixels, ScrollHandle, SharedString};
 use std::cell::Cell;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Instant;
@@ -263,6 +266,9 @@ pub(crate) struct EditorView {
     /// media plugins change (Reload Plugins, another project), and
     /// whether it shows in place of Assets.
     pub(crate) export_page: ExportPageSlot,
+    /// The plugin page (Find plugins), kept with its search and selection
+    /// for the window's life, and whether it shows in place of Assets.
+    pub(crate) plugin_page: PluginPageSlot,
     /// The loudness Export… brings the mix to, for the rest of the session.
     pub(crate) export_loudness: ExportLoudness,
     pub(crate) gpu_name: SharedString,
@@ -274,11 +280,21 @@ pub(crate) struct EditorView {
     /// Split positions for the workspace shell: `dock_split` is the
     /// asset-list / monitor / inspector row, `export_split` the same row
     /// with the export page in place of the asset list (its own width),
-    /// `body_split` is the work-area / timeline column. Held here so the
-    /// drags persist across redraws.
+    /// `plugins_split` with the wider plugin page there, `body_split` is
+    /// the work-area / timeline column. Held here so the drags persist
+    /// across redraws.
     pub(crate) dock_split: Option<Entity<ResizableState>>,
     pub(crate) export_split: Option<Entity<ResizableState>>,
+    pub(crate) plugins_split: Option<Entity<ResizableState>>,
     pub(crate) body_split: Option<Entity<ResizableState>>,
+    /// The window's registry work (searches, installs, updates), kept
+    /// across the projects it opens; `None` until the window makes it, and
+    /// without a user folder to install plugins in.
+    pub(crate) registry: Option<Entity<RegistryState>>,
+    /// Registry work changed what may run since the last discovery; the
+    /// project reopens once nothing is in the way
+    /// ([`Self::settle_changed_plugins`]).
+    pub(crate) plugins_changed: bool,
     /// Timeline horizontal zoom (>= 1; 1 = whole composition fits) and the
     /// fraction of the composition at the left edge of the visible window.
     /// The mouse wheel over the timeline adjusts the zoom about the cursor.
@@ -418,17 +434,28 @@ pub(crate) struct EditorView {
     /// about in this window, so "Not Now" is not asked again until they
     /// change.
     pub(crate) asked_plugins: HashSet<(PathBuf, String)>,
+    /// The projects whose lock was asked about in this app run.
+    pub(crate) asked_locks: BTreeSet<PathBuf>,
+    /// The plugins an advisory stopped that a notification announced in
+    /// this app run, by id, version, and advisory.
+    pub(crate) announced_blocks: BTreeSet<(String, String, String)>,
+    /// The This project heading's Update Plugins is working out what it
+    /// changes, so it takes no second click.
+    pub(crate) preparing_update: bool,
     /// The project-decoder files shown in Problems.
     pub(crate) decoder_notice: DecoderNotice,
 }
 
 impl EditorView {
+    /// Opens `path`, with plugins found with `extra_advisories` besides the
+    /// cached list (an overriding registry's).
     pub(crate) fn open(
         path: Option<&Path>,
         property_args: PropertyArgs,
         driver: GpuDriver,
+        extra_advisories: Option<AdvisoryList>,
     ) -> anyhow::Result<Self> {
-        let plugins = FoundPlugins::find(trusted_root(path).as_deref());
+        let plugins = FoundPlugins::find(trusted_root(path).as_deref(), extra_advisories);
         let (document, react_preview) =
             load_source(path, property_args, &plugins).map_err(anyhow::Error::msg)?;
         Self::from_document(
@@ -578,6 +605,7 @@ impl EditorView {
             export_out_frame: None,
             choosing_export_path: false,
             export_page: ExportPageSlot::default(),
+            plugin_page: PluginPageSlot::default(),
             export_loudness: ExportLoudness::default(),
             gpu_name,
             driver,
@@ -585,7 +613,10 @@ impl EditorView {
             master_volume_focus: None,
             dock_split: None,
             export_split: None,
+            plugins_split: None,
             body_split: None,
+            registry: None,
+            plugins_changed: false,
             timeline_zoom: 1.0,
             timeline_view_start: 0.0,
             timeline_pan: None,
@@ -638,6 +669,9 @@ impl EditorView {
             found_plugins: FoundPlugins::default(),
             decoder_notice: DecoderNotice::default(),
             asked_plugins: HashSet::new(),
+            asked_locks: BTreeSet::new(),
+            announced_blocks: BTreeSet::new(),
+            preparing_update: false,
         };
         editor.set_plugins(plugins);
         editor.refresh_preview();

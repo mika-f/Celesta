@@ -4,6 +4,7 @@
 //! before it is renamed into place.
 
 use std::collections::HashSet;
+use std::fmt;
 use std::fs::{self, File};
 use std::io::{self, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -37,7 +38,7 @@ const BUFFER: usize = 64 * 1024;
 
 /// One archive to install: what the lock or index says of the version's
 /// build for this host.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct InstallRequest<'a> {
     pub id: &'a str,
     pub version: &'a Version,
@@ -45,6 +46,22 @@ pub struct InstallRequest<'a> {
     pub size: u64,
     pub sha256: &'a Hash,
     pub tree_hash: &'a Hash,
+    /// Called with the bytes downloaded so far: at most once per 64 KiB,
+    /// and once more when the download ends.
+    pub progress: Option<&'a (dyn Fn(u64) + Sync)>,
+}
+
+impl fmt::Debug for InstallRequest<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("InstallRequest")
+            .field("id", &self.id)
+            .field("version", &self.version)
+            .field("url", &self.url)
+            .field("size", &self.size)
+            .field("sha256", &self.sha256)
+            .field("tree_hash", &self.tree_hash)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Why an archive was not installed. Nothing is left in the store when
@@ -353,6 +370,7 @@ fn download(
     let mut hasher = Sha256::new();
     let mut buffer = vec![0; BUFFER];
     let mut found = 0u64;
+    let mut reported = 0u64;
     loop {
         let read = match body.read(&mut buffer) {
             Ok(0) => break,
@@ -363,6 +381,17 @@ fn download(
         hasher.update(&buffer[..read]);
         out.write_all(&buffer[..read]).map_err(io_error(archive))?;
         found += read as u64;
+        if found - reported >= BUFFER as u64 {
+            reported = found;
+            if let Some(progress) = request.progress {
+                progress(found);
+            }
+        }
+    }
+    if let Some(progress) = request.progress
+        && found != reported
+    {
+        progress(found);
     }
     if found != request.size {
         return Err(InstallError::Size {

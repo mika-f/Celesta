@@ -58,8 +58,7 @@ celesta-plugin = { path = "crates/plugin", version = "=0.10.0-alpha.3" }
 celesta-plugin-host = { path = "crates/plugin-host", version = "=0.10.0-alpha.3" }
 celesta-project = { path = "crates/project", version = "=0.10.0-alpha.3" }
 celesta-react-bridge = { path = "crates/react-bridge", version = "=0.10.0-alpha.3" }
-# Path only: unpublished, like `celesta-codec-test`.
-celesta-registry-client = { path = "crates/registry-client" }
+celesta-registry-client = { path = "crates/registry-client", version = "=0.10.0-alpha.3" }
 celesta-cli = { path = "crates/cli" }
 celesta-registry-format = { path = "crates/registry-format", version = "=0.10.0-alpha.3" }
 celesta-remote = { path = "crates/remote", version = "=0.10.0-alpha.3" }

@@ -209,14 +209,15 @@ service's tests.
 
 ## Later plans
 
-- Plan 5 (the desktop app): the editor depends on `celesta-registry-client` (which
+- ~~Plan 5 (the desktop app): the editor depends on `celesta-registry-client` (which
   then needs the crates.io setup of plan 3's decision 1), refreshes advisories with
   `refresh_advisories_within` and a budget of its own, checks a project with
   `check_lock`, and records projects through `lock_project`/`install_locked`
   (`Store::record_project`). Until then the app does not read a project's
   `celesta.lock`: its preview and its exports, which go through `Exporter::new`
   without `project_plugins`, do not check the lock, and they use only global
-  registry plugins.
+  registry plugins.~~ Done; see
+  [`2026-11-16-plugin-registry-app.md`](2026-11-16-plugin-registry-app.md).
 - The user asked to fold export into the `celesta` command, in a later, separate
   session.
 - ~~The maintainer supplies the root public key, so `official_root_key()` returns it

@@ -4,7 +4,6 @@
 pub mod advisories;
 pub mod args;
 pub mod commands;
-pub mod config;
 pub mod report;
 pub mod session;
 

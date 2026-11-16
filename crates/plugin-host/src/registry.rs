@@ -78,6 +78,18 @@ impl RegistryContext {
         (context, errors)
     }
 
+    /// Also stops what `other` stops, such as another registry's cached
+    /// list: its advisories are added, and the newer `generated` is kept.
+    pub fn merge_advisories(&mut self, other: AdvisoryList) {
+        match &mut self.advisories {
+            Some(list) => {
+                list.generated = list.generated.max(other.generated);
+                list.advisories.extend(other.advisories);
+            }
+            None => self.advisories = Some(other),
+        }
+    }
+
     /// The plugins under `paths` (as [`crate::search_paths`] gives them) and
     /// in the store, with what was skipped and why. A plugin `settings`
     /// turns off is listed but takes no id (see [`discover_in_with`]).
@@ -945,6 +957,47 @@ pub(crate) mod tests {
         assert_eq!(
             (p.manifest.version.as_str(), p.source),
             ("1.0.0", PluginSource::User)
+        );
+    }
+
+    #[test]
+    fn merged_advisories_stop_plugins_from_both_lists() {
+        let folders = Folders::new();
+        write(&folders.user.join("p"), content("p", "1.0.0"));
+        write(&folders.user.join("q"), content("q", "1.0.0"));
+        let list = |generated: &str, plugin: &str| {
+            let list = json!({
+                "format": 1, "generated": generated,
+                "advisories": [{
+                    "id": format!("CEL-{plugin}"), "plugin": plugin, "versions": "<2.0.0",
+                    "title": "Reads files outside the project", "description": "Details.",
+                    "published": "2026-11-01T00:00:00Z",
+                }],
+            });
+            AdvisoryList::parse(list.to_string().as_bytes()).unwrap()
+        };
+        let mut context = folders.context(None);
+        context.merge_advisories(list("2026-11-10T00:00:00Z", "p"));
+        context.merge_advisories(list("2026-11-12T00:00:00Z", "q"));
+        let merged = context.advisories.as_ref().unwrap();
+        assert_eq!(merged.advisories.len(), 2);
+        assert_eq!(
+            merged.generated,
+            list("2026-11-12T00:00:00Z", "q").generated
+        );
+        let (found, errors) = folders.discover(&context, &UserSettings::default());
+        let blocked: Vec<_> = errors
+            .iter()
+            .filter_map(|error| match error {
+                DiscoveryError::Blocked { id, .. } => Some(id.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(blocked, ["p", "q"]);
+        assert!(
+            found
+                .iter()
+                .all(|entry| !["p", "q"].contains(&entry.manifest.id.as_str()))
         );
     }
 

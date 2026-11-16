@@ -26,6 +26,12 @@ pub(crate) enum Source {
     ExportPresets,
     TypeScript,
     Plugins,
+    /// Registry work that failed, or a registry that could not be used.
+    Registry,
+    /// Deprecated and yanked registry plugins, and a stale advisory list.
+    RegistryNotices,
+    /// Plugins a security advisory stops; their notification announces them.
+    Advisories,
 }
 
 impl Source {
@@ -41,29 +47,39 @@ impl Source {
             Self::ExportPresets => "Export presets",
             Self::TypeScript => "TypeScript",
             Self::Plugins => "Plugins",
+            Self::Registry => "Registry",
+            Self::RegistryNotices => "Plugin updates",
+            Self::Advisories => "Advisories",
         }
     }
 
-    /// Audio, export presets, TypeScript, and plugin problems (plugins
-    /// waiting or skipped, plugin settings not saved) leave the editor
-    /// usable, so they are
+    /// Audio, export presets, TypeScript, plugin problems (plugins waiting
+    /// or skipped, plugin settings not saved), and plugin update notices
+    /// (deprecated or yanked versions) leave the editor usable, so they are
     /// warnings; the project decoders notice is not a problem at all; the
     /// rest block what the user asked for.
     pub(crate) fn severity(self) -> Severity {
         match self {
             Self::MediaDecoders => Severity::Info,
-            Self::Audio | Self::ExportPresets | Self::TypeScript | Self::Plugins => {
-                Severity::Warning
-            }
+            Self::Audio
+            | Self::ExportPresets
+            | Self::TypeScript
+            | Self::Plugins
+            | Self::RegistryNotices => Severity::Warning,
             _ => Severity::Error,
         }
     }
 
     /// Whether this source's problems get a toast. The preview error panel
     /// already shows a preview error in place, for as long as it persists,
-    /// and the project decoders list grows as a preview decodes files.
+    /// the project decoders list grows as a preview decodes files, plugin
+    /// update notices are no reason to interrupt, and a stopped plugin
+    /// raises its own notification.
     fn toasts_problems(self) -> bool {
-        !matches!(self, Self::Preview | Self::MediaDecoders)
+        !matches!(
+            self,
+            Self::Preview | Self::MediaDecoders | Self::RegistryNotices | Self::Advisories
+        )
     }
 
     /// The title for a failure that has no more specific one.
@@ -79,6 +95,9 @@ impl Source {
             Self::ExportPresets => "Couldn’t save export presets",
             Self::TypeScript => "TypeScript setup failed",
             Self::Plugins => "Some plugins were skipped",
+            Self::Registry => "Couldn’t use the plugin registry",
+            Self::RegistryNotices => "Some plugins are deprecated or yanked",
+            Self::Advisories => "A plugin was stopped by an advisory",
         }
     }
 }
@@ -912,6 +931,15 @@ mod tests {
         assert_eq!(Source::Audio.severity(), Severity::Warning);
         assert_eq!(Source::Project.severity(), Severity::Error);
         assert_eq!(Source::Export.failure_title(), "Export failed");
+        assert_eq!(Source::Registry.label(), "Registry");
+        assert_eq!(Source::Registry.severity(), Severity::Error);
+        assert!(Source::Registry.toasts_problems());
+        assert_eq!(Source::RegistryNotices.label(), "Plugin updates");
+        assert_eq!(Source::RegistryNotices.severity(), Severity::Warning);
+        assert!(!Source::RegistryNotices.toasts_problems());
+        assert_eq!(Source::Advisories.label(), "Advisories");
+        assert_eq!(Source::Advisories.severity(), Severity::Error);
+        assert!(!Source::Advisories.toasts_problems());
     }
 
     #[derive(Debug)]

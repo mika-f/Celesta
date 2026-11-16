@@ -16,20 +16,75 @@ use crate::view::EditorView;
 use celesta_editor_theme::metrics;
 use celesta_media::{DecoderUse, MediaRegistry};
 use celesta_plugin_host::{
-    InstalledPlugins, PendingPlugin, PluginEntry, PluginRole, SettingsError, UserSettings,
-    from_the_internet, has_project_config, project_plugin_paths, project_root,
+    CELESTA_VERSION, DiscoveryError, InstalledPlugins, LockProblem, Lockfile, PendingPlugin,
+    PluginEntry, PluginRole, PluginSource, ProjectConfigError, ProjectDependencies,
+    RegistryContext, RegistryPlugin, SearchPath, SettingsError, UserSettings, advisories_stale,
+    bundled_plugin_dir, check_lock, discover_in, from_the_internet, has_project_config,
+    project_dependencies, project_plugin_paths, project_root,
 };
+use celesta_registry_format::{AdvisoryList, Target};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dialog::{DialogAction, DialogClose, DialogDescription, DialogFooter};
 use gpui_kit::component::{ActiveTheme as _, WindowExt as _, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{Context, Window, div};
+use semver::VersionReq;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
+use time::OffsetDateTime;
 
 /// Wide enough for a plugin's folder on one or two lines.
 /// Designed against a 16px `rem`; see [`metrics::scaled`].
 const PLUGIN_DIALOG_WIDTH: f32 = 560.;
+
+/// The Problems title for a lock that does not let the project's plugins run.
+fn lock_problem_title(problem: &LockProblem) -> &'static str {
+    match problem {
+        LockProblem::NoLock | LockProblem::OutOfDate { .. } => {
+            "The project's plugins are not locked"
+        }
+        LockProblem::OtherCelesta { .. } => {
+            "The project's plugins were locked with another Celesta"
+        }
+        LockProblem::Unreadable(_) => "The project's celesta.lock can't be read",
+        LockProblem::Config(_) => "The project's celesta.config.json can't be read",
+        LockProblem::Unsatisfied { .. } => "The project's locked plugins are not installed",
+    }
+}
+
+/// Every plugin in the folder that comes with Celesta, as its own search
+/// path would find it, so a copy that another copy of its id keeps from
+/// running is listed too; blocking, so off the UI thread.
+fn bundled_copies() -> Vec<PluginEntry> {
+    let Some(path) = bundled_plugin_dir() else {
+        return Vec::new();
+    };
+    // What cannot be read is already in `skipped` from the full discovery.
+    discover_in(&[SearchPath {
+        path,
+        source: PluginSource::Bundled,
+    }])
+    .0
+}
+
+/// A plugin a security advisory stops, which is never run.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct BlockedPlugin {
+    pub(crate) id: String,
+    pub(crate) version: String,
+    /// The advisory's id.
+    pub(crate) advisory: String,
+    pub(crate) title: String,
+    /// The version that fixes it, if there is one.
+    pub(crate) fixed: Option<String>,
+    /// It is one of Celesta's own plugins.
+    pub(crate) bundled: bool,
+    /// It is a version the registry client installed (the store's).
+    pub(crate) from_store: bool,
+    /// Its folder.
+    pub(crate) directory: PathBuf,
+}
 
 /// What one discovery found.
 #[derive(Clone, Debug, Default)]
@@ -44,20 +99,49 @@ pub(crate) struct FoundPlugins {
     pub(crate) folders: Vec<PathBuf>,
     /// Why each skipped plugin or folder was skipped.
     pub(crate) skipped: Vec<String>,
+    /// The plugins a security advisory stops (also listed in `skipped`).
+    pub(crate) blocked: Vec<BlockedPlugin>,
+    /// The plugins the user installed from the registry, as the settings
+    /// said.
+    pub(crate) registry_plugins: Vec<RegistryPlugin>,
+    /// Every plugin in the folder that comes with Celesta, the ones another
+    /// copy of their id keeps from running too.
+    pub(crate) bundled: Vec<PluginEntry>,
+    /// The project whose lock was read: the folder the user trusts
+    /// (saved, not only for now) that holds `celesta.config.json`.
+    pub(crate) project: Option<PathBuf>,
+    /// That project's `celesta.lock`; `None` without a project or a lock.
+    pub(crate) lock: Option<Lockfile>,
+    /// The registry plugins that project declares, with the versions it
+    /// accepts.
+    pub(crate) dependencies: BTreeMap<String, VersionReq>,
+    /// The targets that project builds for, as its `celesta.config.json`
+    /// says (every release target by default); empty without a project.
+    pub(crate) targets: Vec<Target>,
+    /// Why that lock does not pin what the project declares, if it does not.
+    pub(crate) lock_problem: Option<LockProblem>,
     /// No media decoder can run, so video and audio files cannot be read.
     pub(crate) missing_decoder: bool,
     /// The media plugins that may run, which record the files a project's
     /// decoders read; none until [`Self::find`] makes it.
     pub(crate) registry: Option<Arc<MediaRegistry>>,
+    /// The newest verified advisory list discovery read is more than seven
+    /// days old, so newer advisories may be missing.
+    pub(crate) advisories_stale: bool,
+    /// Discovery read no verified advisory list at all.
+    pub(crate) no_advisories: bool,
 }
 
 impl FoundPlugins {
     /// Reads every plugin location, with the trusted project at `project`'s
-    /// own folders; blocking, so off the UI thread. Media is read and
-    /// written with the media plugins among what may run from now on.
-    pub(crate) fn find(project: Option<&Path>) -> Self {
+    /// own folders and, when the user saved their trust in it, its lock,
+    /// and the advisories in `extra_advisories` besides the cached ones;
+    /// blocking, so off the UI thread. Media is read and written with the
+    /// media plugins among what may run from now on.
+    pub(crate) fn find(project: Option<&Path>, extra_advisories: Option<AdvisoryList>) -> Self {
         let (settings, settings_error) = UserSettings::current();
-        let mut found = Self::find_with(project, &settings, settings_error);
+        let mut found = Self::find_with(project, &settings, settings_error, extra_advisories);
+        found.bundled = bundled_copies();
         let registry = celesta_exporter::use_media(&found.installed);
         found.missing_decoder = !registry.has_decoders();
         found.registry = Some(registry);
@@ -70,6 +154,42 @@ impl FoundPlugins {
         project: Option<&Path>,
         settings: &UserSettings,
         settings_error: Option<SettingsError>,
+        extra_advisories: Option<AdvisoryList>,
+    ) -> Self {
+        let (mut registry, registry_errors) =
+            RegistryContext::current(Self::lock_root(project, settings).as_deref(), settings);
+        if let Some(extra) = extra_advisories {
+            registry.merge_advisories(extra);
+        }
+        let registry_had_none = registry.advisories.is_none();
+        let advisories_stale = registry
+            .advisories
+            .as_ref()
+            .is_some_and(|list| advisories_stale(list, OffsetDateTime::now_utc()).is_some());
+        Self {
+            advisories_stale,
+            no_advisories: registry_had_none,
+            ..Self::find_with_context(project, settings, settings_error, registry, registry_errors)
+        }
+    }
+
+    /// The project folder whose lock is read: trusted by the user's saved
+    /// settings and marked by `celesta.config.json`. A folder trusted only
+    /// for now has no lock to trust.
+    fn lock_root(project: Option<&Path>, settings: &UserSettings) -> Option<PathBuf> {
+        project
+            .filter(|root| settings.is_trusted(root) && has_project_config(root))
+            .map(Path::to_path_buf)
+    }
+
+    /// [`Self::find_with`] with the store, advisories, and lock `registry`
+    /// gives, and the errors from reading them.
+    fn find_with_context(
+        project: Option<&Path>,
+        settings: &UserSettings,
+        settings_error: Option<SettingsError>,
+        registry: RegistryContext,
+        registry_errors: Vec<DiscoveryError>,
     ) -> Self {
         let mut skipped: Vec<String> = settings_error
             .iter()
@@ -83,7 +203,53 @@ impl FoundPlugins {
             }
             None => Vec::new(),
         };
-        let (found, errors) = InstalledPlugins::find_with(&[], &project_paths, settings);
+        let lock_root = Self::lock_root(project, settings);
+        let (found, mut errors) =
+            InstalledPlugins::find_in(&[], &project_paths, settings, &registry);
+        errors.splice(0..0, registry_errors);
+        let lock = registry
+            .project
+            .as_ref()
+            .map(|project| project.lock.clone());
+        let declared = lock_root.as_deref().map(project_dependencies);
+        let lock_problem = declared
+            .as_ref()
+            .and_then(|declared| Self::lock_problem_of(declared, lock.as_ref(), &errors));
+        let (dependencies, targets) = match declared {
+            Some(Ok(declared)) => {
+                let targets = declared.project_targets();
+                (declared.dependencies, targets)
+            }
+            _ => (BTreeMap::new(), Vec::new()),
+        };
+        let bundled = bundled_plugin_dir();
+        let blocked = errors
+            .iter()
+            .filter_map(|error| match error {
+                DiscoveryError::Blocked {
+                    path,
+                    id,
+                    version,
+                    advisory,
+                    title,
+                    fixed,
+                } => Some(BlockedPlugin {
+                    id: id.clone(),
+                    version: version.clone(),
+                    advisory: advisory.clone(),
+                    title: title.clone(),
+                    fixed: fixed.clone(),
+                    bundled: bundled.as_ref().is_some_and(|dir| path.starts_with(dir)),
+                    from_store: registry
+                        .store
+                        .as_ref()
+                        .is_some_and(|store| path.starts_with(store)),
+                    // `path` is the plugin's manifest.
+                    directory: path.parent().unwrap_or(path).to_path_buf(),
+                }),
+                _ => None,
+            })
+            .collect();
         skipped.extend(errors.iter().map(ToString::to_string));
         let allowed = found.allowed_by(settings);
         skipped.extend(allowed.unreadable);
@@ -93,9 +259,43 @@ impl FoundPlugins {
             disabled: allowed.disabled,
             folders: settings.plugin_folders.clone(),
             skipped,
+            blocked,
+            registry_plugins: settings.registry_plugins.clone(),
+            bundled: Vec::new(),
+            project: lock_root,
+            lock,
+            dependencies,
+            targets,
+            lock_problem,
             missing_decoder: false,
             registry: None,
+            advisories_stale: false,
+            no_advisories: false,
         }
+    }
+
+    /// Why `lock` (`None` without one) does not pin what the project
+    /// `declares` (or why its `celesta.config.json` could not be read),
+    /// for this Celesta. A lock that could not be read (`errors` says so)
+    /// is not a missing one.
+    fn lock_problem_of(
+        declared: &Result<ProjectDependencies, ProjectConfigError>,
+        lock: Option<&Lockfile>,
+        errors: &[DiscoveryError],
+    ) -> Option<LockProblem> {
+        let unreadable = errors.iter().find_map(|error| match error {
+            DiscoveryError::Lock(reason) => Some(LockProblem::Unreadable(reason.clone())),
+            _ => None,
+        });
+        if unreadable.is_some() {
+            return unreadable;
+        }
+        let dependencies = match declared {
+            Ok(dependencies) => dependencies,
+            Err(error) => return Some(LockProblem::Config(error.to_string())),
+        };
+        let running = semver::Version::parse(CELESTA_VERSION).ok()?;
+        check_lock(lock, dependencies, &running).err()
     }
 
     /// The Problems entry for plugins that wait or were skipped, if any.
@@ -108,13 +308,23 @@ impl FoundPlugins {
             )
         });
         let decoder = self.missing_decoder.then(|| self.missing_decoder_detail());
+        // An unreadable lock's reason is already in `skipped`.
+        let lock = self
+            .lock_problem
+            .as_ref()
+            .filter(|problem| !matches!(problem, LockProblem::Unreadable(_)))
+            .map(ToString::to_string);
         let detail: Vec<String> = decoder
             .into_iter()
             .chain(waiting)
+            .chain(lock)
             .chain(self.skipped.iter().cloned())
             .collect();
         let title = match (self.pending.len(), self.skipped.len()) {
             (0, 0) if self.missing_decoder => "No media decoder can run".to_owned(),
+            (0, 0) if self.lock_problem.is_some() => {
+                lock_problem_title(self.lock_problem.as_ref()?).to_owned()
+            }
             (0, 0) => return None,
             (0, 1) => "A plugin was skipped".to_owned(),
             (0, skipped) => format!("{skipped} plugins were skipped"),
@@ -408,6 +618,8 @@ impl EditorView {
     /// was skipped.
     pub(crate) fn set_plugins(&mut self, found: FoundPlugins) {
         self.problems.set(Source::Plugins, found.problem());
+        self.problems
+            .set(Source::Advisories, crate::registry::blocked_problem(&found));
         self.plugins = found.installed.clone();
         self.found_plugins = found;
         // A new registry starts its own list.
@@ -1068,7 +1280,7 @@ mod tests {
         let mut settings = UserSettings::default();
         let found = |settings: &UserSettings| {
             let root = trusted_root_with(settings, &[], Some(&entry));
-            FoundPlugins::find_with(root.as_deref(), settings, None)
+            FoundPlugins::find_with(root.as_deref(), settings, None, None)
         };
         let is_project = |entry: &PluginEntry| entry.manifest.id == "p";
 
@@ -1100,5 +1312,267 @@ mod tests {
         assert!(ids(&allowed.installed).contains(&"p"));
         let runtime: Vec<_> = std::env::split_paths(&allowed.installed.runtime_path()).collect();
         assert!(runtime.contains(&project.0.join("plugins").join("p")));
+    }
+
+    /// A project folder that declares `acme.charts` `^1.2`, and a store
+    /// holding the version its lock names, in a temporary folder.
+    struct Locked {
+        folder: PathBuf,
+        tree_hash: celesta_registry_format::Hash,
+    }
+
+    impl Locked {
+        fn new(name: &str) -> Self {
+            use celesta_registry_client::testing::{plugin_files, tree_of, write_files};
+            let folder =
+                std::env::temp_dir().join(format!("celesta-lock-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&folder);
+            let project = folder.join("project");
+            std::fs::create_dir_all(&project).unwrap();
+            std::fs::write(
+                project.join(celesta_plugin_host::PROJECT_CONFIG),
+                r#"{ "plugins": { "dependencies": { "acme.charts": "^1.2" } } }"#,
+            )
+            .unwrap();
+            let files = plugin_files("acme.charts", "1.2.3", "any");
+            write_files(&folder.join("store/acme.charts/1.2.3"), &files);
+            Self {
+                tree_hash: tree_of(&files),
+                folder,
+            }
+        }
+
+        fn project(&self) -> PathBuf {
+            self.folder.join("project")
+        }
+
+        /// The lock for `version` of `acme.charts` as installed.
+        fn lock(&self, version: &str) -> Lockfile {
+            let artifact = celesta_plugin_host::LockedArtifact {
+                sha256: celesta_registry_format::Hash([0; 32]),
+                tree_hash: self.tree_hash,
+            };
+            let locked = celesta_plugin_host::LockedPlugin {
+                celesta: celesta_registry_client::testing::celesta_range()
+                    .parse()
+                    .unwrap(),
+                registry: "https://registry.celesta.studio".to_owned(),
+                targets: [(celesta_registry_format::Target::ANY, artifact)].into(),
+                version: version.parse().unwrap(),
+                other: serde_json::Map::new(),
+            };
+            Lockfile {
+                celesta: CELESTA_VERSION.parse().unwrap(),
+                plugins: [("acme.charts".to_owned(), locked)].into(),
+                targets: Vec::new(),
+                other: serde_json::Map::new(),
+            }
+        }
+
+        /// What discovery finds for the project, whose `lock` is read only
+        /// when the settings trust it.
+        fn find(&self, trusted: bool, lock: Option<Lockfile>) -> FoundPlugins {
+            let mut settings = UserSettings::default();
+            if trusted {
+                settings.trust(&self.project());
+            }
+            let root = self.project();
+            let context = RegistryContext {
+                store: Some(self.folder.join("store")),
+                advisories: None,
+                project: lock
+                    .filter(|_| trusted)
+                    .map(|lock| celesta_plugin_host::ProjectLock { root, lock }),
+            };
+            FoundPlugins::find_with_context(
+                Some(&self.project()),
+                &settings,
+                None,
+                context,
+                Vec::new(),
+            )
+        }
+    }
+
+    impl Drop for Locked {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.folder);
+        }
+    }
+
+    fn locked_source(found: &FoundPlugins) -> Option<celesta_plugin_host::PluginSource> {
+        found
+            .installed
+            .plugins
+            .iter()
+            .find(|entry| entry.manifest.id == "acme.charts")
+            .map(|entry| entry.source)
+    }
+
+    #[test]
+    fn a_trusted_projects_locked_version_runs() {
+        let locked = Locked::new("runs");
+        let found = locked.find(true, Some(locked.lock("1.2.3")));
+        assert_eq!(
+            locked_source(&found),
+            Some(celesta_plugin_host::PluginSource::Locked)
+        );
+        assert_eq!(found.lock_problem, None, "{:?}", found.skipped);
+        assert_eq!(found.project, Some(locked.project()));
+        assert!(found.lock.is_some());
+    }
+
+    #[test]
+    fn an_untrusted_projects_lock_is_not_read() {
+        let locked = Locked::new("untrusted");
+        let found = locked.find(false, Some(locked.lock("1.2.3")));
+        assert_eq!(locked_source(&found), None);
+        assert_eq!(found.project, None);
+        assert_eq!(found.lock, None);
+        assert_eq!(found.lock_problem, None);
+    }
+
+    #[test]
+    fn a_lock_out_of_date_is_a_lock_problem() {
+        let locked = Locked::new("stale");
+        // The lock pins 1.0.0, which `^1.2` does not accept.
+        let found = locked.find(true, Some(locked.lock("1.0.0")));
+        assert!(
+            matches!(&found.lock_problem, Some(LockProblem::OutOfDate { ids }) if ids == &["acme.charts"]),
+            "{:?}",
+            found.lock_problem
+        );
+        assert!(found.problem().unwrap().detail.contains("celesta.lock"));
+        // No lock at all is its own problem.
+        let missing = locked.find(true, None);
+        assert_eq!(missing.lock_problem, Some(LockProblem::NoLock));
+    }
+
+    #[test]
+    fn a_blocked_plugin_is_listed_as_blocked() {
+        let locked = Locked::new("blocked");
+        let mut settings = UserSettings::default();
+        settings.trust(&locked.project());
+        let advisories = serde_json::json!({
+            "format": 1, "generated": "2026-11-10T00:00:00Z",
+            "advisories": [{
+                "id": "CEL-2026-0001", "plugin": "acme.charts", "versions": "<1.3.0",
+                "title": "Reads files outside the project", "description": "Details.",
+                "fixed": "1.3.0", "published": "2026-11-01T00:00:00Z",
+            }],
+        });
+        let context = RegistryContext {
+            store: Some(locked.folder.join("store")),
+            advisories: Some(AdvisoryList::parse(advisories.to_string().as_bytes()).unwrap()),
+            project: Some(celesta_plugin_host::ProjectLock {
+                root: locked.project(),
+                lock: locked.lock("1.2.3"),
+            }),
+        };
+        let found = FoundPlugins::find_with_context(
+            Some(&locked.project()),
+            &settings,
+            None,
+            context,
+            Vec::new(),
+        );
+        assert_eq!(locked_source(&found), None);
+        assert_eq!(
+            found.blocked,
+            [BlockedPlugin {
+                id: "acme.charts".into(),
+                version: "1.2.3".into(),
+                advisory: "CEL-2026-0001".into(),
+                title: "Reads files outside the project".into(),
+                fixed: Some("1.3.0".into()),
+                bundled: false,
+                from_store: true,
+                directory: locked
+                    .folder
+                    .join("store")
+                    .join("acme.charts")
+                    .join("1.2.3"),
+            }]
+        );
+        assert!(
+            found
+                .skipped
+                .iter()
+                .any(|line| line.contains("CEL-2026-0001"))
+        );
+    }
+
+    #[test]
+    fn a_trusted_folder_without_a_config_reads_no_lock() {
+        let locked = Locked::new("no-config");
+        std::fs::remove_file(locked.project().join(celesta_plugin_host::PROJECT_CONFIG)).unwrap();
+        let mut settings = UserSettings::default();
+        settings.trust(&locked.project());
+        assert_eq!(
+            FoundPlugins::lock_root(Some(&locked.project()), &settings),
+            None
+        );
+    }
+
+    #[test]
+    fn only_saved_trust_in_a_project_with_a_config_reads_its_lock() {
+        let locked = Locked::new("gate");
+        let project = locked.project();
+        // (a) A project the settings do not trust.
+        let untrusted = UserSettings::default();
+        assert_eq!(FoundPlugins::lock_root(Some(&project), &untrusted), None);
+        // (b) Trusted for now only: the folder is the trusted root, so its own
+        // plugin folders are searched, but the settings do not trust it.
+        let for_now = [resolved(&project)];
+        let entry = project.join("film.tsx");
+        assert_eq!(
+            trusted_root_with(&untrusted, &for_now, Some(&entry)),
+            Some(project.clone())
+        );
+        assert_eq!(FoundPlugins::lock_root(Some(&project), &untrusted), None);
+        // (c) Saved trust, with a config.
+        let mut saved = UserSettings::default();
+        saved.trust(&project);
+        assert_eq!(
+            FoundPlugins::lock_root(Some(&project), &saved),
+            Some(project)
+        );
+    }
+
+    #[test]
+    fn each_kind_of_lock_problem_has_its_own_title() {
+        let titled = |problem| {
+            FoundPlugins {
+                lock_problem: Some(problem),
+                ..FoundPlugins::default()
+            }
+            .problem()
+            .unwrap()
+            .title
+        };
+        assert_eq!(
+            titled(LockProblem::NoLock),
+            "The project's plugins are not locked"
+        );
+        assert_eq!(
+            titled(LockProblem::Config("bad".into())),
+            "The project's celesta.config.json can't be read"
+        );
+        assert_eq!(
+            titled(LockProblem::Unsatisfied {
+                plugins: Vec::new()
+            }),
+            "The project's locked plugins are not installed"
+        );
+        // An unreadable lock's reason comes through `skipped` once.
+        let found = FoundPlugins {
+            lock_problem: Some(LockProblem::Unreadable("denied".into())),
+            skipped: vec!["the lock was not used: denied".into()],
+            ..FoundPlugins::default()
+        };
+        assert_eq!(
+            found.problem().unwrap().detail,
+            "the lock was not used: denied"
+        );
     }
 }

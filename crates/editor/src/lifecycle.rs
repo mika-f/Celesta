@@ -653,9 +653,15 @@ impl EditorView {
         cx: &mut Context<Self>,
     ) {
         self.opening = true;
+        // This open finds the plugins registry work changed until now.
+        self.plugins_changed = false;
         self.problems.clear(Source::Project);
         self.pause();
         cx.notify();
+        let registry = self
+            .registry
+            .as_ref()
+            .map(|registry| registry.read(cx).client().clone());
         cx.spawn_in(window, async move |view, cx| {
             let load_path = path.clone();
             let retry_args = property_args.clone();
@@ -670,7 +676,10 @@ impl EditorView {
                     }
                     // Every open looks for plugins again, so ones installed
                     // since are found.
-                    let plugins = FoundPlugins::find(trusted_root(load_path.as_deref()).as_deref());
+                    let plugins = FoundPlugins::find(
+                        trusted_root(load_path.as_deref()).as_deref(),
+                        registry.and_then(|client| client.override_advisories()),
+                    );
                     Ok((
                         load_source(load_path.as_deref(), property_args, &plugins),
                         plugins,
@@ -709,11 +718,21 @@ impl EditorView {
                         // takes back the focus it held, or no shortcut
                         // works until a click.
                         let page_was_open = this.export_page.is_open();
+                        // Work for the project open before is not
+                        // announced to this one.
+                        let project = next.found_plugins.project.clone();
                         this.replace_contents(next, cx);
+                        if let Some(registry) = &this.registry {
+                            registry
+                                .update(cx, |registry, cx| registry.project_changed(project, cx));
+                        }
                         if page_was_open {
                             this.focus_editor(window, cx);
                         }
                         this.ask_about_pending_plugins(window, cx);
+                        // After the approval question: one that is up holds
+                        // this one back until the project opens again.
+                        this.ask_about_lock(window, cx);
                     }
                     Err(error) => {
                         let error = match note {
@@ -745,6 +764,13 @@ impl EditorView {
         next.inline_text_focus = self.inline_text_focus.take();
         next.dock_split = self.dock_split.take();
         next.export_split = self.export_split.take();
+        next.plugins_split = self.plugins_split.take();
+        // The plugin page stays, open or not, with its search and work in
+        // flight: an install it started reopens the project, and its result
+        // shows on the page.
+        next.plugin_page = std::mem::take(&mut self.plugin_page);
+        next.registry = self.registry.take();
+        next.plugins_changed = self.plugins_changed;
         next.body_split = self.body_split.take();
         #[cfg(not(target_os = "macos"))]
         {
@@ -760,6 +786,9 @@ impl EditorView {
         next.toasted_sources = std::mem::take(&mut self.toasted_sources);
         next.interactive = self.interactive;
         next.asked_plugins = std::mem::take(&mut self.asked_plugins);
+        next.asked_locks = std::mem::take(&mut self.asked_locks);
+        next.announced_blocks = std::mem::take(&mut self.announced_blocks);
+        next.preparing_update = self.preparing_update;
         // A reload of the same entry keeps its history; another file starts empty.
         next.edit_history = std::mem::take(&mut self.edit_history);
         if self.react_entry().is_none() || self.react_entry() != next.react_entry() {
@@ -774,6 +803,9 @@ impl EditorView {
         }
         // The constructor's sweep ran before Select layers carried over.
         self.refresh_occurrences(false);
+        self.sync_plugin_page(cx);
+        // The registry moved over with what it fetched.
+        self.sync_registry_notices(cx);
     }
 }
 

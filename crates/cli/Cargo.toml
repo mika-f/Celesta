@@ -17,12 +17,10 @@ celesta-plugin-host.workspace = true
 celesta-registry-client.workspace = true
 celesta-registry-format.workspace = true
 clap.workspace = true
-indexmap = { version = "2", features = ["serde"] }
 semver = "1.0.28"
 serde_json = { workspace = true, features = ["raw_value"] }
 tempfile = "3.23.0"
 serde.workspace = true
-sha2 = "0.11"
 thiserror.workspace = true
 time = "0.3.55"
 

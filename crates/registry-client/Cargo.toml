@@ -6,7 +6,6 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-publish = false
 
 [features]
 # A signed registry served from a temporary folder, for other crates' tests.
@@ -18,9 +17,10 @@ ed25519-dalek = { version = "2", default-features = false, features = ["std"], o
 celesta-plugin-host.workspace = true
 celesta-registry-format.workspace = true
 celesta-remote.workspace = true
+indexmap = { version = "2", features = ["serde"] }
 semver = { version = "1.0.28", features = ["serde"] }
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
 sha2 = "0.11"
 tempfile = "3.23.0"
 thiserror.workspace = true

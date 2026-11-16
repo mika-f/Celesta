@@ -45,8 +45,10 @@ mod occurrences;
 mod panel_header;
 mod panels;
 mod playback;
+mod plugin_page;
 mod plugins;
 mod plugins_panel;
+mod plugins_tab_model;
 mod preview;
 mod problems;
 mod problems_panel;
@@ -55,6 +57,7 @@ mod property_panel;
 mod property_panel_view;
 mod react_audio;
 mod refresh;
+mod registry;
 mod render;
 mod scene_entries;
 mod scope;
@@ -76,12 +79,12 @@ mod widgets;
 mod worker;
 
 use actions::{
-    ClearExportRange, CloseWindow, CreateNewProject, ExportProject, GoToEnd, GoToIn, GoToOut,
-    GoToStart, JumpBackward, JumpForward, NextEditPoint, NextFrame, OpenProject, PausePlayback,
-    PlayForward, PreviousEditPoint, PreviousFrame, Quit, Redo, ReloadPlugins, ReloadProject,
-    SetExportIn, SetExportOut, SetUpTypeScript, SetUpTypeScriptInFolder, ShowProblems,
-    ToggleInteractive, ToggleLoop, TogglePlayback, ToggleSafeAreas, Undo, ZoomTimelineIn,
-    ZoomTimelineOut, ZoomTimelineToFit,
+    ClearExportRange, CloseWindow, CreateNewProject, ExportProject, FindPlugins, GoToEnd, GoToIn,
+    GoToOut, GoToStart, JumpBackward, JumpForward, NextEditPoint, NextFrame, OpenProject,
+    PausePlayback, PlayForward, PreviousEditPoint, PreviousFrame, Quit, Redo, ReloadPlugins,
+    ReloadProject, SetExportIn, SetExportOut, SetUpTypeScript, SetUpTypeScriptInFolder,
+    ShowProblems, ToggleInteractive, ToggleLoop, TogglePlayback, ToggleSafeAreas, Undo,
+    ZoomTimelineIn, ZoomTimelineOut, ZoomTimelineToFit,
 };
 use inline_text_view::EditEvent;
 use source::PropertyArgs;
@@ -224,18 +227,44 @@ fn run() -> anyhow::Result<()> {
         Some(request) => StartUp::AskToTrust(Box::new(request)),
         None => StartUp::Opened,
     };
+    // Read once: an overriding registry's advisories stop plugins from
+    // the first discovery on.
+    let registry_client = registry::EditorRegistry::from_env();
+    let extra_advisories = || {
+        registry_client
+            .as_ref()
+            .ok()
+            .and_then(registry::EditorRegistry::override_advisories)
+    };
     let mut editor = match (&start, &path) {
         (StartUp::Opened, Some(path)) => {
-            match EditorView::open(Some(path), property_args.clone(), args.driver) {
+            match EditorView::open(
+                Some(path),
+                property_args.clone(),
+                args.driver,
+                extra_advisories(),
+            ) {
                 Ok(editor) => editor,
                 Err(_) => {
                     start = StartUp::OpenAgain(path.clone(), property_args);
-                    EditorView::open(None, PropertyArgs::default(), args.driver)?
+                    EditorView::open(
+                        None,
+                        PropertyArgs::default(),
+                        args.driver,
+                        extra_advisories(),
+                    )?
                 }
             }
         }
-        (StartUp::Opened, None) => EditorView::open(None, property_args, args.driver)?,
-        _ => EditorView::open(None, PropertyArgs::default(), args.driver)?,
+        (StartUp::Opened, None) => {
+            EditorView::open(None, property_args, args.driver, extra_advisories())?
+        }
+        _ => EditorView::open(
+            None,
+            PropertyArgs::default(),
+            args.driver,
+            extra_advisories(),
+        )?,
     };
 
     let app = gpui_kit::application().with_assets(CelestaAssets);
@@ -244,6 +273,7 @@ fn run() -> anyhow::Result<()> {
         theme::init(cx);
         cx.bind_keys(key_bindings());
         cx.bind_keys(export_page::view::key_bindings());
+        cx.bind_keys(plugin_page::view::key_bindings());
         // A text edited on the canvas is written first.
         cx.on_action(|_: &Quit, cx| lifecycle::quit_after_inline_commits(cx));
         // macOS shows these in the system menu bar; elsewhere the title bar's
@@ -296,6 +326,7 @@ fn run() -> anyhow::Result<()> {
                     editor.inline_text_focus = Some(inline_text_focus);
                     editor.dock_split = Some(cx.new(|_| ResizableState::default()));
                     editor.export_split = Some(cx.new(|_| ResizableState::default()));
+                    editor.plugins_split = Some(cx.new(|_| ResizableState::default()));
                     editor.body_split = Some(cx.new(|_| ResizableState::default()));
                     #[cfg(not(target_os = "macos"))]
                     {
@@ -305,6 +336,7 @@ fn run() -> anyhow::Result<()> {
                         editor.watch_react_entry(cx);
                         editor.refresh_scene_sources(cx);
                     }
+                    editor.attach_registry(registry_client, window, cx);
                     editor
                 });
                 // Once the root that shows dialogs is in place.
@@ -316,7 +348,10 @@ fn run() -> anyhow::Result<()> {
                             StartUp::OpenAgain(path, property_args) => {
                                 this.load_path_with(Some(path), property_args, window, cx)
                             }
-                            StartUp::Opened => this.ask_about_pending_plugins(window, cx),
+                            StartUp::Opened => {
+                                this.ask_about_pending_plugins(window, cx);
+                                this.ask_about_lock(window, cx);
+                            }
                         });
                     }
                 });
@@ -337,6 +372,7 @@ fn app_menus() -> Vec<Menu> {
             MenuItem::action("Open…", OpenProject),
             MenuItem::action("Reload", ReloadProject),
             MenuItem::action("Reload Plugins", ReloadPlugins),
+            MenuItem::action("Find Plugins…", FindPlugins),
             MenuItem::separator(),
             MenuItem::action("Export…", ExportProject),
             MenuItem::separator(),

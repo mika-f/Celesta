@@ -94,6 +94,7 @@ impl Machine {
             host: &self.host,
             bundled: self.bundled.as_deref(),
             now: now(),
+            progress: None,
         }
     }
 

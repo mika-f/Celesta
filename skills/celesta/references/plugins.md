@@ -123,9 +123,14 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   copy of the id, such as a global one, runs. A locked version the user
   turned off in the app gives way the same way, with the warning `the
   project locks <id> <version>, which is turned off in your settings; …`.
-  The desktop app does not read
-  the lock yet: of registry plugins, the app uses only those installed with
-  `--global`.
+  The desktop app reads the lock of a project it trusts, so its preview
+  and exports run the locked versions.
+- The desktop app does what `celesta plugin` does: Find plugins… in the
+  Plugins tab opens a page to search the registry and to install a media
+  plugin, add a plugin to the project, or pin a media plugin; the tab updates
+  and removes. A project whose lock is not downloaded asks to download it
+  when opened. Its Include pre-releases checkbox is on when Celesta itself is
+  a pre-release (every first-party plugin is one today), off otherwise.
 - The official registry is `https://registry.celesta.studio`; Celesta
   verifies its signed files with a key built into Celesta. When it cannot be
   reached, `search`, `info`, `add`, `update`, `install --global`, and an
@@ -253,9 +258,9 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
 
 The `vrm` plugin draws VRM 1.0 avatars (`.vrm`) as a 3D layer,
 MToon-shaded as UniVRM draws them. It is in the registry (`celesta plugin
-add vrm`, with Celesta's version on a pre-release; `celesta plugin install
---global vrm` for the desktop app, which does not read `celesta.lock`
-yet). From a checkout of the Celesta repository, build `plugins/vrm` with
+add vrm`, with Celesta's version on a pre-release; the desktop app reads the
+`celesta.lock` of a trusted project and runs the locked versions, offering
+to download them on opening a project whose locked plugins are missing). From a checkout of the Celesta repository, build `plugins/vrm` with
 `node scripts/plugins/build.mts plugins/vrm` (after `pnpm install && pnpm
 run build:runtime` at the repository root); it writes `plugins/dist/vrm`,
 which the user copies into a plugin folder, or name `plugins/dist` with

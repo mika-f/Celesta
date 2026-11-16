@@ -1,163 +1,133 @@
-//! The right dock's Plugins tab: every plugin the last discovery found, where
-//! it came from, whether it can run on this computer, and whether it may
-//! run; and the folders searched besides the standard ones. Allowing a
-//! plugin, turning one on or off, and adding or removing a folder are saved
-//! in the user's settings, and the project reopens with the plugins as they
-//! now are.
+//! The right dock's Plugins tab: the plugins the open project locks, the
+//! ones installed for every project, the ones placed by hand, and the
+//! folders searched besides the standard ones (see
+//! [`crate::plugins_tab_model`]). Allowing a plugin, turning one on or off,
+//! and adding or removing a folder are saved in the user's settings, and the
+//! project reopens with the plugins as they now are; updating, downloading,
+//! removing, and uninstalling run as the window's registry work.
 
 use crate::actions::ReloadPlugins;
 use crate::helpers::{PathPick, pick_one_path};
-use crate::plugins::FoundPlugins;
+use crate::plugins_tab_model::{
+    MenuCommand, RowAction, RowState, SectionAction, TabModel, TabRow, tab_model,
+};
 use crate::problems::{Source, error_chain};
+use crate::registry::RegistryState;
 use crate::toast::Toast;
 use crate::view::EditorView;
 use crate::widgets::CompactLabel as _;
 use celesta_media::DecoderUse;
-use celesta_plugin_host::{
-    PluginEntry, PluginSource, SettingsError, UserSettings, create_private_dir_all, user_plugin_dir,
-};
+use celesta_plugin_host::{SettingsError, UserSettings, create_private_dir_all, user_plugin_dir};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::switch::Switch;
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex,
+    ActiveTheme as _, Disableable as _, IconName, Selectable as _, Sizable as _, WindowExt as _,
+    h_flex, v_flex,
 };
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, App, Context, SharedString, Window, div};
+use gpui_kit::{Anchor, AnyElement, App, Context, ElementId, SharedString, Window, div, rems};
+use std::collections::BTreeSet;
+use std::path::PathBuf;
 
-/// Whether a listed plugin may run.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum PluginState {
-    /// It runs (allowed, or from a place that is not asked about).
-    On,
-    /// It waits for the user to allow it as it is now.
-    Waiting {
-        fingerprint: String,
-        changed: bool,
-        from_the_internet: bool,
-    },
-    /// The user turned it off.
-    Off,
-}
+/// The width of a row's action lane, in `rem`: wide enough for
+/// `Update to 0.10.0` at the xsmall button size; a longer label widens its
+/// own row's lane.
+const ACTION_LANE_WIDTH: f32 = 8.;
 
-/// How a row's switch shows its plugin.
+/// Which section a row is in, which says what its commands work on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct SwitchLook {
-    /// The plugin runs.
-    pub(crate) on: bool,
-    /// The switch can be used: not while the plugin waits for approval,
-    /// which the switch cannot give.
-    pub(crate) enabled: bool,
-    pub(crate) tooltip: &'static str,
+enum Section {
+    Project,
+    Global,
+    ByHand,
 }
 
-/// One plugin as the Plugins tab lists it.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct PluginRow {
-    pub(crate) entry: PluginEntry,
-    pub(crate) state: PluginState,
+impl Section {
+    fn key(self) -> &'static str {
+        match self {
+            Self::Project => "project",
+            Self::Global => "global",
+            Self::ByHand => "by-hand",
+        }
+    }
 }
 
-impl PluginRow {
-    /// Every plugin `found` holds, by where it came from (in search order),
-    /// then by id.
-    pub(crate) fn all(found: &FoundPlugins) -> Vec<Self> {
-        let on = found.installed.plugins.iter().map(|entry| Self {
-            entry: entry.clone(),
-            state: PluginState::On,
-        });
-        let waiting = found.pending.iter().map(|pending| Self {
-            entry: pending.entry.clone(),
-            state: PluginState::Waiting {
-                fingerprint: pending.fingerprint.clone(),
-                changed: pending.changed,
-                from_the_internet: pending.from_the_internet,
-            },
-        });
-        let off = found.disabled.iter().map(|entry| Self {
-            entry: entry.clone(),
-            state: PluginState::Off,
-        });
-        let mut rows: Vec<Self> = on.chain(waiting).chain(off).collect();
-        rows.sort_by(|a, b| {
-            (a.entry.source, &a.entry.manifest.id).cmp(&(b.entry.source, &b.entry.manifest.id))
-        });
-        rows
-    }
+/// The copy a row's button or menu item works on.
+#[derive(Clone, Debug)]
+struct RowTarget {
+    section: Section,
+    id: String,
+    version: String,
+    directory: Option<PathBuf>,
+}
 
-    /// What the plugin brings and whether this computer can run it.
-    pub(crate) fn availability(&self) -> &'static str {
-        let manifest = &self.entry.manifest;
-        if manifest.executable.is_empty() {
-            "Components only"
-        } else if self.entry.executable().is_some() {
-            "Runs on this computer"
-        } else {
-            "Not built for this computer"
-        }
-    }
+/// What a row's button or menu item does.
+#[derive(Clone, Debug)]
+enum RowCommand {
+    Action(RowAction),
+    Menu(MenuCommand),
+}
 
-    /// How many files this project plugin's decoders read, when it is one
-    /// and has read any.
-    pub(crate) fn decoder_uses(&self, uses: &[DecoderUse]) -> Option<String> {
-        if self.entry.source != PluginSource::Project {
-            return None;
-        }
-        let count = uses
-            .iter()
-            .filter(|used| used.decoder.plugin == self.entry.manifest.id)
-            .count();
-        match count {
-            0 => None,
-            1 => Some("Decodes 1 file in this project".to_owned()),
-            count => Some(format!("Decodes {count} files in this project")),
-        }
+/// How many files the project plugin `id`'s decoders read, when it has
+/// read any.
+fn decoder_uses(id: &str, uses: &[DecoderUse]) -> Option<String> {
+    let count = uses.iter().filter(|used| used.decoder.plugin == id).count();
+    match count {
+        0 => None,
+        1 => Some("Decodes 1 file in this project".to_owned()),
+        count => Some(format!("Decodes {count} files in this project")),
     }
+}
 
-    /// A waiting plugin does not run, so its switch is off, and greyed out
-    /// until it is allowed: allowing it is **Allow**'s, and turning it off
-    /// **Turn Off**'s.
-    pub(crate) fn switch(&self) -> SwitchLook {
-        match self.state {
-            PluginState::On => SwitchLook {
-                on: true,
-                enabled: true,
-                tooltip: "On or off",
-            },
-            PluginState::Waiting { .. } => SwitchLook {
-                on: false,
-                enabled: false,
-                tooltip: "Runs once allowed",
-            },
-            PluginState::Off => SwitchLook {
-                on: false,
-                enabled: true,
-                tooltip: "On or off",
-            },
-        }
-    }
-
-    pub(crate) fn state_label(&self) -> &'static str {
-        match &self.state {
-            PluginState::On => "On",
-            PluginState::Waiting { changed: true, .. } => "Changed: waits for approval",
-            PluginState::Waiting { .. } => "Waits for approval",
-            PluginState::Off => "Off",
-        }
-    }
+/// A row's key among the tab's element ids: its section, its id, and its
+/// folder (or version), so two copies of one id do not share one.
+fn row_key(section: Section, row: &TabRow) -> SharedString {
+    let copy = row
+        .directory
+        .as_ref()
+        .map_or_else(|| row.version.clone(), |dir| dir.display().to_string());
+    format!("{}:{}:{copy}", section.key(), row.id).into()
 }
 
 impl EditorView {
     pub(crate) fn plugins_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let model = tab_model(
+            &self.found_plugins,
+            self.registry.as_ref().map(|registry| registry.read(cx)),
+        );
+        let TabModel {
+            project,
+            global,
+            by_hand,
+            folders,
+            skipped,
+        } = model;
         let muted = cx.theme().muted_foreground;
-        let rows = PluginRow::all(&self.found_plugins);
-        // As discovery read them, not from disk on every frame.
-        let folders = self.found_plugins.folders.clone();
-        let skipped = self.found_plugins.skipped.clone();
+        let view = cx.entity().downgrade();
+        let page_open = self.plugin_page.is_open();
+        // An outline button's own selected fill is a shade from its rest
+        // fill in this palette; the page's selected-row fill reads as on.
+        let selected_fill = cx.theme().list_active;
         let toolbar = h_flex()
-            .flex_wrap()
             .gap_1()
             .px_3()
             .py_2()
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .child(
+                // A toggle: "on" while the plugin page shows.
+                Button::new("plugins-find")
+                    .xsmall()
+                    .outline()
+                    .compact_label("Find plugins…")
+                    .selected(page_open)
+                    .toggled(page_open)
+                    .when(page_open, |button| button.bg(selected_fill))
+                    .disabled(self.registry.is_none())
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.toggle_plugin_page(window, cx);
+                    })),
+            )
             .child(
                 Button::new("plugins-reload")
                     .xsmall()
@@ -167,23 +137,31 @@ impl EditorView {
                         this.reload_plugins_action(&ReloadPlugins, window, cx);
                     })),
             )
+            .child(div().flex_1())
             .child(
-                Button::new("plugins-add-folder")
+                Button::new("plugins-options")
                     .xsmall()
                     .ghost()
-                    .compact_label("Add Folder…")
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.add_plugin_folder(window, cx);
-                    })),
-            )
-            .child(
-                Button::new("plugins-open-user-folder")
-                    .xsmall()
-                    .ghost()
-                    .compact_label("Open Plugin Folder")
-                    .on_click(cx.listener(|this, _, _, cx| this.open_user_plugin_folder(cx))),
+                    .icon(IconName::Ellipsis)
+                    .tooltip("Options")
+                    .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
+                        let (add, open) = (view.clone(), view.clone());
+                        menu.item(PopupMenuItem::new("Add Folder…").on_click(
+                            move |_, window, cx| {
+                                let _ =
+                                    add.update(cx, |this, cx| this.add_plugin_folder(window, cx));
+                            },
+                        ))
+                        .item(
+                            PopupMenuItem::new("Open Plugin Folder").on_click(move |_, _, cx| {
+                                let _ =
+                                    open.update(cx, |this, cx| this.open_user_plugin_folder(cx));
+                            }),
+                        )
+                    }),
             );
-        div()
+        let uses = self.decoder_notice.uses();
+        let mut panel = div()
             .id("plugins-scroll")
             .flex()
             .flex_col()
@@ -191,35 +169,77 @@ impl EditorView {
             .min_h_0()
             .overflow_x_hidden()
             .overflow_y_scroll()
-            .child(toolbar)
-            .child(heading("Installed", cx))
-            .when(rows.is_empty(), |panel| {
+            .child(toolbar);
+        if let Some(section) = project {
+            let trailing = h_flex()
+                .gap_2()
+                .items_center()
+                .child(
+                    div()
+                        .font_family(cx.theme().mono_font_family.clone())
+                        .child(section.lock_label),
+                )
+                .children(section.action.map(|action| self.section_action(action, cx)));
+            panel = panel
+                .child(heading(
+                    "This project",
+                    Some(trailing.into_any_element()),
+                    cx,
+                ))
+                .when(section.rows.is_empty(), |panel| {
+                    panel.child(note("No plugins locked", cx))
+                })
+                .children(
+                    section
+                        .rows
+                        .into_iter()
+                        .map(|row| self.tab_row(Section::Project, row, None, cx)),
+                );
+        }
+        panel
+            .child(heading("Global", None, cx))
+            .when(global.is_empty(), |panel| {
+                panel.child(note("No global plugins", cx))
+            })
+            .children(
+                global
+                    .into_iter()
+                    .map(|row| self.tab_row(Section::Global, row, None, cx)),
+            )
+            .child(heading("Installed by hand", None, cx))
+            .when(by_hand.is_empty(), |panel| {
                 panel.child(note(
-                    "No plugins found. Put a plugin’s folder in your plugin folder, then reload.",
+                    "Put a plugin’s folder in your plugin folder, then reload.",
                     cx,
                 ))
             })
-            .children(rows.into_iter().enumerate().map(|(index, row)| {
-                let decoder_uses = row.decoder_uses(self.decoder_notice.uses());
-                self.plugin_row(index, row, decoder_uses, cx)
+            .children(by_hand.into_iter().map(|row| {
+                let uses = row
+                    .project_folder
+                    .then(|| decoder_uses(&row.id, uses))
+                    .flatten();
+                self.tab_row(Section::ByHand, row, uses, cx)
             }))
-            .child(heading("Added folders", cx))
+            .child(heading("Added folders", None, cx))
             .when(folders.is_empty(), |panel| {
-                panel.child(note(
-                    "Folders added here are searched after your plugin folder.",
-                    cx,
-                ))
+                panel.child(note("No folders added", cx))
             })
-            .children(folders.into_iter().enumerate().map(|(index, folder)| {
+            .children(folders.into_iter().map(|folder| {
                 let shown: SharedString = folder.display().to_string().into();
                 h_flex()
                     .px_3()
                     .py_1()
                     .gap_2()
                     .justify_between()
-                    .child(div().min_w_0().text_sm().text_color(muted).child(shown))
                     .child(
-                        Button::new(("plugins-remove-folder", index))
+                        div()
+                            .min_w_0()
+                            .text_sm()
+                            .text_color(muted)
+                            .child(shown.clone()),
+                    )
+                    .child(
+                        Button::new((ElementId::from("plugins-remove-folder"), shown))
                             .xsmall()
                             .ghost()
                             .compact_label("Remove")
@@ -238,7 +258,7 @@ impl EditorView {
             }))
             .when(!skipped.is_empty(), |panel| {
                 panel
-                    .child(heading("Skipped", cx))
+                    .child(heading("Skipped", None, cx))
                     .children(skipped.into_iter().map(|reason| {
                         div()
                             .px_3()
@@ -250,146 +270,303 @@ impl EditorView {
             })
     }
 
-    fn plugin_row(
+    /// The This project heading's action.
+    fn section_action(&self, action: SectionAction, cx: &mut Context<Self>) -> AnyElement {
+        match action {
+            SectionAction::Download { .. } => Button::new("plugins-tab-download")
+                .xsmall()
+                .outline()
+                .compact_label("Download")
+                .on_click(cx.listener(|this, _, window, cx| {
+                    let Some(root) = this.found_plugins.project.clone() else {
+                        return;
+                    };
+                    this.registry_work(window, cx, |state, cx| state.download_locked(root, cx));
+                }))
+                .into_any_element(),
+            SectionAction::UpdatePlugins => Button::new("plugins-tab-update-plugins")
+                .xsmall()
+                .outline()
+                // It may ask first (requirements to rewrite).
+                .compact_label("Update Plugins…")
+                .disabled(self.preparing_update)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.update_project_plugins(window, cx);
+                }))
+                .into_any_element(),
+            SectionAction::Working { label, done, total } => h_flex()
+                .gap_1()
+                .child(label)
+                .when(total > 0, |working| {
+                    working.child(
+                        div()
+                            .font_family(cx.theme().mono_font_family.clone())
+                            .child(percent(done, total)),
+                    )
+                })
+                .into_any_element(),
+        }
+    }
+
+    /// One copy: its id and version, then its kind and state, with its one
+    /// action and its ⋯ menu trailing.
+    fn tab_row(
         &self,
-        index: usize,
-        row: PluginRow,
+        section: Section,
+        row: TabRow,
         decoder_uses: Option<String>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let muted = cx.theme().muted_foreground;
-        let warning = cx.theme().warning;
-        let manifest = &row.entry.manifest;
-        let title = format!("{} {}", manifest.id, manifest.version);
-        let detail = format!("{} · {}", row.entry.source.label(), row.availability());
-        let directory = row.entry.directory.clone();
-        let id = manifest.id.clone();
+        let theme = cx.theme();
+        let (muted, mono, border) = (
+            theme.muted_foreground,
+            theme.mono_font_family.clone(),
+            theme.border,
+        );
+        let state_color = match &row.state {
+            RowState::Blocked { .. } => theme.danger,
+            RowState::Waiting { .. }
+            | RowState::Deprecated { .. }
+            | RowState::Yanked
+            | RowState::NotInstalled => theme.warning,
+            _ => muted,
+        };
+        let danger = theme.danger;
+        let key = row_key(section, &row);
+        let detail = row.detail();
+        let progress = match row.state {
+            RowState::Working { done, total } if total > 0 => Some(percent(done, total)),
+            _ => None,
+        };
         let internet = matches!(
             row.state,
-            PluginState::Waiting {
+            RowState::Waiting {
                 from_the_internet: true,
                 ..
             }
         );
-        let turn_off = matches!(row.state, PluginState::Waiting { .. }).then(|| {
-            let (id, directory) = (id.clone(), directory.clone());
-            Button::new(("plugin-turn-off", index))
+        let target = RowTarget {
+            section,
+            id: row.id.clone(),
+            version: row.version.clone(),
+            directory: row.directory.clone(),
+        };
+        let action = row.action.clone().map(|action| {
+            let name = match action {
+                RowAction::Update { .. } => "plugins-tab-update",
+                RowAction::Download => "plugins-tab-download",
+                RowAction::Allow { .. } => "plugins-tab-allow",
+            };
+            let button = Button::new((ElementId::from(name), key.clone()))
                 .xsmall()
-                .ghost()
-                .compact_label("Turn Off")
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    let (id, directory) = (id.clone(), directory.clone());
-                    this.change_plugin_settings(
-                        move |settings| {
-                            settings.set_enabled(&id, &directory, false);
-                            Ok(())
-                        },
-                        window,
-                        cx,
-                    );
-                }))
+                .compact_label(action.title());
+            let button = match action {
+                RowAction::Allow { .. } => button.primary(),
+                _ => button.outline(),
+            };
+            let target = target.clone();
+            button.on_click(cx.listener(move |this, _, window, cx| {
+                this.run_row_command(&target, RowCommand::Action(action.clone()), window, cx);
+            }))
         });
-        let allow = match &row.state {
-            PluginState::Waiting { fingerprint, .. } => {
-                let (id, directory, fingerprint) =
-                    (id.clone(), directory.clone(), fingerprint.clone());
-                Some(
-                    Button::new(("plugin-allow", index))
-                        .xsmall()
-                        .primary()
-                        .compact_label("Allow")
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            let (id, directory, fingerprint) =
-                                (id.clone(), directory.clone(), fingerprint.clone());
-                            this.change_plugin_settings(
-                                move |settings| {
-                                    settings.allow(&id, &directory, &fingerprint);
-                                    Ok(())
-                                },
-                                window,
-                                cx,
-                            );
-                        })),
-                )
-            }
-            _ => None,
-        };
-        let switch = {
-            let (id, directory) = (id.clone(), directory.clone());
-            let look = row.switch();
-            Switch::new(("plugin-enabled", index))
-                .small()
-                .checked(look.on)
-                .disabled(!look.enabled)
-                .tooltip(look.tooltip)
-                .on_click(cx.listener(move |this, checked: &bool, window, cx| {
-                    let (id, directory, checked) = (id.clone(), directory.clone(), *checked);
-                    this.change_plugin_settings(
-                        move |settings| {
-                            settings.set_enabled(&id, &directory, checked);
-                            Ok(())
-                        },
-                        window,
-                        cx,
+        let commands = row.menu.clone();
+        let view = cx.entity().downgrade();
+        let menu = Button::new((ElementId::from("plugins-tab-menu"), key))
+            .xsmall()
+            .ghost()
+            .icon(IconName::Ellipsis)
+            .tooltip("More")
+            .disabled(commands.is_empty())
+            .dropdown_menu_with_anchor(Anchor::TopRight, move |mut menu, _, _| {
+                for (index, command) in commands.iter().enumerate() {
+                    // The commands that take the plugin away stand apart.
+                    let removes = matches!(
+                        command,
+                        MenuCommand::RemoveFromProject | MenuCommand::Uninstall
                     );
-                }))
-        };
-        let show = {
-            let directory = directory.clone();
-            Button::new(("plugin-show-folder", index))
-                .xsmall()
-                .ghost()
-                .compact_label("Show Folder")
-                .on_click(cx.listener(move |_, _, _, cx| cx.open_with_system(&directory)))
-        };
-        v_flex()
+                    if removes && index > 0 {
+                        menu = menu.separator();
+                    }
+                    let (view, target, command) = (view.clone(), target.clone(), *command);
+                    menu = menu.item(PopupMenuItem::new(command.title()).on_click(
+                        move |_, window, cx| {
+                            let _ = view.update(cx, |this, cx| {
+                                this.run_row_command(
+                                    &target,
+                                    RowCommand::Menu(command),
+                                    window,
+                                    cx,
+                                );
+                            });
+                        },
+                    ));
+                }
+                menu
+            });
+        h_flex()
             .px_3()
-            .py_2()
-            .gap_1()
+            .py_1p5()
+            .gap_2()
+            .items_center()
             .border_b_1()
-            .border_color(cx.theme().border)
+            .border_color(border)
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap_0p5()
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .items_baseline()
+                            .child(div().text_base().child(row.id))
+                            .child(
+                                div()
+                                    .font_family(mono.clone())
+                                    .text_sm()
+                                    .text_color(muted)
+                                    .child(row.version),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .text_sm()
+                            .child(div().text_color(state_color).child(detail))
+                            .children(progress.map(|progress| {
+                                div().font_family(mono).text_color(muted).child(progress)
+                            })),
+                    )
+                    .children(
+                        decoder_uses.map(|text| div().text_sm().text_color(muted).child(text)),
+                    )
+                    .when(internet, |column| {
+                        column.child(
+                            div()
+                                .text_sm()
+                                .text_color(danger)
+                                .child("Downloaded from the internet."),
+                        )
+                    }),
+            )
+            // A lane of its own, so actions and menus line up down the tab
+            // whether or not a row has an action.
             .child(
                 h_flex()
-                    .justify_between()
-                    .gap_2()
-                    .child(div().text_base().child(title))
-                    .child(switch),
+                    .flex_none()
+                    .min_w(rems(ACTION_LANE_WIDTH))
+                    .justify_end()
+                    .children(action),
             )
-            .child(div().text_sm().text_color(muted).child(detail))
-            .children(decoder_uses.map(|text| div().text_sm().text_color(muted).child(text)))
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(muted)
-                    .child(row.entry.directory.display().to_string()),
-            )
-            .child(
-                div()
-                    .text_sm()
-                    .when(row.state == PluginState::Off, |label| {
-                        label.text_color(muted)
-                    })
-                    .when(matches!(row.state, PluginState::Waiting { .. }), |label| {
-                        label.text_color(warning)
-                    })
-                    .child(row.state_label()),
-            )
-            .when(internet, |column| {
-                column.child(
-                    div()
-                        .text_sm()
-                        .text_color(cx.theme().danger)
-                        .child("Downloaded from the internet."),
-                )
-            })
-            .child(
-                h_flex()
-                    .gap_1()
-                    .children(allow)
-                    .children(turn_off)
-                    .child(show),
-            )
+            .child(menu)
             .into_any_element()
+    }
+
+    /// Runs a row's action or menu command on the copy `target` names.
+    fn run_row_command(
+        &mut self,
+        target: &RowTarget,
+        command: RowCommand,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let id = target.id.clone();
+        let root = self.found_plugins.project.clone();
+        match command {
+            RowCommand::Action(RowAction::Allow { fingerprint }) => {
+                let Some(directory) = target.directory.clone() else {
+                    return;
+                };
+                self.change_plugin_settings(
+                    move |settings| {
+                        settings.allow(&id, &directory, &fingerprint);
+                        Ok(())
+                    },
+                    window,
+                    cx,
+                );
+            }
+            RowCommand::Action(RowAction::Update { .. }) => match (target.section, root) {
+                // `search.json`'s latest is within the requirement, so no
+                // requirement changes.
+                (Section::Project, Some(root)) => {
+                    let ids = BTreeSet::from([id]);
+                    self.registry_work(window, cx, |state, cx| {
+                        state.update(root, ids, Vec::new(), cx)
+                    });
+                }
+                (Section::Global, _) => {
+                    self.registry_work(window, cx, |state, cx| state.update_global(&id, cx));
+                }
+                _ => {}
+            },
+            RowCommand::Action(RowAction::Download) => match (target.section, root) {
+                (Section::Project, Some(root)) => {
+                    self.registry_work(window, cx, |state, cx| state.download_locked(root, cx));
+                }
+                (Section::Global, _) => {
+                    let Ok(version) = semver::Version::parse(&target.version) else {
+                        return;
+                    };
+                    self.registry_work(window, cx, |state, cx| {
+                        state.install_global(&id, version, cx)
+                    });
+                }
+                _ => {}
+            },
+            RowCommand::Menu(command @ (MenuCommand::TurnOff | MenuCommand::TurnOn)) => {
+                let Some(directory) = target.directory.clone() else {
+                    return;
+                };
+                let on = command == MenuCommand::TurnOn;
+                self.change_plugin_settings(
+                    move |settings| {
+                        settings.set_enabled(&id, &directory, on);
+                        Ok(())
+                    },
+                    window,
+                    cx,
+                );
+            }
+            RowCommand::Menu(MenuCommand::ShowFolder) => {
+                if let Some(directory) = &target.directory {
+                    cx.open_with_system(directory);
+                }
+            }
+            RowCommand::Menu(MenuCommand::RemoveFromProject) => {
+                if let Some(root) = root {
+                    self.registry_work(window, cx, |state, cx| state.remove(root, &id, cx));
+                }
+            }
+            RowCommand::Menu(MenuCommand::Uninstall) => {
+                self.registry_work(window, cx, |state, cx| state.uninstall(&id, cx));
+            }
+            RowCommand::Menu(MenuCommand::ShowInFindPlugins) => {
+                self.open_plugin_page(Some(id), window, cx);
+            }
+        }
+    }
+
+    /// Starts registry work with `start`; work it refuses (more for the same
+    /// plugin, project, or settings is running) is said so in a note.
+    pub(crate) fn registry_work(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        start: impl FnOnce(&mut RegistryState, &mut Context<RegistryState>) -> bool,
+    ) {
+        let Some(registry) = self.registry.clone() else {
+            return;
+        };
+        if !registry.update(cx, start) {
+            window.push_notification(
+                Toast::note(
+                    "Another plugin change is running. Try again when it finishes.",
+                    cx,
+                ),
+                cx,
+            );
+        }
     }
 
     /// Asks for a folder and adds it to the folders searched for plugins.
@@ -455,18 +632,20 @@ impl EditorView {
     /// its plugins are found as the settings now say. Refused, before
     /// anything is saved, while the project cannot be reopened (it is
     /// opening, an export runs, or the save panel is up), so the tab never shows a choice that has
-    /// not taken effect.
+    /// not taken effect, and while registry work is saving the settings,
+    /// which would write its own copy over this change.
     fn change_plugin_settings(
         &mut self,
         change: impl FnOnce(&mut UserSettings) -> Result<(), SettingsError>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.opening {
-            window.push_notification(
-                Toast::note("Wait for the project to open, then try again.", cx),
-                cx,
-            );
+        let settings_busy = self
+            .registry
+            .as_ref()
+            .is_some_and(|registry| registry.read(cx).settings_busy());
+        if let Some(refusal) = settings_change_refusal(self.opening, settings_busy) {
+            window.push_notification(Toast::note(refusal, cx), cx);
             return;
         }
         if !self.can_replace_contents(window, cx) {
@@ -491,14 +670,19 @@ impl EditorView {
     }
 }
 
-fn heading(title: &'static str, cx: &App) -> impl IntoElement {
-    div()
+/// A section's title, with what it shows of the section as a whole
+/// trailing.
+fn heading(title: &'static str, trailing: Option<AnyElement>, cx: &App) -> impl IntoElement {
+    h_flex()
         .px_3()
         .pt_3()
         .pb_1()
+        .gap_2()
+        .justify_between()
         .text_sm()
         .text_color(cx.theme().muted_foreground)
         .child(title)
+        .children(trailing)
 }
 
 fn note(text: &'static str, cx: &App) -> impl IntoElement {
@@ -510,74 +694,38 @@ fn note(text: &'static str, cx: &App) -> impl IntoElement {
         .child(text)
 }
 
+/// Why a change to the plugin settings waits: the project is `opening`, or
+/// registry work is saving the settings (`settings_busy`).
+fn settings_change_refusal(opening: bool, settings_busy: bool) -> Option<&'static str> {
+    if opening {
+        Some("Wait for the project to open, then try again.")
+    } else if settings_busy {
+        Some("Wait for the plugin change to finish, then try again.")
+    } else {
+        None
+    }
+}
+
+/// How far a download has come, in whole percent.
+fn percent(done: u64, total: u64) -> String {
+    format!("{}%", done.saturating_mul(100) / total.max(1))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use celesta_plugin_host::{Manifest, PendingPlugin, PluginSource};
-    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
-    fn entry(id: &str, source: PluginSource, executable: &[(&str, &str)]) -> PluginEntry {
-        PluginEntry {
-            manifest: Manifest {
-                id: id.into(),
-                name: None,
-                version: "1.0.0".into(),
-                protocol: 1,
-                celesta: Some("*".into()),
-                executable: executable
-                    .iter()
-                    .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
-                    .collect::<BTreeMap<_, _>>(),
-                module: Some("js/index.js".into()),
-                types: None,
-                components: Vec::new(),
-                roles: vec![celesta_plugin_host::PluginRole::Content],
-                media: None,
-            },
-            directory: PathBuf::from("plugins").join(id),
-            source,
-            replaces: None,
-        }
-    }
-
     #[test]
-    fn rows_list_every_plugin_in_search_order() {
-        let found = FoundPlugins {
-            installed: celesta_plugin_host::InstalledPlugins {
-                plugins: vec![
-                    entry("zeta", PluginSource::Bundled, &[]),
-                    entry("alpha", PluginSource::User, &[]),
-                ],
-                ..Default::default()
-            },
-            pending: vec![PendingPlugin {
-                entry: entry("beta", PluginSource::User, &[]),
-                fingerprint: "sha256:1".into(),
-                changed: true,
-                from_the_internet: false,
-            }],
-            // The user's zeta is off, so the bundled one is used: both listed.
-            disabled: vec![
-                entry("gamma", PluginSource::Project, &[]),
-                entry("zeta", PluginSource::User, &[]),
-            ],
-            ..FoundPlugins::default()
-        };
-        let rows = PluginRow::all(&found);
-        let listed: Vec<(&str, &str)> = rows
-            .iter()
-            .map(|row| (row.entry.manifest.id.as_str(), row.state_label()))
-            .collect();
+    fn settings_changes_wait_for_an_open_and_for_registry_work() {
+        assert_eq!(settings_change_refusal(false, false), None);
         assert_eq!(
-            listed,
-            [
-                ("gamma", "Off"),
-                ("alpha", "On"),
-                ("beta", "Changed: waits for approval"),
-                ("zeta", "Off"),
-                ("zeta", "On"),
-            ]
+            settings_change_refusal(false, true),
+            Some("Wait for the plugin change to finish, then try again.")
+        );
+        assert_eq!(
+            settings_change_refusal(true, true),
+            Some("Wait for the project to open, then try again.")
         );
     }
 
@@ -588,10 +736,6 @@ mod tests {
             origin: celesta_plugin_host::MediaOrigin::Project,
             path: PathBuf::from(path),
         };
-        let row = |source| PluginRow {
-            entry: entry("proj", source, &[]),
-            state: PluginState::On,
-        };
         let uses = [
             used("proj", "/a"),
             used("proj", "/b"),
@@ -599,73 +743,44 @@ mod tests {
             used("proj", "/d"),
         ];
         assert_eq!(
-            row(PluginSource::Project).decoder_uses(&uses).as_deref(),
+            decoder_uses("proj", &uses).as_deref(),
             Some("Decodes 3 files in this project")
         );
         assert_eq!(
-            row(PluginSource::Project)
-                .decoder_uses(&uses[..1])
-                .as_deref(),
+            decoder_uses("proj", &uses[..1]).as_deref(),
             Some("Decodes 1 file in this project")
         );
-        assert_eq!(row(PluginSource::Project).decoder_uses(&[]), None);
-        assert_eq!(row(PluginSource::User).decoder_uses(&uses), None);
+        assert_eq!(decoder_uses("proj", &[]), None);
     }
 
     #[test]
-    fn a_waiting_plugins_switch_is_off_and_greyed_out() {
-        let row = |state: PluginState| PluginRow {
-            entry: entry("p", PluginSource::User, &[]),
-            state,
+    fn two_copies_of_one_id_have_their_own_element_ids() {
+        let row = |directory: &str| TabRow {
+            id: "avfoundation".into(),
+            version: "0.10.0-alpha.3".into(),
+            kind: "Media",
+            state: RowState::On,
+            action: None,
+            menu: Vec::new(),
+            directory: Some(PathBuf::from(directory)),
+            project_folder: false,
+            bundled: false,
         };
-        let waiting = |changed| PluginState::Waiting {
-            fingerprint: "sha256:1".into(),
-            changed,
-            from_the_internet: false,
-        };
-        assert_eq!(
-            row(PluginState::On).switch(),
-            SwitchLook {
-                on: true,
-                enabled: true,
-                tooltip: "On or off"
-            }
+        let (store, bundled) = (row("/store/avfoundation"), row("/bundled/avfoundation"));
+        assert_ne!(
+            row_key(Section::Global, &store),
+            row_key(Section::Global, &bundled)
         );
-        assert_eq!(
-            row(PluginState::Off).switch(),
-            SwitchLook {
-                on: false,
-                enabled: true,
-                tooltip: "On or off"
-            }
+        assert_ne!(
+            row_key(Section::Global, &store),
+            row_key(Section::Project, &store)
         );
-        for changed in [false, true] {
-            assert_eq!(
-                row(waiting(changed)).switch(),
-                SwitchLook {
-                    on: false,
-                    enabled: false,
-                    tooltip: "Runs once allowed"
-                }
-            );
-        }
     }
 
     #[test]
-    fn availability_says_whether_this_computer_can_run_it() {
-        let (os, _) = celesta_plugin_host::platform();
-        let row = |executable: &[(&str, &str)]| PluginRow {
-            entry: entry("p", PluginSource::User, executable),
-            state: PluginState::On,
-        };
-        assert_eq!(row(&[]).availability(), "Components only");
-        assert_eq!(
-            row(&[(os, "bin/p")]).availability(),
-            "Runs on this computer"
-        );
-        assert_eq!(
-            row(&[("plan9", "bin/p")]).availability(),
-            "Not built for this computer"
-        );
+    fn progress_is_in_whole_percent() {
+        assert_eq!(percent(1, 4), "25%");
+        assert_eq!(percent(0, 0), "0%");
+        assert_eq!(percent(40, 40), "100%");
     }
 }

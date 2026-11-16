@@ -105,6 +105,13 @@ impl Registry {
         Ok(list)
     }
 
+    /// The `search.json` cached by an earlier `search`, if any, for a run
+    /// that cannot reach the registry.
+    pub fn cached_search(&self) -> Option<SearchList> {
+        let bytes = cache::read_trusted(&cache::file_path(&self.cache, "/search.json"))?;
+        SearchList::parse(&bytes).ok()
+    }
+
     /// Fetches, verifies, checks against the cached list, and caches
     /// `advisories.json`. When it fails, the cached list stays as it was.
     pub fn refresh_advisories(&self, now: OffsetDateTime) -> Result<AdvisoryList, ClientError> {
@@ -204,6 +211,34 @@ mod tests {
         assert_eq!(encoded, "eqOBn7d6SvlrSXx+f3oWpJPhxxAn209/9F8QqhIBSs0=");
         // An Ed25519 public key, not just 32 bytes.
         assert!(ed25519_dalek::VerifyingKey::from_bytes(&official_root_key().0).is_ok());
+    }
+
+    #[test]
+    fn the_last_verified_search_list_is_read_offline() {
+        let cache = tempfile::tempdir().unwrap();
+        let served = TestRegistry::new();
+        let registry = served.client(cache.path());
+        assert_eq!(registry.cached_search(), None, "nothing fetched yet");
+
+        served.search(serde_json::json!([{
+            "id": "acme.charts",
+            "publisher": "acme",
+            "kind": { "roles": ["content"], "program": false, "module": true },
+            "description": "Bar and line graphs.",
+            "latest": "1.2.3",
+        }]));
+        let now = at("2026-11-21T00:00:00Z");
+        let fetched = registry.search(now).unwrap();
+        std::fs::remove_file(served.served_dir().join("search.json")).unwrap();
+        assert!(
+            registry.search(now).is_err(),
+            "the registry no longer serves it"
+        );
+        assert_eq!(registry.cached_search(), Some(fetched));
+
+        // A cache that is not a search list is not one.
+        std::fs::write(cache.path().join("search.json"), b"{}").unwrap();
+        assert_eq!(registry.cached_search(), None);
     }
 
     #[test]

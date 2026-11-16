@@ -133,6 +133,7 @@ impl Fixture {
                 size: bytes.len() as u64,
                 sha256: &sha256,
                 tree_hash,
+                progress: None,
             },
         )
     }
@@ -205,6 +206,52 @@ fn an_archive_installs_and_hashes() {
 }
 
 #[test]
+fn install_reports_progress_up_to_the_size() {
+    use std::sync::Mutex;
+
+    let fixture = Fixture::new();
+    let files = files(ID);
+    // Larger than the read buffer once compressed, so that there are
+    // several reports: the bytes come from a generator that does not repeat.
+    let mut state = 0x2545_f491_u32;
+    let noise: Vec<u8> = (0..300 * 1024)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state as u8
+        })
+        .collect();
+    let mut big = files.clone();
+    big.push(("data/big.bin", 0o644, noise));
+    let bytes = plugin_archive(&big);
+    fixture.serve(&bytes);
+    let version = version();
+    let url = format!("{BASE}{PATH}");
+    let seen = Mutex::new(Vec::new());
+    let record = |done: u64| seen.lock().unwrap().push(done);
+    fixture
+        .store()
+        .install(
+            &fixture.transport(),
+            &InstallRequest {
+                id: ID,
+                version: &version,
+                url: &url,
+                size: bytes.len() as u64,
+                sha256: &sha256(&bytes),
+                tree_hash: &tree_of(&big),
+                progress: Some(&record),
+            },
+        )
+        .unwrap();
+    let seen = seen.into_inner().unwrap();
+    assert!(seen.len() > 1, "{seen:?}");
+    assert!(seen.windows(2).all(|pair| pair[0] <= pair[1]), "{seen:?}");
+    assert_eq!(seen.last(), Some(&(bytes.len() as u64)));
+}
+
+#[test]
 fn a_wrong_checksum_is_refused() {
     let fixture = Fixture::new();
     let files = files(ID);
@@ -223,6 +270,7 @@ fn a_wrong_checksum_is_refused() {
                 size: bytes.len() as u64,
                 sha256: &sha256(b"something else"),
                 tree_hash: &tree_of(&files),
+                progress: None,
             },
         )
         .unwrap_err();
@@ -254,6 +302,7 @@ fn a_wrong_size_is_refused() {
                     size: listed,
                     sha256: &sha256(&bytes),
                     tree_hash: &tree_of(&files),
+                    progress: None,
                 },
             )
             .unwrap_err();
@@ -289,6 +338,7 @@ fn an_endless_body_is_cut_off() {
                 size: 1000,
                 sha256: &sha256(b""),
                 tree_hash: &sha256(b""),
+                progress: None,
             },
         )
         .unwrap_err();
@@ -491,6 +541,7 @@ fn a_correct_existing_copy_is_kept() {
                 size: 1,
                 sha256: &sha256(b""),
                 tree_hash: &tree,
+                progress: None,
             },
         )
         .unwrap();

@@ -33,6 +33,17 @@ pub struct Environment<'a> {
     /// satisfies the lock without a download.
     pub bundled: Option<&'a Path>,
     pub now: OffsetDateTime,
+    /// Told how far each download has come; nothing is told if `None`.
+    pub progress: Option<&'a (dyn Fn(Progress) + Sync)>,
+}
+
+/// How much of one plugin version's archive has been downloaded.
+#[derive(Clone, Copy, Debug)]
+pub struct Progress<'a> {
+    pub id: &'a str,
+    pub version: &'a Version,
+    pub done: u64,
+    pub total: u64,
 }
 
 /// What [`lock_project`] wrote and installed.
@@ -385,6 +396,16 @@ fn install_as_locked(
             id: id.to_owned(),
             version: version.clone(),
         })?;
+    let report = |done| {
+        if let Some(progress) = env.progress {
+            progress(Progress {
+                id,
+                version,
+                done,
+                total: artifact.size,
+            });
+        }
+    };
     env.store
         .install(
             env.registry.transport(),
@@ -395,6 +416,7 @@ fn install_as_locked(
                 size: artifact.size,
                 sha256: &artifact.sha256,
                 tree_hash: &artifact.tree_hash,
+                progress: Some(&report),
             },
         )
         .map_err(|source| ProjectError::Install {

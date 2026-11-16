@@ -3,6 +3,7 @@ use crate::export_page::view::{ExportPage, ExportPageEvent};
 use crate::export_worker::{ExportRequest, ExportSource};
 use crate::helpers::{ExportLoudness, export_output, export_range_for, export_suggested_name};
 use crate::inline_text_view::EditEvent;
+use crate::plugin_page::PluginPageSlot;
 use crate::problems::{Problems, Source, error_chain};
 use crate::timecode::format_timecode;
 use crate::view::EditorView;
@@ -72,16 +73,32 @@ pub(crate) enum LeftPanel {
     Assets,
     /// The export page's panel.
     Export,
+    /// The plugin page's panel, wider than Assets.
+    Plugins,
 }
 
 /// The left panel in a React preview (`react`) or not, with the export
-/// page open or not: the page shows wherever it is open.
-pub(crate) fn left_panel(react: bool, export_open: bool) -> LeftPanel {
-    match (react, export_open) {
-        (_, true) => LeftPanel::Export,
-        (true, false) => LeftPanel::Hidden,
-        (false, false) => LeftPanel::Assets,
+/// or the plugin page open or not: a page shows wherever it is open.
+pub(crate) fn left_panel(react: bool, export_open: bool, plugins_open: bool) -> LeftPanel {
+    match (react, export_open, plugins_open) {
+        (_, true, _) => LeftPanel::Export,
+        (_, false, true) => LeftPanel::Plugins,
+        (true, false, false) => LeftPanel::Hidden,
+        (false, false, false) => LeftPanel::Assets,
     }
+}
+
+/// Shows the export page in place of Assets, closing the plugin page,
+/// which shows there too; both keep their state.
+pub(crate) fn show_export(export: &mut ExportPageSlot, plugins: &mut PluginPageSlot) {
+    plugins.hide();
+    export.show();
+}
+
+/// Shows the plugin page in place of Assets, closing the export page.
+pub(crate) fn show_plugins(plugins: &mut PluginPageSlot, export: &mut ExportPageSlot) {
+    export.hide();
+    plugins.show();
 }
 
 impl EditorView {
@@ -179,7 +196,8 @@ impl EditorView {
             }
         };
         self.sync_export_range(cx);
-        self.export_page.show();
+        show_export(&mut self.export_page, &mut self.plugin_page);
+        self.plugin_page.sync_clock(cx);
         page.focus_handle(cx).focus(window, cx);
         cx.notify();
     }
@@ -569,11 +587,13 @@ mod tests {
 
     #[test]
     fn left_panel_follows_the_page() {
-        assert_eq!(left_panel(false, false), LeftPanel::Assets);
-        assert_eq!(left_panel(false, true), LeftPanel::Export);
-        assert_eq!(left_panel(true, false), LeftPanel::Hidden);
-        // A React preview hides Assets, but not the page.
-        assert_eq!(left_panel(true, true), LeftPanel::Export);
+        assert_eq!(left_panel(false, false, false), LeftPanel::Assets);
+        assert_eq!(left_panel(false, true, false), LeftPanel::Export);
+        assert_eq!(left_panel(false, false, true), LeftPanel::Plugins);
+        assert_eq!(left_panel(true, false, false), LeftPanel::Hidden);
+        // A React preview hides Assets, but not a page.
+        assert_eq!(left_panel(true, true, false), LeftPanel::Export);
+        assert_eq!(left_panel(true, false, true), LeftPanel::Plugins);
     }
 
     #[gpui_kit::test]

@@ -65,22 +65,22 @@ Each path is relative to the project root and must stay inside it. The desktop a
 
 ## The Plugins tab
 
-The desktop app looks for plugins each time it opens a project. The **Plugins** tab in the right dock lists every plugin it found (of several with the same id, the one it uses, and any before it that you turned off), with:
+The desktop app looks for plugins each time it opens a project. The **Plugins** tab in the right dock lists every copy of a plugin it found, in sections:
 
-- where the plugin came from (a project, your plugin folder, an added folder, `CELESTA_PLUGIN_PATH`, or the folder that comes with Celesta);
-- its version, and whether it brings only components or a program, and whether that program was built for this computer;
-- whether it is on, off, or waiting for your approval. A waiting plugin's switch is greyed out and off until you allow it.
+- **This project**: the [registry plugins](#registry-plugins) the open project's `celesta.lock` names, once you trust the project. The heading shows the Celesta version the lock was resolved with.
+- **Global**: the plugins installed from the registry for every project, and the ones that come with Celesta, marked **Bundled**. When two copies have the same id, each has a row, and the one that does not run says which one does, such as `Not used: Registry runs`.
+- **Installed by hand**: plugins in a project's own folders, your plugin folder, a folder you added, or `CELESTA_PLUGIN_PATH`.
+- **Added folders**: the folders you added.
 
-From the tab you can:
+Each row shows the plugin's id and version, then what it brings (Media, Content, or Components) and its state: on, off, waiting for your approval, Blocked by a security advisory, Deprecated, Yanked, Not installed, or No build for this computer. A row's button does what its state calls for: **Allow** a waiting plugin, **Download** a locked version that is not on this computer, or **Update to** the newer version the registry lists (for a locked plugin, only within the project's requirement). The row's **⋯** button holds the rest:
 
-- allow a waiting plugin, or turn it off with **Turn Off**;
-- turn any plugin off or back on with its switch. A plugin that is off does not run, in the app or in `celesta-exporter`, and the next plugin with its id in the search order is used in its place, if there is one: turning off a plugin in your user plugin folder goes back to the one that comes with Celesta, for example. A plugin waiting for approval does not give way like this, so a plugin you have not allowed cannot be replaced by one further down the list without you noticing;
-- show its folder;
-- open your plugin folder, creating it if needed;
-- add more folders of plugins, which are searched after your plugin folder, and remove them again;
-- reload: **Reload Plugins**, also in the **File** menu, picks up a plugin installed while the app is open.
+- **Turn Off** and **Turn On**. A plugin that is off does not run, in the app or in `celesta-exporter`, and the next plugin with its id in the search order is used in its place, if there is one: turning off a plugin in your user plugin folder goes back to the one that comes with Celesta, for example. A plugin waiting for approval does not give way like this, so a plugin you have not allowed cannot be replaced by one further down the list without you noticing;
+- **Show Folder**;
+- **Remove from this project** for a locked plugin, as `celesta plugin remove` does, and **Uninstall** for one installed for every project, whose download stays until `celesta plugin gc`.
 
-What you change is kept in `settings.json` with your other choices, and the project reopens with the plugins as they now are. Plugins that were skipped, and why, are listed at the bottom of the tab and in the Problems tab.
+The **⋯** button in the tab's toolbar has **Add Folder…**, to add a folder of plugins searched after your plugin folder, and **Open Plugin Folder**, which creates your plugin folder if needed. **Remove** beside an added folder takes it away again. **Reload Plugins**, also in the **File** menu, picks up a plugin installed while the app is open.
+
+What you turn on or off, allow, or add is kept in `settings.json` with your other choices, and the project reopens with the plugins as they now are. Plugins that were skipped, and why, are listed at the bottom of the tab and in the Problems tab.
 
 A plugin that draws layers runs as a program of its own, which Celesta starts when a frame needs it; that program comes with the plugin, one for each platform it supports.
 
@@ -115,7 +115,34 @@ A project can also name plugins from Celesta's plugin registry. The `celesta` co
 
 The registry is new. The official registry is `https://registry.celesta.studio`, and Celesta checks the registry's signed files against a key built into Celesta. When the registry cannot be reached, the commands that need it fail with `celesta: error: could not fetch …`; `remove`, `list`, `audit`, `gc`, and `install` of a lock whose plugins are already downloaded still work (`audit` then checks against the advisory list and the plugin listings fetched before). The plugin names on this page, such as `acme.charts`, are examples.
 
-The desktop app does not read `celesta.lock` yet: its preview and its exports use the plugins installed for every project (see [Media plugins from the registry](#media-plugins-from-the-registry)), not a project's locked ones. `celesta-exporter` and the MCP server read the lock.
+The desktop app does the same from its Plugins tab (see [In the app](#in-the-app)), and its preview and exports run the locked versions of a project you trusted. `celesta-exporter` and the MCP server read the lock too.
+
+### In the app
+
+The desktop app does what `celesta plugin` does, with the same rules, so a project set up in one works in the other.
+
+**Find plugins.** Choose **Find plugins…** in the Plugins tab's toolbar, or **Find Plugins…** in the **File** menu, to open the plugin page in place of Assets. The left side lists the registry's plugins with their newest version; type in the search field to filter by id or description. Select one to see its details on the right: its kind and publisher, the targets it is built for, where it comes from, what this computer already has, any security advisories, and each version with its state (Published, Deprecated, Yanked, Withdrawn, or Blocked) and download size.
+
+**Include pre-releases** beside the search field decides which version the page offers. It is on when the Celesta you run is itself a pre-release, and off otherwise, so someone on a stable Celesta does not get pre-releases by accident. Every first-party plugin is a pre-release today. The choice lasts until you quit the app. It does not change what an already written requirement allows.
+
+**Install, add, or pin.** The buttons under the details depend on the plugin:
+
+- **Install** puts a media plugin (a codec) in place for every project, as `celesta plugin install --global` does. **Pin to this project** locks that plugin's version into the open project as well, as `add --pin` does.
+- **Add to this project** adds any other plugin to `plugins.dependencies` and `celesta.lock` and downloads it, as `celesta plugin add` does. It writes the requirement `^<version>` for the version it offers, such as `^0.10.0-alpha.3`.
+- A button says **Installed** when you already have the offered version and **Update to** when you have an older one. For a plugin the project locks, **Update to** offers the newest version the project's requirement allows; when only a version outside it is newer, the button is disabled and says so, such as `celesta.config.json asks for ^0.2`. When no version can be offered, it is disabled and says why: no build for this computer, a version that needs another Celesta, or only pre-releases while Include pre-releases is off.
+- The project buttons need a project that has `celesta.config.json` and that you trust. Otherwise they are disabled and say `Add plugins to a project with celesta.config.json`: Celesta does not create the file for you, because a plugin added to a folder without one would not run.
+
+While it works, the button reads **Installing…** with the bytes downloaded under it. You can close the page; the row in the Plugins tab keeps showing the progress. When it finishes, Celesta finds its plugins again and reopens the project, with no message: the changed row is the feedback. A failure says what went wrong under the buttons, and the Problems tab has the details.
+
+**Update and remove.** A row in the Plugins tab shows **Update to** when the registry lists a newer version. For a locked plugin it stays within the project's requirement, as `celesta plugin update` does, and the project reloads so the preview shows the new version at once. The row's **⋯** menu has **Remove from this project**, as `celesta plugin remove` does, and **Uninstall** for a plugin installed for every project.
+
+**Opening a project whose plugins are not downloaded.** After you trust a project, Celesta checks its `celesta.lock`. When the locked plugins are not on this computer, it asks `Download 2 plugins for “film”?` and lists each plugin with its version and size. **Download** fetches them and reloads the project; **Not Now** opens the project without them. Celesta asks once per project each time you run the app. After Not Now, Problems lists the missing plugins and the **This project** heading offers **Download**.
+
+**After you upgrade Celesta.** A first-party plugin follows Celesta's minor version, so a lock made with an older Celesta names versions that no longer load. Celesta says `“film” was locked with Celesta 0.9` and offers **Update Plugins**, which resolves again only the plugins that cannot load and rewrites the lock. When a plugin's requirement no longer allows any version that works, such as `^0.10.0-alpha.3` after an upgrade to 0.11, Celesta says so before it does anything, for each plugin: `Changes vrm in celesta.config.json from ^0.10.0-alpha.3 to ^0.11.0`. Choosing **Update Plugins** accepts those changes. If anything fails, `celesta.config.json` and `celesta.lock` are put back as they were. The **This project** heading offers **Update Plugins…** as well, for a project with no lock or an out-of-date one, and after you chose **Not Now**. Whenever an update finds a requirement that no version meets any more, Celesta asks `Update this project’s plugins?` and lists those changes before it makes them; nothing in `celesta.config.json` changes unseen.
+
+**Blocked, Deprecated, and Yanked.** A plugin that a security advisory names does not run. Celesta shows a notification, `acme.charts 1.2.3 was stopped`, with the advisory and a button: **Update to** the fixed version when there is one, otherwise **Show in Problems**. **Update to** reaches a fixed version that is a pre-release even while Include pre-releases is off, and when the fix lies outside the project's requirement, Celesta asks before changing it, as above. A plugin that comes with Celesta says to update Celesta. The row says Blocked until the plugin is updated. A Deprecated plugin, with its replacement when the registry names one, and a Yanked version, which keeps working, are warnings in the Problems tab. So is an advisory list that is more than 7 days old.
+
+Celesta looks for newer versions by reading one list that is the same for everyone, when a project opens and once a day, so the registry does not learn which plugins you use. A plugin's own listing is fetched only when you ask for something that needs it, such as its details, an update, or a download.
 
 ### The `celesta` command
 
@@ -405,8 +432,9 @@ The `vrm` plugin draws VRM 1.0 avatars (`.vrm`) in 3D, toon-shaded with MToon as
 
 ```sh
 celesta plugin add vrm                  # on a pre-release, name it: vrm@0.10.0-alpha.4
-celesta plugin install --global vrm     # for the desktop app, which does not read celesta.lock yet
 ```
+
+The desktop app reads the `celesta.lock` of a project you trust (saved trust, with `celesta.config.json`) and runs the locked versions, and offers to download them when you open such a project whose locked plugins are not downloaded.
 
 The same goes for the first-party component plugins `aivis-speech`, `code`, `lottie`, and `voicevox`, each described on its own page.
 

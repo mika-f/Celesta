@@ -8,7 +8,7 @@
 > celesta plugin add lottie
 > ```
 >
-> プラグインのバージョンは Celesta と同じです。Celesta のプレリリースでは、`celesta plugin add lottie@0.10.0-alpha.4` のようにそのバージョンを指定してください。プレリリースを含まない指定はプレリリースに一致しません。デスクトップアプリはまだ `celesta.lock` を読まないため、アプリのプレビューと書き出しには `celesta plugin install --global lottie` でも全プロジェクト向けにインストールしてください（プレリリースでは同じくバージョンを指定します）。
+> プラグインのバージョンは Celesta と同じです。Celesta のプレリリースでは、`celesta plugin add lottie@0.10.0-alpha.4` のようにそのバージョンを指定してください。プレリリースを含まない指定はプレリリースに一致しません。デスクトップアプリは、信頼したプロジェクト（信頼を保存済みで、`celesta.config.json` があるもの）の `celesta.lock` を読み、ロックしたバージョンを実行します。そのようなプロジェクトを開いたときにロックしたプラグインがダウンロードされていなければ、ダウンロードするかどうかを尋ねます。
 >
 > `@celesta.studio/lottie` をインポートするコンポジションもそのまま動きます。Celesta はそのパッケージを引き続き同梱し、使うべきインポートと実行する `celesta plugin add` コマンドを警告で示します。
 

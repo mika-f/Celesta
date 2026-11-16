@@ -10,7 +10,7 @@ AivisSpeech は VOICEVOX と同じ API を提供しますが、各音素の長�
 > celesta plugin add aivis-speech
 > ```
 >
-> プラグインのバージョンは Celesta と同じです。Celesta のプレリリースでは、`celesta plugin add aivis-speech@0.10.0-alpha.4` のようにそのバージョンを指定してください。プレリリースを含まない指定はプレリリースに一致しません。デスクトップアプリはまだ `celesta.lock` を読まないため、アプリのプレビューと書き出しには `celesta plugin install --global aivis-speech` でも全プロジェクト向けにインストールしてください（プレリリースでは同じくバージョンを指定します）。
+> プラグインのバージョンは Celesta と同じです。Celesta のプレリリースでは、`celesta plugin add aivis-speech@0.10.0-alpha.4` のようにそのバージョンを指定してください。プレリリースを含まない指定はプレリリースに一致しません。デスクトップアプリは、信頼したプロジェクト（信頼を保存済みで、`celesta.config.json` があるもの）の `celesta.lock` を読み、ロックしたバージョンを実行します。そのようなプロジェクトを開いたときにロックしたプラグインがダウンロードされていなければ、ダウンロードするかどうかを尋ねます。
 >
 > `@celesta.studio/aivis-speech` をインポートするコンポジションもそのまま動きます。Celesta はそのパッケージを引き続き同梱し、使うべきインポートと実行する `celesta plugin add` コマンドを警告で示します。
 
