@@ -415,9 +415,9 @@ for `ffmpeg@8`, mise's node and pnpm on `PATH`).
 | Against a signed `file://` test registry (`TestRegistry::file()` leaked to a folder, `CELESTA_REGISTRY`/`CELESTA_REGISTRY_ROOT_KEY` set, a temporary `HOME`) | A project whose lock names `acme.charts 1.0.0` (written with `celesta plugin add 'acme.charts@=1.0.0'`) asked "Download 1 plugin for “demo”?" with the version and size after the trust question; Download installed it and the This project section listed it. With an advisory on `acme.charts <1.1.0` (fixed in `1.1.0`), opening it again showed "acme.charts 1.0.0 was stopped" with **Update to 1.1.0**. |
 | Screenshots | Before (main) and after for the Plugins tab, and the new plugin page, download question, and Blocked notification, are attached to the pull request. |
 
-Not run by the builder: the full workspace test run after the final-review fix
-wave (the editor, client, and CLI suites and workspace clippy were), and the
-packaged apps. CI's `Crate names` job stays red until the maintainer
+| After rebasing onto main (`fd41ac52`), with `pnpm run build:runtime`: `cargo test --workspace --locked --no-fail-fast`; clippy, fmt, the site step, `git diff --check` | 3359 passed, 3 failed, 1 ignored; the rest passed. The three failures are `celesta-exporter`'s `export::an_export_through_the_programs_ring_is_byte_identical_to_the_pipe` and `stills::separate_stills_and_videos_name_the_frame_that_failed`, and `celesta-mcp`'s `export::export_video_writes_an_mp4_with_progress`: the file was not written by the test codec (`Unsupported … tried: []`). This branch changes neither the exporter, the MCP server, nor media ranking, and with `HOME` pointed at an empty folder the three pass: the builder's own global registry codecs (`ffmpeg`, `avfoundation`, found because these tests read the real user folders) outrank the test codec given with `--plugin-dir`. With a runtime that was not built, these tests skip themselves, which is how the first full run passed. |
+
+Not run by the builder: the packaged apps. CI's `Crate names` job stays red until the maintainer
 publishes the `celesta-registry-client` placeholder (see "Constraints").
 
 ## Known gaps
