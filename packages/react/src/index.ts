@@ -119,6 +119,7 @@ export type { Chapter, ChapterInput, ChapterSource, ListChaptersOptions } from '
 export { Easings, interpolate, interpolateColor, progress, spring } from './animation';
 export type {
   ColorExtrapolate,
+  EasingFamily,
   Extrapolate,
   InterpolateColorOptions,
   InterpolateOptions,
