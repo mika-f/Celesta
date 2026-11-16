@@ -1,6 +1,6 @@
 {
   "name": "@celesta.studio/character",
-  "version": "0.10.0-alpha.4",
+  "version": "0.10.0",
   "private": true,
   "description": "Characters, portraits, dialogue with subtitles, lip sync, and blinking for Celesta compositions.",
   "license": "MIT OR Apache-2.0",

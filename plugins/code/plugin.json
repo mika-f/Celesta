@@ -1,7 +1,7 @@
 {
   "id": "code",
   "name": "Code",
-  "version": "0.10.0-alpha.4",
+  "version": "0.10.0",
   "license": "MIT OR Apache-2.0",
   "module": "../../packages/code/src/index.ts",
   "licenses": ["../../LICENSE-MIT", "../../LICENSE-APACHE", "LICENSE-twinkleplop"]

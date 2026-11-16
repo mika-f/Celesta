@@ -1,6 +1,6 @@
 {
   "id": "ffmpeg-x264",
-  "version": "0.10.0-alpha.4",
+  "version": "0.10.0",
   "license": "(MIT OR Apache-2.0) AND GPL-2.0-or-later",
   "cargoPackage": "celesta-codec-ffmpeg-x264",
   "roles": [
