@@ -17,9 +17,10 @@ use celesta_editor_theme::metrics;
 use celesta_media::{DecoderUse, MediaRegistry};
 use celesta_plugin_host::{
     CELESTA_VERSION, DiscoveryError, InstalledPlugins, LockProblem, Lockfile, PendingPlugin,
-    PluginEntry, PluginRole, RegistryContext, SettingsError, UserSettings, bundled_plugin_dir,
-    check_lock, from_the_internet, has_project_config, project_dependencies, project_plugin_paths,
-    project_root,
+    PluginEntry, PluginRole, PluginSource, ProjectConfigError, ProjectDependencies,
+    RegistryContext, RegistryPlugin, SearchPath, SettingsError, UserSettings, bundled_plugin_dir,
+    check_lock, discover_in, from_the_internet, has_project_config, project_dependencies,
+    project_plugin_paths, project_root,
 };
 use celesta_registry_format::AdvisoryList;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -27,6 +28,8 @@ use gpui_kit::component::dialog::{DialogAction, DialogClose, DialogDescription, 
 use gpui_kit::component::{ActiveTheme as _, WindowExt as _, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{Context, Window, div};
+use semver::VersionReq;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -48,6 +51,21 @@ fn lock_problem_title(problem: &LockProblem) -> &'static str {
         }
         LockProblem::Unsatisfied { .. } => "The project's locked plugins are not installed",
     }
+}
+
+/// Every plugin in the folder that comes with Celesta, as its own search
+/// path would find it, so a copy that another copy of its id keeps from
+/// running is listed too; blocking, so off the UI thread.
+fn bundled_copies() -> Vec<PluginEntry> {
+    let Some(path) = bundled_plugin_dir() else {
+        return Vec::new();
+    };
+    // What cannot be read is already in `skipped` from the full discovery.
+    discover_in(&[SearchPath {
+        path,
+        source: PluginSource::Bundled,
+    }])
+    .0
 }
 
 /// A plugin a security advisory stops, which is never run.
@@ -78,14 +96,21 @@ pub(crate) struct FoundPlugins {
     /// Why each skipped plugin or folder was skipped.
     pub(crate) skipped: Vec<String>,
     /// The plugins a security advisory stops (also listed in `skipped`).
-    #[allow(dead_code)] // The plugins page of a later change lists them.
     pub(crate) blocked: Vec<BlockedPlugin>,
+    /// The plugins the user installed from the registry, as the settings
+    /// said.
+    pub(crate) registry_plugins: Vec<RegistryPlugin>,
+    /// Every plugin in the folder that comes with Celesta, the ones another
+    /// copy of their id keeps from running too.
+    pub(crate) bundled: Vec<PluginEntry>,
     /// The project whose lock was read: the folder the user trusts
     /// (saved, not only for now) that holds `celesta.config.json`.
     pub(crate) project: Option<PathBuf>,
     /// That project's `celesta.lock`; `None` without a project or a lock.
-    #[allow(dead_code)] // The plugins page of a later change reads it.
     pub(crate) lock: Option<Lockfile>,
+    /// The registry plugins that project declares, with the versions it
+    /// accepts.
+    pub(crate) dependencies: BTreeMap<String, VersionReq>,
     /// Why that lock does not pin what the project declares, if it does not.
     pub(crate) lock_problem: Option<LockProblem>,
     /// No media decoder can run, so video and audio files cannot be read.
@@ -104,6 +129,7 @@ impl FoundPlugins {
     pub(crate) fn find(project: Option<&Path>, extra_advisories: Option<AdvisoryList>) -> Self {
         let (settings, settings_error) = UserSettings::current();
         let mut found = Self::find_with(project, &settings, settings_error, extra_advisories);
+        found.bundled = bundled_copies();
         let registry = celesta_exporter::use_media(&found.installed);
         found.missing_decoder = !registry.has_decoders();
         found.registry = Some(registry);
@@ -164,9 +190,14 @@ impl FoundPlugins {
             .project
             .as_ref()
             .map(|project| project.lock.clone());
-        let lock_problem = lock_root
-            .as_deref()
-            .and_then(|root| Self::lock_problem_of(root, lock.as_ref(), &errors));
+        let declared = lock_root.as_deref().map(project_dependencies);
+        let lock_problem = declared
+            .as_ref()
+            .and_then(|declared| Self::lock_problem_of(declared, lock.as_ref(), &errors));
+        let dependencies = match declared {
+            Some(Ok(declared)) => declared.dependencies,
+            _ => BTreeMap::new(),
+        };
         let bundled = bundled_plugin_dir();
         let blocked = errors
             .iter()
@@ -199,19 +230,23 @@ impl FoundPlugins {
             folders: settings.plugin_folders.clone(),
             skipped,
             blocked,
+            registry_plugins: settings.registry_plugins.clone(),
+            bundled: Vec::new(),
             project: lock_root,
             lock,
+            dependencies,
             lock_problem,
             missing_decoder: false,
             registry: None,
         }
     }
 
-    /// Why `lock` (`None` without one) does not pin what the project at
-    /// `root` declares, for this Celesta. A lock that could not be read
-    /// (`errors` says so) is not a missing one.
+    /// Why `lock` (`None` without one) does not pin what the project
+    /// `declares` (or why its `celesta.config.json` could not be read),
+    /// for this Celesta. A lock that could not be read (`errors` says so)
+    /// is not a missing one.
     fn lock_problem_of(
-        root: &Path,
+        declared: &Result<ProjectDependencies, ProjectConfigError>,
         lock: Option<&Lockfile>,
         errors: &[DiscoveryError],
     ) -> Option<LockProblem> {
@@ -222,12 +257,12 @@ impl FoundPlugins {
         if unreadable.is_some() {
             return unreadable;
         }
-        let dependencies = match project_dependencies(root) {
+        let dependencies = match declared {
             Ok(dependencies) => dependencies,
             Err(error) => return Some(LockProblem::Config(error.to_string())),
         };
         let running = semver::Version::parse(CELESTA_VERSION).ok()?;
-        check_lock(lock, &dependencies, &running).err()
+        check_lock(lock, dependencies, &running).err()
     }
 
     /// The Problems entry for plugins that wait or were skipped, if any.

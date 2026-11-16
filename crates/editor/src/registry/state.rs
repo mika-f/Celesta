@@ -6,7 +6,7 @@
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -36,7 +36,6 @@ const CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Work {
     /// Installing this version for the user, without a project.
-    #[allow(dead_code)] // The plugin page of a later change installs with it.
     InstallGlobal {
         version: Version,
     },
@@ -51,7 +50,6 @@ pub(crate) enum Work {
 
 /// One plugin's work in flight, and how far its download has come.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[allow(dead_code)] // The Plugins tab and the plugin page of a later change read it.
 pub(crate) struct InFlight {
     pub(crate) work: Work,
     pub(crate) done: u64,
@@ -176,6 +174,12 @@ impl RegistryState {
         &self.client
     }
 
+    /// Whether a job is changing the project at `root`, which refuses
+    /// another one until it ends.
+    pub(crate) fn project_busy(&self, root: &Path) -> bool {
+        self.busy_projects.contains(root)
+    }
+
     /// A project opened (`None`: none, or one whose lock is not read):
     /// what other projects' work finds is not announced while it is open.
     /// Opening another project checks `search.json` for updates.
@@ -266,7 +270,6 @@ impl RegistryState {
 
     /// Installs exactly `version` of `id` for the user and records it in
     /// `registryPlugins`. `false`: work for `id` is already in flight.
-    #[allow(dead_code)] // The plugin page of a later change calls it.
     pub(crate) fn install_global(
         &mut self,
         id: &str,
@@ -330,7 +333,6 @@ impl RegistryState {
     /// Applies `rewrites` to the project at `root` and locks and installs
     /// `ids` again; an id whose locked version stays is one with no newer
     /// version.
-    #[allow(dead_code)] // The Plugins tab of a later change calls it.
     pub(crate) fn update(
         &mut self,
         root: PathBuf,
@@ -379,7 +381,6 @@ impl RegistryState {
     /// Installs the version of the user's `id` the page offers (under
     /// [`Self::include_prereleases`]) when it is newer than the installed
     /// one; otherwise `id` has no newer version.
-    #[allow(dead_code)] // The Plugins tab of a later change calls it.
     pub(crate) fn update_global(&mut self, id: &str, cx: &mut Context<Self>) -> bool {
         let include_prereleases = self.include_prereleases;
         let plugin = id.to_owned();
@@ -431,7 +432,6 @@ impl RegistryState {
     }
 
     /// Removes `id` from the project at `root` and from its lock.
-    #[allow(dead_code)] // The Plugins tab of a later change calls it.
     pub(crate) fn remove(&mut self, root: PathBuf, id: &str, cx: &mut Context<Self>) -> bool {
         let plugin = id.to_owned();
         let project = root.clone();
@@ -452,7 +452,6 @@ impl RegistryState {
 
     /// Drops the user's `registryPlugins` entry for `id`; the store keeps
     /// its files until `celesta plugin gc`.
-    #[allow(dead_code)] // The Plugins tab of a later change calls it.
     pub(crate) fn uninstall(&mut self, id: &str, cx: &mut Context<Self>) -> bool {
         let plugin = id.to_owned();
         self.start(
@@ -484,7 +483,6 @@ impl RegistryState {
 
     /// Downloads what the lock of the project at `root` names and the store
     /// does not hold. `false`: a job for that project is already running.
-    #[allow(dead_code)] // The download question of a later change calls it.
     pub(crate) fn download_locked(&mut self, root: PathBuf, cx: &mut Context<Self>) -> bool {
         let project = root.clone();
         self.start(

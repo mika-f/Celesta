@@ -7,7 +7,7 @@ mod client;
 mod state;
 
 pub(crate) use client::EditorRegistry;
-pub(crate) use state::{RegistryEvent, RegistryState};
+pub(crate) use state::{Fetch, InFlight, RegistryEvent, RegistryState, Work};
 
 use crate::actions::ReloadPlugins;
 use crate::problems::Source;
@@ -45,6 +45,8 @@ impl EditorView {
             this.registry_event(event, cx)
         })
         .detach();
+        // The Plugins tab shows its work in flight and its search list.
+        cx.observe(&registry, |_, _, cx| cx.notify()).detach();
         let project = self.found_plugins.project.clone();
         registry.update(cx, |state, cx| {
             state.project_changed(project, cx);

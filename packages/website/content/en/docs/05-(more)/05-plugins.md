@@ -65,22 +65,22 @@ Each path is relative to the project root and must stay inside it. The desktop a
 
 ## The Plugins tab
 
-The desktop app looks for plugins each time it opens a project. The **Plugins** tab in the right dock lists every plugin it found (of several with the same id, the one it uses, and any before it that you turned off), with:
+The desktop app looks for plugins each time it opens a project. The **Plugins** tab in the right dock lists every copy of a plugin it found, in sections:
 
-- where the plugin came from (a project, your plugin folder, an added folder, `CELESTA_PLUGIN_PATH`, or the folder that comes with Celesta);
-- its version, and whether it brings only components or a program, and whether that program was built for this computer;
-- whether it is on, off, or waiting for your approval. A waiting plugin's switch is greyed out and off until you allow it.
+- **This project**: the [registry plugins](#registry-plugins) the open project's `celesta.lock` names, once you trust the project. The heading shows the Celesta version the lock was resolved with.
+- **Global**: the plugins installed from the registry for every project, and the ones that come with Celesta, marked **Bundled**. When two copies have the same id, each has a row, and the one that does not run says which one does, such as `Not used: Registry runs`.
+- **Installed by hand**: plugins in a project's own folders, your plugin folder, a folder you added, or `CELESTA_PLUGIN_PATH`.
+- **Added folders**: the folders you added.
 
-From the tab you can:
+Each row shows the plugin's id and version, then what it brings (Media, Content, or Components) and its state: on, off, waiting for your approval, Blocked by a security advisory, Deprecated, Yanked, Not installed, or No build for this computer. A row's button does what its state calls for: **Allow** a waiting plugin, **Download** a locked version that is not on this computer, or **Update to** the newer version the registry lists (for a locked plugin, only within the project's requirement). The row's **⋯** button holds the rest:
 
-- allow a waiting plugin, or turn it off with **Turn Off**;
-- turn any plugin off or back on with its switch. A plugin that is off does not run, in the app or in `celesta-exporter`, and the next plugin with its id in the search order is used in its place, if there is one: turning off a plugin in your user plugin folder goes back to the one that comes with Celesta, for example. A plugin waiting for approval does not give way like this, so a plugin you have not allowed cannot be replaced by one further down the list without you noticing;
-- show its folder;
-- open your plugin folder, creating it if needed;
-- add more folders of plugins, which are searched after your plugin folder, and remove them again;
-- reload: **Reload Plugins**, also in the **File** menu, picks up a plugin installed while the app is open.
+- **Turn Off** and **Turn On**. A plugin that is off does not run, in the app or in `celesta-exporter`, and the next plugin with its id in the search order is used in its place, if there is one: turning off a plugin in your user plugin folder goes back to the one that comes with Celesta, for example. A plugin waiting for approval does not give way like this, so a plugin you have not allowed cannot be replaced by one further down the list without you noticing;
+- **Show Folder**;
+- **Remove from this project** for a locked plugin, as `celesta plugin remove` does, and **Uninstall** for one installed for every project, whose download stays until `celesta plugin gc`.
 
-What you change is kept in `settings.json` with your other choices, and the project reopens with the plugins as they now are. Plugins that were skipped, and why, are listed at the bottom of the tab and in the Problems tab.
+The **⋯** button in the tab's toolbar has **Add Folder…**, to add a folder of plugins searched after your plugin folder, and **Open Plugin Folder**, which creates your plugin folder if needed. **Remove** beside an added folder takes it away again. **Reload Plugins**, also in the **File** menu, picks up a plugin installed while the app is open.
+
+What you turn on or off, allow, or add is kept in `settings.json` with your other choices, and the project reopens with the plugins as they now are. Plugins that were skipped, and why, are listed at the bottom of the tab and in the Problems tab.
 
 A plugin that draws layers runs as a program of its own, which Celesta starts when a frame needs it; that program comes with the plugin, one for each platform it supports.
 

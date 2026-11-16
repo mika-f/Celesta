@@ -47,6 +47,7 @@ mod panels;
 mod playback;
 mod plugins;
 mod plugins_panel;
+mod plugins_tab_model;
 mod preview;
 mod problems;
 mod problems_panel;
