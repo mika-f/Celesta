@@ -1,0 +1,33 @@
+{
+  "format": 1,
+  "celesta": "0.10.0-alpha.4",
+  "plugins": {
+    "code": {
+      "celesta": ">=0.10.0-alpha.4, <0.11.0",
+      "registry": "https://registry.celesta.studio",
+      "targets": {
+        "any": {
+          "sha256": "sha256:7196aebb71133d4b4574861e0dd57204f8ace15510e28928395e846dc6a953a8",
+          "treeHash": "sha256:ee3e8448ba5cd393d3e182aeac2a20ff2bf3a196f2fac9f969af4b97d822bffa"
+        }
+      },
+      "version": "0.10.0-alpha.4"
+    },
+    "voicevox": {
+      "celesta": ">=0.10.0-alpha.4, <0.11.0",
+      "registry": "https://registry.celesta.studio",
+      "targets": {
+        "any": {
+          "sha256": "sha256:f18b910e6e26bdb3e3a213bbb9eafe39ae82881ff02ebf27ccc8f49faeec0ea0",
+          "treeHash": "sha256:b492614fb6450ea774c2dc0ef80c33397ccd808a42d4c2b31ebb878179c9ca26"
+        }
+      },
+      "version": "0.10.0-alpha.4"
+    }
+  },
+  "targets": [
+    "linux-x86_64",
+    "macos-aarch64",
+    "windows-x86_64"
+  ]
+}
