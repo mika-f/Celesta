@@ -156,8 +156,9 @@ async fn unknown_arguments_are_usage_errors() {
 
 #[tokio::test]
 async fn list_components_returns_the_test_codec() {
+    let home = tempfile::tempdir().unwrap();
     let plugin = TestCodecPlugin::new();
-    let (client, _) = crate::common::client_with_test_codec(&plugin).await;
+    let (client, _) = crate::common::client_with_test_codec(&plugin, home.path()).await;
     let result = call(&client, "list_components", json!({})).await;
     assert!(!is_error(&result), "{}", text(&result));
     let components = structured(&result)["components"]
@@ -178,8 +179,9 @@ async fn list_components_returns_the_test_codec() {
 
 #[tokio::test]
 async fn describe_component_describes_and_rejects() {
+    let home = tempfile::tempdir().unwrap();
     let plugin = TestCodecPlugin::new();
-    let (client, _) = crate::common::client_with_test_codec(&plugin).await;
+    let (client, _) = crate::common::client_with_test_codec(&plugin, home.path()).await;
     let result = call(
         &client,
         "describe_component",

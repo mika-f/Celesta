@@ -1857,7 +1857,7 @@ fn cancel_ends_a_frame_waiting_on_a_media_plugin_that_hangs(project: &Project, a
 /// they went through.
 #[test]
 fn an_export_through_the_programs_ring_is_byte_identical_to_the_pipe() {
-    use celesta_codec_test::{PLUGIN_PATH_ENV, TestCodecPlugin};
+    use celesta_codec_test::{PLUGIN_PATH_ENV, TestCodecPlugin, isolated_home_env};
     use celesta_media::SHARED_MEMORY_VARIABLE;
     use std::process::Command;
 
@@ -1905,10 +1905,12 @@ export default function Root() {
     .unwrap();
 
     let plugin = TestCodecPlugin::new();
+    let home = tempfile::tempdir().unwrap();
     let export = |shared: &str| {
         let output = directory.path().join(format!("film-{shared}.mp4"));
         let result = Command::new(env!("CARGO_BIN_EXE_celesta-exporter"))
             .env_remove(PLUGIN_PATH_ENV)
+            .envs(isolated_home_env(home.path()))
             .env(SHARED_MEMORY_VARIABLE, shared)
             .env("CELESTA_EXPORT_TIMING", "1")
             .arg("--plugin-dir")

@@ -12,9 +12,12 @@
 //! such as `celesta-exporter`, as the [`PROGRAM`] in a temporary plugin
 //! folder ([`TestCodecPlugin`]). `src/format.rs` describes the file it
 //! writes; [`read`] gives a file's contents to compare byte for byte.
+//! [`isolated_home_env`] keeps such a child away from the developer's own
+//! plugins.
 
 mod components;
 mod format;
+mod home;
 mod plugin;
 mod wav;
 
@@ -24,6 +27,7 @@ pub use components::{
     VIDEO_ENCODER_ID,
 };
 pub use format::{StoredAudio, StoredVideo, TestMedia, read, write_audio, write_rgba_video};
+pub use home::isolated_home_env;
 pub use plugin::{TestCodecPlugin, profile_dir};
 
 use celesta_composition::Time;
