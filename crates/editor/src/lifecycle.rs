@@ -653,6 +653,8 @@ impl EditorView {
         cx: &mut Context<Self>,
     ) {
         self.opening = true;
+        // This open finds the plugins registry work changed until now.
+        self.plugins_changed = false;
         self.problems.clear(Source::Project);
         self.pause();
         cx.notify();
@@ -721,7 +723,8 @@ impl EditorView {
                         let project = next.found_plugins.project.clone();
                         this.replace_contents(next, cx);
                         if let Some(registry) = &this.registry {
-                            registry.update(cx, |registry, _| registry.project_changed(project));
+                            registry
+                                .update(cx, |registry, cx| registry.project_changed(project, cx));
                         }
                         if page_was_open {
                             this.focus_editor(window, cx);
@@ -759,6 +762,7 @@ impl EditorView {
         next.dock_split = self.dock_split.take();
         next.export_split = self.export_split.take();
         next.registry = self.registry.take();
+        next.plugins_changed = self.plugins_changed;
         next.body_split = self.body_split.take();
         #[cfg(not(target_os = "macos"))]
         {

@@ -285,6 +285,10 @@ pub(crate) struct EditorView {
     /// across the projects it opens; `None` until the window makes it, and
     /// without a user folder to install plugins in.
     pub(crate) registry: Option<Entity<RegistryState>>,
+    /// Registry work changed what may run since the last discovery; the
+    /// project reopens once nothing is in the way
+    /// ([`Self::settle_changed_plugins`]).
+    pub(crate) plugins_changed: bool,
     /// Timeline horizontal zoom (>= 1; 1 = whole composition fits) and the
     /// fraction of the composition at the left edge of the visible window.
     /// The mouse wheel over the timeline adjusts the zoom about the cursor.
@@ -596,6 +600,7 @@ impl EditorView {
             export_split: None,
             body_split: None,
             registry: None,
+            plugins_changed: false,
             timeline_zoom: 1.0,
             timeline_view_start: 0.0,
             timeline_pan: None,

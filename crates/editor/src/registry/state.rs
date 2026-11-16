@@ -99,13 +99,16 @@ pub(crate) struct RegistryState {
     pub(crate) failures: BTreeMap<String, String>,
     /// "No newer version works with Celesta …" until the next check.
     pub(crate) no_newer: BTreeSet<String>,
-    /// Bumped by `project_changed` when another project opens: a project's
-    /// work that finishes after that is not announced.
-    generation: u64,
-    /// The open project's root, as `project_changed` was last told.
+    /// The open project's root, as `project_changed` was last told: a
+    /// project's work is announced only while that project is open.
     project: Option<PathBuf>,
-    /// The projects whose locked plugins are being downloaded.
-    downloads: BTreeSet<PathBuf>,
+    /// The projects a job is changing (their `celesta.config.json` and
+    /// `celesta.lock`): one job per project at a time, so none restores or
+    /// rewrites a file over another's change.
+    busy_projects: BTreeSet<PathBuf>,
+    /// A job is changing the user's settings (`registryPlugins`), which is
+    /// read, changed, and saved whole: one such job at a time.
+    settings_busy: bool,
     /// `search.json` is being fetched.
     searching: bool,
     /// The daily advisory and search list refresh.
@@ -161,9 +164,9 @@ impl RegistryState {
             in_flight: BTreeMap::new(),
             failures: BTreeMap::new(),
             no_newer: BTreeSet::new(),
-            generation: 0,
             project: None,
-            downloads: BTreeSet::new(),
+            busy_projects: BTreeSet::new(),
+            settings_busy: false,
             searching: false,
             timers: None,
         }
@@ -173,12 +176,13 @@ impl RegistryState {
         &self.client
     }
 
-    /// Another project (`None`: none, or one whose lock is not read) is
-    /// open: what the previous one's work finds is no longer announced.
-    pub(crate) fn project_changed(&mut self, root: Option<PathBuf>) {
+    /// A project opened (`None`: none, or one whose lock is not read):
+    /// what other projects' work finds is not announced while it is open.
+    /// Opening another project checks `search.json` for updates.
+    pub(crate) fn project_changed(&mut self, root: Option<PathBuf>, cx: &mut Context<Self>) {
         if self.project != root {
             self.project = root;
-            self.generation += 1;
+            self.fetch_search(cx);
         }
     }
 
@@ -479,7 +483,7 @@ impl RegistryState {
     }
 
     /// Downloads what the lock of the project at `root` names and the store
-    /// does not hold. `false`: its download is already running.
+    /// does not hold. `false`: a job for that project is already running.
     #[allow(dead_code)] // The download question of a later change calls it.
     pub(crate) fn download_locked(&mut self, root: PathBuf, cx: &mut Context<Self>) -> bool {
         let project = root.clone();
@@ -512,12 +516,16 @@ impl RegistryState {
                     let Ok(registry) = client.registry() else {
                         return false;
                     };
-                    let before = registry.cached_advisories().ok().flatten();
+                    // No cached list stops nothing, as an empty one does.
+                    let before = registry
+                        .cached_advisories()
+                        .ok()
+                        .flatten()
+                        .map(|list| list.advisories)
+                        .unwrap_or_default();
                     registry
                         .refresh_advisories(OffsetDateTime::now_utc())
-                        .is_ok_and(|list| {
-                            before.is_none_or(|before| before.advisories != list.advisories)
-                        })
+                        .is_ok_and(|list| list.advisories != before)
                 })
                 .await;
             if changed {
@@ -548,17 +556,25 @@ impl RegistryState {
     }
 
     /// Marks the job's plugins in flight and runs it on the background
-    /// executor; `false` when one of them, or the project's download, is in
-    /// flight already.
+    /// executor; `false` when one of them is in flight already, or another
+    /// job is changing the same project (or, for the user's own plugins,
+    /// the settings).
     fn start(&mut self, job: Job, cx: &mut Context<Self>) -> bool {
         if job.ids.iter().any(|id| self.in_flight.contains_key(id)) {
             return false;
         }
-        if job.work == Work::Download
-            && let Some(root) = &job.project
-            && !self.downloads.insert(root.clone())
-        {
-            return false;
+        match &job.project {
+            Some(root) => {
+                if !self.busy_projects.insert(root.clone()) {
+                    return false;
+                }
+            }
+            None => {
+                if self.settings_busy {
+                    return false;
+                }
+                self.settings_busy = true;
+            }
         }
         let Job {
             work,
@@ -580,7 +596,6 @@ impl RegistryState {
         }
         cx.notify();
 
-        let generation = self.generation;
         let client = self.client.clone();
         let sampled = Arc::new(Mutex::new(Sampled::new()));
         cx.spawn(async move |this, cx| {
@@ -628,14 +643,15 @@ impl RegistryState {
                 for id in ids.iter().chain(adopted.borrow().iter()) {
                     state.in_flight.remove(id);
                 }
-                if work == Work::Download
-                    && let Some(root) = &project
-                {
-                    state.downloads.remove(root);
+                match &project {
+                    Some(root) => {
+                        state.busy_projects.remove(root);
+                    }
+                    None => state.settings_busy = false,
                 }
                 // The files on disk are consistent either way; another
-                // project open since does not hear about this one's.
-                if project.is_none() || generation == state.generation {
+                // project open now does not hear about this one's.
+                if project.is_none() || project == state.project {
                     state.finish(ids, project, failure, result, cx);
                 }
                 cx.notify();
@@ -703,7 +719,8 @@ impl RegistryState {
 }
 
 /// The verified file `fresh` fetches, else, when the registry cannot be
-/// reached, the copy `cached` reads with when it was generated.
+/// reached, the copy `cached` reads with when it was generated. A file the
+/// registry does not serve (404) is a failure, not offline.
 fn fetch<T>(
     client: &EditorRegistry,
     fresh: impl FnOnce(&Registry, OffsetDateTime) -> Result<T, ClientError>,
@@ -720,14 +737,16 @@ fn fetch<T>(
             at: now,
             offline: false,
         },
-        Err(error @ ClientError::Transport(_)) => match cached(&registry) {
-            Some((value, at)) => Fetch::Loaded {
-                value,
-                at,
-                offline: true,
-            },
-            None => Fetch::Failed(error_chain(&error)),
-        },
+        Err(error @ ClientError::Transport(TransportError::Failed { .. })) => {
+            match cached(&registry) {
+                Some((value, at)) => Fetch::Loaded {
+                    value,
+                    at,
+                    offline: true,
+                },
+                None => Fetch::Failed(error_chain(&error)),
+            }
+        }
         Err(error) => Fetch::Failed(error_chain(&error)),
     }
 }
@@ -800,6 +819,14 @@ mod tests {
             root
         }
 
+        /// Tells the state that the project at `root` is open, as an open
+        /// does.
+        fn open(&self, cx: &mut TestAppContext, root: Option<&Path>) {
+            self.state.update(cx, |state, cx| {
+                state.project_changed(root.map(Path::to_path_buf), cx);
+            });
+        }
+
         fn events(&self) -> Vec<RegistryEvent> {
             self.events.borrow().clone()
         }
@@ -833,6 +860,12 @@ mod tests {
             .detach();
         });
         (state, events)
+    }
+
+    #[cfg(unix)]
+    fn set_mode(path: &Path, mode: u32) {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
     }
 
     fn version(text: &str) -> Version {
@@ -916,13 +949,12 @@ mod tests {
         let fixture = Fixture::new(cx);
         let root_a = fixture.project("a");
         let root_b = fixture.project("b");
+        fixture.open(cx, Some(&root_a));
         let started = fixture.state.update(cx, |state, cx| {
             state.add(root_a.clone(), "acme.charts", version("1.0.0"), false, cx)
         });
         assert!(started);
-        fixture
-            .state
-            .update(cx, |state, _| state.project_changed(Some(root_b)));
+        fixture.open(cx, Some(&root_b));
 
         cx.run_until_parked();
         assert_eq!(fixture.events(), []);
@@ -937,16 +969,12 @@ mod tests {
     fn a_result_for_the_open_project_is_announced(cx: &mut TestAppContext) {
         let fixture = Fixture::new(cx);
         let root = fixture.project("open");
-        fixture
-            .state
-            .update(cx, |state, _| state.project_changed(Some(root.clone())));
+        fixture.open(cx, Some(&root));
         fixture.state.update(cx, |state, cx| {
             state.add(root.clone(), "acme.charts", version("1.0.0"), false, cx)
         });
         // Opened again (Reload Plugins), it is still the same project.
-        fixture
-            .state
-            .update(cx, |state, _| state.project_changed(Some(root.clone())));
+        fixture.open(cx, Some(&root));
 
         cx.run_until_parked();
         assert_eq!(
@@ -957,6 +985,111 @@ mod tests {
         );
     }
 
+    #[gpui_kit::test]
+    fn a_result_for_a_project_opened_again_is_announced(cx: &mut TestAppContext) {
+        let fixture = Fixture::new(cx);
+        let root_a = fixture.project("a");
+        let root_b = fixture.project("b");
+        fixture.open(cx, Some(&root_a));
+        fixture.state.update(cx, |state, cx| {
+            state.add(root_a.clone(), "acme.charts", version("1.0.0"), false, cx)
+        });
+        fixture.open(cx, Some(&root_b));
+        fixture.open(cx, Some(&root_a));
+
+        cx.run_until_parked();
+        assert_eq!(
+            fixture.events(),
+            [RegistryEvent::PluginsChanged {
+                project: Some(root_a)
+            }]
+        );
+    }
+
+    #[gpui_kit::test]
+    fn a_second_job_on_the_same_project_is_refused(cx: &mut TestAppContext) {
+        let fixture = Fixture::new(cx);
+        let root = fixture.project("busy");
+        let other = fixture.project("other");
+        fixture.open(cx, Some(&root));
+        let started = fixture.state.update(cx, |state, cx| {
+            [
+                state.add(root.clone(), "acme.charts", version("1.0.0"), false, cx),
+                // Other plugins, the same project's files.
+                state.add(root.clone(), "acme.codec", version("1.0.0"), false, cx),
+                state.remove(root.clone(), "acme.codec", cx),
+                state.download_locked(root.clone(), cx),
+                // Another project's files are its own.
+                state.add(other.clone(), "acme.codec", version("1.0.0"), false, cx),
+            ]
+        });
+        assert_eq!(started, [true, false, false, false, true]);
+        cx.run_until_parked();
+
+        // Once the first is done, the project takes the next.
+        let next = fixture.state.update(cx, |state, cx| {
+            state.add(root.clone(), "acme.codec", version("1.0.0"), false, cx)
+        });
+        assert!(next);
+        cx.run_until_parked();
+        let config = std::fs::read_to_string(root.join(PROJECT_CONFIG)).unwrap();
+        assert!(
+            config.contains("acme.charts") && config.contains("acme.codec"),
+            "{config}"
+        );
+        let lock = Lockfile::load(&root).unwrap().unwrap();
+        assert_eq!(
+            lock.plugins.keys().collect::<Vec<_>>(),
+            ["acme.charts", "acme.codec"]
+        );
+    }
+
+    #[gpui_kit::test]
+    fn a_second_global_install_is_refused(cx: &mut TestAppContext) {
+        let fixture = Fixture::new(cx);
+        let started = fixture.state.update(cx, |state, cx| {
+            [
+                state.install_global("acme.codec", version("1.0.0"), cx),
+                // Another plugin, the same settings.
+                state.install_global("acme.charts", version("1.0.0"), cx),
+                state.uninstall("acme.charts", cx),
+                state.update_global("acme.charts", cx),
+            ]
+        });
+        assert_eq!(started, [true, false, false, false]);
+        cx.run_until_parked();
+
+        let next = fixture.state.update(cx, |state, cx| {
+            state.install_global("acme.charts", version("1.0.0"), cx)
+        });
+        assert!(next);
+        cx.run_until_parked();
+        let settings = UserSettings::load(&fixture.user.join("settings.json")).unwrap();
+        let mut ids: Vec<_> = settings
+            .registry_plugins
+            .iter()
+            .map(|plugin| plugin.id.as_str())
+            .collect();
+        ids.sort_unstable();
+        assert_eq!(ids, ["acme.charts", "acme.codec"]);
+    }
+
+    #[gpui_kit::test]
+    fn opening_another_project_checks_the_search_list(cx: &mut TestAppContext) {
+        let fixture = Fixture::new(cx);
+        fixture
+            .served
+            .search(json!([search_entry("acme.charts", "1.0.0")]));
+        let root = fixture.project("checked");
+        fixture.open(cx, Some(&root));
+        cx.run_until_parked();
+        assert!(matches!(
+            fixture.read(cx, |state| state.search.clone()),
+            Fetch::Loaded { offline: false, .. }
+        ));
+    }
+
+    #[cfg(unix)]
     #[gpui_kit::test]
     fn offline_search_uses_the_cached_list(cx: &mut TestAppContext) {
         let fixture = Fixture::new(cx);
@@ -979,17 +1112,13 @@ mod tests {
         };
         assert_eq!(online.plugins[0].id, "acme.charts");
 
-        // The served folder can no longer be read.
-        let served = fixture.served.served_dir().to_path_buf();
-        let away = served.with_extension("away");
-        std::fs::rename(&served, &away).unwrap();
+        // The served folder can no longer be read: the registry is out of
+        // reach.
+        let served = fixture.served.served_dir();
+        set_mode(served, 0o000);
         fixture.state.update(cx, |state, cx| state.fetch_search(cx));
         cx.run_until_parked();
         let offline = fixture.read(cx, |state| state.search.clone());
-        assert!(
-            matches!(&offline, Fetch::Loaded { value, offline: true, at } if *value == online && *at == online.generated),
-            "{offline:?}"
-        );
 
         // Without a cached list there is nothing to show.
         let other = scratch_dir("registry-state-uncached");
@@ -997,10 +1126,36 @@ mod tests {
         uncached.update(cx, |state, cx| state.fetch_search(cx));
         cx.run_until_parked();
         let failed = uncached.read_with(cx, |state, _| state.search.clone());
-        assert!(matches!(failed, Fetch::Failed(_)), "{failed:?}");
-
-        std::fs::rename(&away, &served).unwrap();
+        set_mode(served, 0o700);
         let _ = std::fs::remove_dir_all(&other);
+
+        assert!(
+            matches!(&offline, Fetch::Loaded { value, offline: true, at } if *value == online && *at == online.generated),
+            "{offline:?}"
+        );
+        assert!(matches!(failed, Fetch::Failed(_)), "{failed:?}");
+    }
+
+    #[gpui_kit::test]
+    fn a_list_the_registry_does_not_serve_is_not_offline(cx: &mut TestAppContext) {
+        let fixture = Fixture::new(cx);
+        fixture
+            .served
+            .search(json!([search_entry("acme.charts", "1.0.0")]));
+        fixture.state.update(cx, |state, cx| state.fetch_search(cx));
+        cx.run_until_parked();
+        assert!(matches!(
+            fixture.read(cx, |state| state.search.clone()),
+            Fetch::Loaded { offline: false, .. }
+        ));
+
+        // The registry answers, but has no such file (404): the cached list
+        // is not shown as if offline.
+        std::fs::remove_file(fixture.served.served_dir().join("search.json")).unwrap();
+        fixture.state.update(cx, |state, cx| state.fetch_search(cx));
+        cx.run_until_parked();
+        let fetched = fixture.read(cx, |state| state.search.clone());
+        assert!(matches!(fetched, Fetch::Failed(_)), "{fetched:?}");
     }
 
     #[gpui_kit::test]
@@ -1010,6 +1165,7 @@ mod tests {
             entry["targets"]["any"]["sha256"] = json!(BAD_HASH);
         });
         let root = fixture.project("bad");
+        fixture.open(cx, Some(&root));
         fixture.state.update(cx, |state, cx| {
             state.add(root.clone(), "acme.charts", version("1.0.0"), false, cx)
         });
@@ -1049,17 +1205,14 @@ mod tests {
     #[cfg(unix)]
     #[gpui_kit::test]
     fn an_unreachable_registry_asks_to_try_again(cx: &mut TestAppContext) {
-        use std::os::unix::fs::PermissionsExt as _;
-
         let fixture = Fixture::new(cx);
         let served = fixture.served.served_dir();
-        let mode = |mode| std::fs::Permissions::from_mode(mode);
-        std::fs::set_permissions(served, mode(0o000)).unwrap();
+        set_mode(served, 0o000);
         fixture.state.update(cx, |state, cx| {
             state.install_global("acme.codec", version("1.0.0"), cx)
         });
         cx.run_until_parked();
-        std::fs::set_permissions(served, mode(0o700)).unwrap();
+        set_mode(served, 0o700);
 
         let events = fixture.events();
         assert!(
@@ -1080,6 +1233,14 @@ mod tests {
             "title": "Reads files outside the project", "description": "Details.",
             "fixed": "1.3.0", "published": "2026-11-01T00:00:00Z",
         });
+        // The first list, empty, stops nothing more than no list did.
+        fixture.served.advisories(json!([]));
+        fixture
+            .state
+            .update(cx, |state, cx| state.refresh_advisories(cx));
+        cx.run_until_parked();
+        assert_eq!(fixture.events(), []);
+
         fixture.served.advisories(json!([advisory]));
         fixture
             .state
