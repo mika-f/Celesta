@@ -575,7 +575,8 @@ import { TypewriterText } from '@celesta.studio/components';
 
 Props: `children` (text, which may hold `<Span>`), `style`, the shorthand
 `fontFamily`/`fontSize`/`fontWeight`/`color`, `lang`, `maxWidth`, `from`
-(0), `framesPerChar` (1), `blinkFrames` (one second), `caret` (`true`),
+(0), `framesPerChar` (1), `pauses` (extra frames after a character, as for `useTypewriter` below),
+`blinkFrames` (one second), `caret` (`true`),
 `caretShape` (`'line'` or `'block'`), `caretColor` (hex or `<Theme>` name;
 defaults to the text's solid fill, else white), `caretWidth`,
 `caretHeight`, plus common props.
@@ -605,12 +606,34 @@ defaults to the text's solid fill, else white), `caretWidth`,
   caret is measured from the typed part of its line instead, without
   `<Span>` fonts.
 
-### `useTypewriter(text, { from?, framesPerChar?, blinkFrames? })`
+### `useTypewriter(text, { from?, framesPerChar?, pauses?, blinkFrames? })`
 
-Returns `{ text, length, done, caretVisible }`. Counts by code point, so kana
-and emoji count once. `framesPerChar` below 1 types several characters per
-frame. The caret is steady while typing and blinks (period `blinkFrames`,
-default one second) otherwise. For typed text with a caret, use
+Returns `{ text, length, done, caretVisible, frames }`. Counts by code point,
+so kana and emoji count once. `framesPerChar` below 1 types several
+characters per frame. The caret is steady while typing and blinks (period
+`blinkFrames`, default one second) otherwise.
+
+- `pauses` waits extra frames **after** a character before the next one:
+  `{ '、': 6, '。': 12 }`. Each name is one character (one code point), each
+  value at least 0, or it throws. The caret stays steady during a pause. A
+  pause after the last character delays nothing.
+- `frames` has one entry per character of the whole text: the first frame
+  it is shown on, on the hook's clock (`from` included). Characters typed
+  on the same frame share it.
+- `typewriterFrames(text, { from?, framesPerChar?, pauses? })` returns the
+  same list for a plain string, without a hook: use it at module level or
+  in `prepare()`, and to place something on each character.
+
+```tsx
+import { typewriterFrames } from '@celesta.studio/text';
+
+const LINE = 'pnpm run build';
+const TYPING = { from: 10, framesPerChar: 2 };
+const CLICKS = typewriterFrames(LINE, TYPING);
+
+<TypewriterText {...TYPING}>{LINE}</TypewriterText>
+{CLICKS.map((at, i) => <Sequence key={i} from={at}><Audio src="./key.wav" /></Sequence>)}
+``` For typed text with a caret, use
 [`<TypewriterText>`](#typewritertext). For code, pass `length` to
 `<Code visibleCharacters>` ([code.md](code.md)).
 

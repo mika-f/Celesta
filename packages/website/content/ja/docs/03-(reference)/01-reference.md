@@ -35,7 +35,7 @@ Celesta は Remotion のようにパッケージに分かれています。コ�
 | `progress` | `@celesta.studio/react` | フレームの区間を、イージング付きの 0〜1 に制限した値にします。 |
 | `useBeat()` / `beatAt` | `@celesta.studio/react` | BPM のテンポから拍・小節・パルスを取得します。 |
 | `useCue()` / `cueAt` | `@celesta.studio/react` | `{ at, …data }` のリストから現在のキューを取得します。 |
-| `TextReveal`, `useTypewriter()`, `useCountUp()` | `@celesta.studio/text` | マスク付きの行表示、入力効果、数値カウンター。 |
+| `TextReveal`, `useTypewriter()`, `typewriterFrames()`, `useCountUp()` | `@celesta.studio/text` | マスク付きの行表示、入力効果（各文字が表示されるフレームも取得できます）、数値カウンター。 |
 | `Camera` | `@celesta.studio/layout` | 大きなワールドの一部を、ズーム・回転・揺れ付きで映します。 |
 | `Line` / `Polyline` / `Path` / `pointOnPolyline` | `@celesta.studio/shapes` | 線分・曲線・塗りつぶした形。折れ線とパスは段階的に描けます。 |
 | `pointOnPath` / `tangentOnPath` / `measurePath` / `getLength` / `getPointAtLength` / `getTangentAtLength` | `@celesta.studio/shapes` | パスコマンド上の位置・向き・長さ。曲線も含みます。 |

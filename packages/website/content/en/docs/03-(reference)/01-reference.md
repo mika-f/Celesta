@@ -35,7 +35,7 @@ Celesta is split into packages, like Remotion. The core APIs come from `@celesta
 | `progress` | `@celesta.studio/react` | A clamped, eased 0–1 value for a span of frames. |
 | `useBeat()` / `beatAt` | `@celesta.studio/react` | Beats, bars, and a pulse for a tempo in BPM. |
 | `useCue()` / `cueAt` | `@celesta.studio/react` | The cue in effect from a list of `{ at, …data }`. |
-| `TextReveal`, `useTypewriter()`, `useCountUp()` | `@celesta.studio/text` | Masked line reveals, typing, and counting numbers. |
+| `TextReveal`, `useTypewriter()`, `typewriterFrames()`, `useCountUp()` | `@celesta.studio/text` | Masked line reveals, typing (with the frame each character appears on), and counting numbers. |
 | `Camera` | `@celesta.studio/layout` | Look at a point of a larger world, with zoom, rotation, and shake. |
 | `Line` / `Polyline` / `Path` / `pointOnPolyline` | `@celesta.studio/shapes` | Segments, curves, and filled shapes; polylines and paths can draw themselves on. |
 | `pointOnPath` / `tangentOnPath` / `measurePath` / `getLength` / `getPointAtLength` / `getTangentAtLength` | `@celesta.studio/shapes` | Points, directions, and lengths along path commands, curves included. |

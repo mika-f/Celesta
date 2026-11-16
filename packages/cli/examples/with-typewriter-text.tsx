@@ -35,8 +35,10 @@ export default function WithTypewriterText() {
           Will it fit? iiii WWWW
         </TypewriterText>
 
-        <Label y={470}>JAPANESE, \n AND maxWidth</Label>
-        <TypewriterText x={120} y={510} from={10} framesPerChar={2} maxWidth={760} lang="ja"
+        <Label y={470}>JAPANESE, \n, maxWidth, AND pauses</Label>
+        {/* `pauses` waits a little after each 、 and longer after each 。, as a person typing would. */}
+        <TypewriterText x={120} y={510} from={10} framesPerChar={2} pauses={{ '、': 6, '。': 12 }}
+          maxWidth={760} lang="ja"
           fontFamily="sans" fontSize={44} color="ink" style={{ lineHeight: 66 }}>
           {'日本語の文章も、指定した幅で折り返しながら一文字ずつ入力します。\n改行のあとも続きます。'}
         </TypewriterText>

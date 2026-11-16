@@ -33,6 +33,7 @@ preview and export, and other people (and agents) reading the file know them.
 | A chapter number, kicker, title, and subtitle placed and staggered by hand | `<TitleCard chapter="01" kicker="…" title="…" subtitle="…" />` | `@celesta.studio/components` |
 | A name and role on a `<Rect>` band measured with `useTextMetrics` and slid in from a corner | `<LowerThird title="…" subtitle="…" placement="bottom-left" />` | `@celesta.studio/components` |
 | `useTypewriter` text plus a caret `<Rect>` at `length * advance` or `textCaret(…)` | `<TypewriterText caretShape="block">…</TypewriterText>` | `@celesta.studio/components` |
+| `from + i * framesPerChar` computed by hand to put a sound or a flash on each typed character | `typewriterFrames(text, { from, framesPerChar, pauses })` (or `useTypewriter(…).frames`) | `@celesta.studio/text` |
 | `from: i * 6` on each item | `<Stagger each={6}>` | `@celesta.studio/react` |
 | Scene start frames summed by hand | `<Series>` + `computeSeries` | `@celesta.studio/react` |
 | A beat counter from the BPM | `useBeat({ bpm })` | `@celesta.studio/react` |

@@ -8,7 +8,8 @@ Titles that reveal themselves, a camera that travels, and lines that draw on. Li
 | --- | --- |
 | `TextReveal` | Lines of a string slide up from behind their own masks, one after another. Set `lineHeight`, `from`, `stagger`, and `durationInFrames`; `align` pivots each line. `\n` breaks a line; with `maxWidth`, lines also wrap where `<Text maxWidth>` wraps (`style.lineBreak: 'phrase'` included), and each wrapped line is revealed on its own. |
 | `TypewriterText` (`@celesta.studio/components`) | Text typed out with a line or block caret, timed as `useTypewriter` times it. The caret goes where the measured layout puts the next character, so proportional fonts, Japanese, `\n`, and `maxWidth` wrapping need no monospaced font. |
-| `useTypewriter(text, options)` | The typed-so-far `text`, its `length`, `done`, and `caretVisible`: steady while typing, blinking while idle. |
+| `useTypewriter(text, options)` | The typed-so-far `text`, its `length`, `done`, and `caretVisible`: steady while typing, blinking while idle. `pauses` (`{ ',': 4, '.': 10 }`) waits that many extra frames after a character; `<TypewriterText>` takes it too. `frames` lists the frame each character appears on. |
+| `typewriterFrames(text, options)` | The same list of frames as a plain function, for placing something on each character, such as a key click: `typewriterFrames(text, { from, framesPerChar, pauses })`. |
 | `useCountUp(to, options)` | A number counting to `to`, with `from`, `delay`, `durationInFrames`, `easing`, and `decimals`. |
 | `Counter`, `StatCard` (`@celesta.studio/components`) | A `<Text>` drawing a counted number formatted, and a card with a label, the number, and a note. They count with `useCountUp`'s default timing and print with `locale` (`'en-US'` by default, never the machine's), `decimals` (always shown), `prefix`/`suffix`, or a `formatter`. With `anchorX={1}` the last digit and the unit stay in place as digits are added. |
 
