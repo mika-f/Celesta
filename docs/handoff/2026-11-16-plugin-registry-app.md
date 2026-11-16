@@ -152,6 +152,19 @@ resolved within their requirement are rewritten; a failed run restores
 `celesta-registry-client` so `celesta plugin update` can offer the same later;
 the CLI is not changed in this plan.
 
+No requirement is rewritten without a question listing it first (final
+review, 2026-11-16). When the rewrites were not known before a question
+opened (the 3-second budget ran out), or for the heading's Update Plugins
+with nothing known to rewrite, a page's or row's **Update to X**, and a
+Blocked notification's **Update to X**, the app updates within the
+requirements; when that fails because a requirement cannot be met
+(`ResolveError::NoVersion`), nothing has changed, and the app plans the
+rewrites again without a time limit (the heading's Update Plugins… is held
+meanwhile) and asks "Update this project’s plugins?" listing them. A
+Blocked notification's update plans them offering pre-releases when the
+advisory's fixed version is one, whatever Include pre-releases says, and its
+global update does the same, so **Update to X** can reach X.
+
 ### What counts as a project (designer's call)
 
 **This project**, **Add to this project**, and **Pin to this project** need a
@@ -227,9 +240,14 @@ area widens while it is open.
 
 - **List column**: header "Plugins"; search field (filters `search.json` by id
   and description, ignoring case, as `celesta plugin search` does); Include
-  pre-releases; rows with id, kind, the registry's latest (monospace), and a
-  short state: Installed, In this project, No build for this computer,
-  Deprecated. A footer line: count, registry host, when the list was fetched.
+  pre-releases; rows with the id and, trailing it in a lane of its own, a
+  short state (Installed, In this project, No build for this computer,
+  Deprecated); under them the kind and the registry's latest (monospace; a
+  pre-release says so by its own suffix, `-alpha.3`), cut short with an
+  ellipsis when the column is narrow. A footer line: count, registry host,
+  when the list was fetched. Opening the page fetches the list again when the
+  one shown is more than 10 minutes old (it stays shown meanwhile), and the
+  open page draws again every minute so "updated N min ago" keeps up.
 - **Detail column**: header with the id and Close. Fields: Kind (with the
   publisher), Latest, Builds (targets), Source (repository, workflow, short
   commit), Here (what this computer has: bundled, global, locked versions),
@@ -243,7 +261,11 @@ area widens while it is open.
     project with the reason "Add plugins to a project with
     celesta.config.json").
   - When already installed at the offered version: **Installed** (disabled);
-    when an older one is: **Update to X**. For a media plugin these concern the
+    when an older one is: **Update to X**. For a plugin the project locks, X
+    is the newest offered version its requirement in `celesta.config.json`
+    accepts; when only a version outside it is newer, **Update to <that
+    version>** is disabled with the reason `celesta.config.json asks for
+    <requirement>`. For a media plugin these concern the
     global store only; **Pin to this project** is the project-scoped button
     (**Pinned** when the lock holds the offered version), and it carries its own
     reason when disabled.
@@ -255,8 +277,8 @@ area widens while it is open.
 - **Working**: the button reads **Installing…** (disabled), the footer shows
   bytes done / total, and a thin progress bar runs under it. Closing the page
   does not cancel; the matching Plugins tab row shows Installing… too.
-  Done: the button becomes Installed, plugins are rediscovered (and the
-  project reloaded when its lock changed). No success toast.
+  Done: the button becomes Installed, plugins are rediscovered and the
+  project reopened (for a global install too). No success toast.
 - **Failed**: the reason in danger color under the footer buttons, for
   example `Couldn’t download avfoundation. Check your connection and try
   again.`; the full error chain goes to Problems.
@@ -361,7 +383,7 @@ The CLI keeps its behaviour and output; its tests are the check.
 | `crates/editor/src/plugins.rs` | `FoundPlugins::find(project, extra_advisories)`: the trusted project's lock (read only for a saved trusted project with `celesta.config.json`), lock problems, blocked plugins, registry plugins, bundled copies, declared requirements, and whether the advisory list is stale. |
 | `crates/editor/src/registry/client.rs` | `EditorRegistry`: registry selection, store, cache, and settings paths, host, bundled folder; shared across background jobs. |
 | `crates/editor/src/registry/state.rs` | `RegistryState`, one entity per window: the `search.json` list, indexes, work in flight per plugin id (install, add, pin, update, remove, uninstall, download), failures, download progress sampled every 100 ms, the Include pre-releases flag, the 24-hour refresh. Everything blocking runs on the background executor. |
-| `crates/editor/src/registry/questions.rs` | The download question, the other-Celesta question, and the requirements question: `lock_question`, `prepare` (sizes or rewrites within a 3-second budget), the dialogs, asked once per project per run. |
+| `crates/editor/src/registry/questions.rs` | The download question, the other-Celesta question, and the requirements question: `lock_question`, `prepare` (sizes or rewrites within a 3-second budget at open, `Budget::Unlimited` after a click), the dialogs, asked once per project per run; `ask_about_requirements` after an update finds a requirement it cannot meet. |
 | `crates/editor/src/registry/notices.rs` | Problems entries (deprecated, yanked, shadowed registry copy, stale advisory list, stopped plugins) and the Blocked notification with its one action. |
 | `crates/editor/src/plugins_tab_model.rs` | The Plugins tab as data: sections, rows, states, the one action per row, menus, the heading; pure, so it is unit tested. |
 | `crates/editor/src/plugins_panel.rs` | Renders that model: toolbar, sections, rows, the ⋯ menus. |
@@ -387,6 +409,7 @@ for `ffmpeg@8`, mise's node and pnpm on `PATH`).
 | `cargo fmt --all -- --check` | Clean. |
 | `pnpm --dir packages/website run build` | Not as one command: the full script stops at `packages/react` (`src/theme.ts(216,25): TS7006`, a file this work does not touch). The site step alone, `pnpm exec makit build --clean`, passed: 56 pages in 2 locales, and the built `en` and `ja` plugins pages have the new heading. |
 | `git diff --check` | Passed. |
+| Final-review fix wave: `cargo test -p celesta-editor --locked`; `cargo test -p celesta-registry-client -p celesta-cli --locked`; `cargo clippy --workspace --all-targets --locked -- -D warnings`; `cargo fmt --all -- --check`; `git diff --check` | 967 passed; the client and the CLI passed unchanged (CLI project 19, registry 16, session 7); no warnings; clean; passed. |
 | Live check and screenshots | See the pull request. |
 
 Not run by the builder: the full workspace test run after the last task, and
@@ -400,19 +423,22 @@ publishes the `celesta-registry-client` placeholder (see "Constraints").
   action; a notification without a fix says "Show in Problems".
 - `plan_update` fails the whole run when one id has no offer, and the question
   then shows the reason as blocking. `resolve` skips blocked versions, so a pin
-  such as `=0.2.1` that an advisory blocks is rewritten to the offered version;
-  a global Update to a pre-release fix with Include pre-releases off may not
-  reach that fix.
+  such as `=0.2.1` that an advisory blocks is rewritten to the offered version
+  (after the requirements question lists it).
+- The page's `celesta.config.json asks for <requirement>` prints the parsed
+  requirement (`semver`'s form, `>=1, <2` for `>=1,<2`), not the text as
+  written; the discovery result carries no written text.
 - `add` fetches the plugin's index twice when no requirement is written (the CLI
   path, as before).
 - A page's **Install** can stay enabled until rediscovery finishes after an
   install, so a second click installs the same version again (idempotent). The
   list's "No build for this computer" shows only for locked plugins, because
   `search.json` has no targets.
-- Failures of a previous project's job leave no trace once another project is
-  open, and problems reported while the window is created (a bad registry
-  override, no user folder) are lost when the first project opens, as with
-  every Problems source today.
+- A previous project's failed job is logged as an info entry naming that
+  project (no toast, nothing reopens); its success is not announced. Problems
+  reported while the window is created (a bad registry override, no user
+  folder) are lost when the first project opens, as with every Problems source
+  today.
 - Opening a project while the approval dialog is up skips the lock question
   without marking it asked; it is asked after Allow and Reload reopens the
   project. A search list is not refetched when one project without a root
@@ -426,10 +452,18 @@ publishes the `celesta-registry-client` placeholder (see "Constraints").
   reads the real user settings), so the registry subscription, the progress
   sampler, the offline branch of the page, focus after closing it, and the
   once-per-project question at view level are not covered; the question's
-  once-only rule is tested on `ask_once`. The action lane's width (8 rem) is
+  once-only rule is tested on `ask_once`. The requirements question after an
+  unmet update is tested on its parts (`RequirementsUnmet` from the state,
+  `requirements_question` and `ask_requirements` in a window), not through
+  `EditorView::ask_about_requirements`. The action lane's width (8 rem) is
   checked only by the screenshots.
 - The window re-renders at about 10 Hz while a download runs (`cx.observe` on
   the registry entity).
+- The Plugins tab's **Find plugins…** shows it is on with the list's selected
+  fill (`list_active`) over its outline style: gpui-kit's own selected fill
+  for an outline button is a shade from its rest fill in this palette.
+  Changing plugin settings in the tab (Turn On/Off, Allow, folders) is refused
+  with a note while registry work is saving `settings.json`.
 - `plugins_tab_model.rs` (about 1,300 lines) and `registry/questions.rs`
   (about 950 lines) are large; splitting them was left alone.
 - The CLI keeps `*` as its default requirement and does not offer the
