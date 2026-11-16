@@ -761,6 +761,11 @@ impl EditorView {
         next.inline_text_focus = self.inline_text_focus.take();
         next.dock_split = self.dock_split.take();
         next.export_split = self.export_split.take();
+        next.plugins_split = self.plugins_split.take();
+        // The plugin page stays, open or not, with its search and work in
+        // flight: an install it started reopens the project, and its result
+        // shows on the page.
+        next.plugin_page = std::mem::take(&mut self.plugin_page);
         next.registry = self.registry.take();
         next.plugins_changed = self.plugins_changed;
         next.body_split = self.body_split.take();
@@ -792,6 +797,7 @@ impl EditorView {
         }
         // The constructor's sweep ran before Select layers carried over.
         self.refresh_occurrences(false);
+        self.sync_plugin_page(cx);
     }
 }
 

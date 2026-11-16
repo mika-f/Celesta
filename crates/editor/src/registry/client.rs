@@ -126,7 +126,6 @@ impl EditorRegistry {
         load_cached_advisories(&path).ok().flatten()
     }
 
-    #[allow(dead_code)] // The Plugins tab of a later change reads it.
     pub(crate) fn access(&self) -> &RegistryAccess {
         &self.access
     }

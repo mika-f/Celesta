@@ -133,11 +133,13 @@ fn ago(elapsed: time::Duration) -> String {
     }
 }
 
-/// A byte count in decimal units with one decimal: `1.2 MB`.
-fn format_size(bytes: u64) -> String {
-    const UNITS: [(&str, f64); 3] = [("kB", 1e3), ("MB", 1e6), ("GB", 1e9)];
-    // The largest unit the size reaches, then one more when it rounds up
-    // to 1000 of that one (999 999 B is 1.0 MB, not 1000.0 kB).
+/// The decimal units sizes are shown in.
+const UNITS: [(&str, f64); 3] = [("kB", 1e3), ("MB", 1e6), ("GB", 1e9)];
+
+/// The unit `bytes` is shown in: the largest it reaches, then one more when
+/// it rounds up to 1000 of that one (999 999 B is 1.0 MB, not 1000.0 kB);
+/// `None` for bytes.
+fn size_unit(bytes: u64) -> Option<usize> {
     let mut unit = UNITS.iter().rposition(|(_, size)| bytes as f64 >= *size);
     if let Some(at) = unit {
         let rounded = (bytes as f64 / UNITS[at].1 * 10.0).round() / 10.0;
@@ -145,9 +147,29 @@ fn format_size(bytes: u64) -> String {
             unit = Some(at + 1);
         }
     }
-    match unit {
+    unit
+}
+
+/// A byte count in decimal units with one decimal: `1.2 MB`.
+fn format_size(bytes: u64) -> String {
+    match size_unit(bytes) {
         Some(at) => format!("{:.1} {}", bytes as f64 / UNITS[at].1, UNITS[at].0),
         None => format!("{bytes} B"),
+    }
+}
+
+/// How far a download has come, both in the total's unit: `0.6 / 1.2 MB`.
+pub(crate) fn progress_label(done: u64, total: u64) -> String {
+    match size_unit(total) {
+        Some(at) => {
+            let (name, size) = UNITS[at];
+            format!(
+                "{:.1} / {:.1} {name}",
+                done as f64 / size,
+                total as f64 / size
+            )
+        }
+        None => format!("{done} / {total} B"),
     }
 }
 
@@ -1071,6 +1093,13 @@ mod tests {
         assert_eq!(format_size(999), "999 B");
         assert_eq!(format_size(12_400), "12.4 kB");
         assert_eq!(format_size(2_500_000_000), "2.5 GB");
+    }
+
+    #[test]
+    fn progress_is_in_the_totals_unit() {
+        assert_eq!(progress_label(600_000, 1_215_625), "0.6 / 1.2 MB");
+        assert_eq!(progress_label(0, 12_400), "0.0 / 12.4 kB");
+        assert_eq!(progress_label(512, 999), "512 / 999 B");
     }
 
     #[test]

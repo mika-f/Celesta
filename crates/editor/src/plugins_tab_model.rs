@@ -183,7 +183,6 @@ pub(crate) enum MenuCommand {
     TurnOff,
     TurnOn,
     ShowFolder,
-    #[allow(dead_code)] // The plugin page of a later change adds it to the menus.
     ShowInFindPlugins,
     RemoveFromProject,
     Uninstall,
@@ -346,6 +345,7 @@ impl<'a> Reading<'a> {
         if entry.is_some() {
             menu.push(MenuCommand::ShowFolder);
         }
+        menu.push(MenuCommand::ShowInFindPlugins);
         menu.push(MenuCommand::RemoveFromProject);
         TabRow {
             id: id.to_owned(),
@@ -423,6 +423,7 @@ impl<'a> Reading<'a> {
         if entry.is_some() {
             menu.push(MenuCommand::ShowFolder);
         }
+        menu.push(MenuCommand::ShowInFindPlugins);
         menu.push(MenuCommand::Uninstall);
         TabRow {
             id: id.to_owned(),
@@ -1045,6 +1046,7 @@ mod tests {
             [
                 MenuCommand::TurnOff,
                 MenuCommand::ShowFolder,
+                MenuCommand::ShowInFindPlugins,
                 MenuCommand::RemoveFromProject
             ]
         );
@@ -1141,6 +1143,7 @@ mod tests {
             [
                 MenuCommand::TurnOff,
                 MenuCommand::ShowFolder,
+                MenuCommand::ShowInFindPlugins,
                 MenuCommand::Uninstall
             ]
         );
@@ -1229,7 +1232,13 @@ mod tests {
         );
         assert_eq!(section.action, Some(SectionAction::Download { count: 2 }));
         assert_eq!(section.rows[2].state.label(), "No build for this computer");
-        assert_eq!(section.rows[0].menu, [MenuCommand::RemoveFromProject]);
+        assert_eq!(
+            section.rows[0].menu,
+            [
+                MenuCommand::ShowInFindPlugins,
+                MenuCommand::RemoveFromProject
+            ]
+        );
     }
 
     /// Version 1.0.0 of `id` stopped by an advisory, in `directory`.

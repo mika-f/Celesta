@@ -13,6 +13,7 @@ use crate::layer_select::{InstanceDue, PendingInstance, PickMode, SourceLookup};
 use crate::media_probe::{MediaAssetInfo, MediaProbeWorker, spawn_media_probe};
 use crate::meter::MasterLevels;
 use crate::occurrences::{OccurrenceState, OccurrenceWorker, spawn_occurrences};
+use crate::plugin_page::PluginPageSlot;
 use crate::plugins::{DecoderNotice, FoundPlugins, trusted_root};
 use crate::preview::{
     AudioPreview, PreviewWorker, ReactPreview, ShownPreview, TextOverride, spawn_preview,
@@ -265,6 +266,9 @@ pub(crate) struct EditorView {
     /// media plugins change (Reload Plugins, another project), and
     /// whether it shows in place of Assets.
     pub(crate) export_page: ExportPageSlot,
+    /// The plugin page (Find plugins), kept with its search and selection
+    /// for the window's life, and whether it shows in place of Assets.
+    pub(crate) plugin_page: PluginPageSlot,
     /// The loudness Export… brings the mix to, for the rest of the session.
     pub(crate) export_loudness: ExportLoudness,
     pub(crate) gpu_name: SharedString,
@@ -276,10 +280,12 @@ pub(crate) struct EditorView {
     /// Split positions for the workspace shell: `dock_split` is the
     /// asset-list / monitor / inspector row, `export_split` the same row
     /// with the export page in place of the asset list (its own width),
-    /// `body_split` is the work-area / timeline column. Held here so the
-    /// drags persist across redraws.
+    /// `plugins_split` with the wider plugin page there, `body_split` is
+    /// the work-area / timeline column. Held here so the drags persist
+    /// across redraws.
     pub(crate) dock_split: Option<Entity<ResizableState>>,
     pub(crate) export_split: Option<Entity<ResizableState>>,
+    pub(crate) plugins_split: Option<Entity<ResizableState>>,
     pub(crate) body_split: Option<Entity<ResizableState>>,
     /// The window's registry work (searches, installs, updates), kept
     /// across the projects it opens; `None` until the window makes it, and
@@ -591,6 +597,7 @@ impl EditorView {
             export_out_frame: None,
             choosing_export_path: false,
             export_page: ExportPageSlot::default(),
+            plugin_page: PluginPageSlot::default(),
             export_loudness: ExportLoudness::default(),
             gpu_name,
             driver,
@@ -598,6 +605,7 @@ impl EditorView {
             master_volume_focus: None,
             dock_split: None,
             export_split: None,
+            plugins_split: None,
             body_split: None,
             registry: None,
             plugins_changed: false,

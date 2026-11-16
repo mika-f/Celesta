@@ -23,7 +23,8 @@ use celesta_plugin_host::{
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, IconName, Sizable as _, WindowExt as _, h_flex, v_flex,
+    ActiveTheme as _, Disableable as _, IconName, Selectable as _, Sizable as _, WindowExt as _,
+    h_flex, v_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::{Anchor, AnyElement, App, Context, ElementId, SharedString, Window, div, rems};
@@ -111,6 +112,19 @@ impl EditorView {
             .py_2()
             .border_b_1()
             .border_color(cx.theme().border)
+            .child(
+                // A toggle: "on" while the plugin page shows.
+                Button::new("plugins-find")
+                    .xsmall()
+                    .outline()
+                    .compact_label("Find plugins…")
+                    .selected(self.plugin_page.is_open())
+                    .toggled(self.plugin_page.is_open())
+                    .disabled(self.registry.is_none())
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.toggle_plugin_page(window, cx);
+                    })),
+            )
             .child(
                 Button::new("plugins-reload")
                     .xsmall()
@@ -532,8 +546,9 @@ impl EditorView {
             RowCommand::Menu(MenuCommand::Uninstall) => {
                 self.registry_work(window, cx, |state, cx| state.uninstall(&id, cx));
             }
-            // The plugin page of a later change opens on the id.
-            RowCommand::Menu(MenuCommand::ShowInFindPlugins) => {}
+            RowCommand::Menu(MenuCommand::ShowInFindPlugins) => {
+                self.open_plugin_page(Some(id), window, cx);
+            }
         }
     }
 

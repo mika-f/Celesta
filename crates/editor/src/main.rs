@@ -79,12 +79,12 @@ mod widgets;
 mod worker;
 
 use actions::{
-    ClearExportRange, CloseWindow, CreateNewProject, ExportProject, GoToEnd, GoToIn, GoToOut,
-    GoToStart, JumpBackward, JumpForward, NextEditPoint, NextFrame, OpenProject, PausePlayback,
-    PlayForward, PreviousEditPoint, PreviousFrame, Quit, Redo, ReloadPlugins, ReloadProject,
-    SetExportIn, SetExportOut, SetUpTypeScript, SetUpTypeScriptInFolder, ShowProblems,
-    ToggleInteractive, ToggleLoop, TogglePlayback, ToggleSafeAreas, Undo, ZoomTimelineIn,
-    ZoomTimelineOut, ZoomTimelineToFit,
+    ClearExportRange, CloseWindow, CreateNewProject, ExportProject, FindPlugins, GoToEnd, GoToIn,
+    GoToOut, GoToStart, JumpBackward, JumpForward, NextEditPoint, NextFrame, OpenProject,
+    PausePlayback, PlayForward, PreviousEditPoint, PreviousFrame, Quit, Redo, ReloadPlugins,
+    ReloadProject, SetExportIn, SetExportOut, SetUpTypeScript, SetUpTypeScriptInFolder,
+    ShowProblems, ToggleInteractive, ToggleLoop, TogglePlayback, ToggleSafeAreas, Undo,
+    ZoomTimelineIn, ZoomTimelineOut, ZoomTimelineToFit,
 };
 use inline_text_view::EditEvent;
 use source::PropertyArgs;
@@ -273,6 +273,7 @@ fn run() -> anyhow::Result<()> {
         theme::init(cx);
         cx.bind_keys(key_bindings());
         cx.bind_keys(export_page::view::key_bindings());
+        cx.bind_keys(plugin_page::view::key_bindings());
         // A text edited on the canvas is written first.
         cx.on_action(|_: &Quit, cx| lifecycle::quit_after_inline_commits(cx));
         // macOS shows these in the system menu bar; elsewhere the title bar's
@@ -325,6 +326,7 @@ fn run() -> anyhow::Result<()> {
                     editor.inline_text_focus = Some(inline_text_focus);
                     editor.dock_split = Some(cx.new(|_| ResizableState::default()));
                     editor.export_split = Some(cx.new(|_| ResizableState::default()));
+                    editor.plugins_split = Some(cx.new(|_| ResizableState::default()));
                     editor.body_split = Some(cx.new(|_| ResizableState::default()));
                     #[cfg(not(target_os = "macos"))]
                     {
@@ -367,6 +369,7 @@ fn app_menus() -> Vec<Menu> {
             MenuItem::action("Open…", OpenProject),
             MenuItem::action("Reload", ReloadProject),
             MenuItem::action("Reload Plugins", ReloadPlugins),
+            MenuItem::action("Find Plugins…", FindPlugins),
             MenuItem::separator(),
             MenuItem::action("Export…", ExportProject),
             MenuItem::separator(),

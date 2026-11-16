@@ -9,7 +9,7 @@ use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::status_bar::StatusBar;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _};
 use gpui_kit::prelude::*;
-use gpui_kit::{Context, CursorStyle, KeyDownEvent, MouseButton, Window, canvas, div, px};
+use gpui_kit::{AnyView, Context, CursorStyle, KeyDownEvent, MouseButton, Window, canvas, div, px};
 
 impl Render for EditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -66,6 +66,7 @@ impl EditorView {
             .on_action(cx.listener(Self::create_new_project_action))
             .on_action(cx.listener(Self::reload_project_action))
             .on_action(cx.listener(Self::reload_plugins_action))
+            .on_action(cx.listener(Self::find_plugins_action))
             .on_action(cx.listener(Self::close_window_action))
             .on_action(cx.listener(Self::export_project_action))
             .on_action(cx.listener(Self::set_export_in_action))
@@ -103,7 +104,8 @@ impl EditorView {
             // handling (a focused input's Escape action runs first). Ending
             // the add mode also cancels a canvas text edit open with it,
             // which would otherwise take a second Escape. Last, it closes
-            // the export page, from one of its text fields too.
+            // the export page or the plugin page, from one of its text
+            // fields too.
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 if event.keystroke.key != "escape" {
                     return;
@@ -117,9 +119,13 @@ impl EditorView {
                 if added {
                     this.end_inline_text(EditEvent::Escape, cx);
                 }
-                let closed = !escaped && !added && this.export_page.is_open();
-                if closed {
+                let closed = !escaped
+                    && !added
+                    && (this.export_page.is_open() || this.plugin_page.is_open());
+                if closed && this.export_page.is_open() {
                     this.close_export_page(window, cx);
+                } else if closed {
+                    this.close_plugin_page(window, cx);
                 }
                 if escaped || added || closed {
                     cx.stop_propagation();
@@ -179,12 +185,17 @@ impl EditorView {
     /// stacked above the timeline and its master audio meter. In
     /// React-preview mode the asset list is hidden and the right dock shows
     /// composition facts instead of the inspector. While the export page
-    /// is open its panel takes the asset list's place, with a width of its
-    /// own.
+    /// or the plugin page is open its panel takes the asset list's place,
+    /// with a width of its own.
     pub(crate) fn workspace(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let left = left_panel(self.is_react_preview(), self.export_page.is_open());
-        let export_page = match left {
-            LeftPanel::Export => self.export_page.page().cloned(),
+        let left = left_panel(
+            self.is_react_preview(),
+            self.export_page.is_open(),
+            self.plugin_page.is_open(),
+        );
+        let page = match left {
+            LeftPanel::Export => self.export_page.page().cloned().map(AnyView::from),
+            LeftPanel::Plugins => self.plugin_page.page().cloned().map(AnyView::from),
             LeftPanel::Hidden | LeftPanel::Assets => None,
         };
         let body_state = self.body_split.clone();
@@ -203,24 +214,31 @@ impl EditorView {
         // The window does not shrink with the rem, so keeping the regions'
         // sizes is what lets the denser type show more in them (and the
         // timeline's pixel geometry keeps the same number of tracks). The
-        // export panel's width starts at 26rem, within 22–34rem, in the
-        // rem of the frame the row is first laid out in; after that a rem
-        // change moves only its range, which the width held is kept in.
-        // The row keeps one id either way, so what its panels keep by id
-        // (the right dock's and the viewer's scroll positions) stays; the
-        // split sizes live in the state, one per layout.
-        let (row_state, first_panel) = match export_page {
-            Some(page) => {
-                let rem = window.rem_size();
-                (
-                    self.export_split.clone(),
-                    resizable_panel()
-                        .size(rem * 26.0)
-                        .size_range(rem * 22.0..rem * 34.0)
-                        .child(left_column.child(page)),
-                )
-            }
-            None => (
+        // export panel's width starts at 26rem, within 22–34rem, and the
+        // plugin page's, which shows a list and a plugin's details side by
+        // side, at 40rem, within 32–56rem, in the rem of the frame the row
+        // is first laid out in; after that a rem change moves only its
+        // range, which the width held is kept in. The row keeps one id
+        // either way, so what its panels keep by id (the right dock's and
+        // the viewer's scroll positions) stays; the split sizes live in the
+        // state, one per layout.
+        let rem = window.rem_size();
+        let (row_state, first_panel) = match (left, page) {
+            (LeftPanel::Export, Some(page)) => (
+                self.export_split.clone(),
+                resizable_panel()
+                    .size(rem * 26.0)
+                    .size_range(rem * 22.0..rem * 34.0)
+                    .child(left_column.child(page)),
+            ),
+            (LeftPanel::Plugins, Some(page)) => (
+                self.plugins_split.clone(),
+                resizable_panel()
+                    .size(rem * 40.0)
+                    .size_range(rem * 32.0..rem * 56.0)
+                    .child(left_column.child(page)),
+            ),
+            _ => (
                 self.dock_split.clone(),
                 resizable_panel()
                     .size(px(260.0))

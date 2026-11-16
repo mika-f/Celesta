@@ -65,7 +65,6 @@ pub(crate) enum Fetch<T> {
         value: T,
         /// When it was fetched; offline, when the registry generated the
         /// cached copy.
-        #[allow(dead_code)] // The plugin page of a later change reads it.
         at: OffsetDateTime,
         /// The registry could not be reached; this is the copy verified
         /// and cached by an earlier fetch.
@@ -247,7 +246,6 @@ impl RegistryState {
 
     /// Fetches `id`'s index, else shows the cached one offline, as
     /// [`Self::fetch_search`] does.
-    #[allow(dead_code)] // The plugin page of a later change calls it.
     pub(crate) fn fetch_index(&mut self, id: &str, cx: &mut Context<Self>) {
         let entry = self.indexes.entry(id.to_owned()).or_insert(Fetch::Idle);
         match entry {
@@ -313,7 +311,6 @@ impl RegistryState {
 
     /// Adds `id` to the project at `root` with the requirement
     /// `^version`, locks it, and installs it; `pin` pins a media plugin.
-    #[allow(dead_code)] // The plugin page of a later change calls it.
     pub(crate) fn add(
         &mut self,
         root: PathBuf,
