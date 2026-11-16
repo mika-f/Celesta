@@ -328,6 +328,43 @@ test('wrapped lines are split into units too', () => {
   ]);
 });
 
+test('letters inside one glyph cluster (a ligature) are spread over its advance', () => {
+  // `ffi` is one 30 px cluster at x 10, as fonts with ligatures shape `office`.
+  install((request) => {
+    const metrics = measureGlyphs(request);
+    if (request.text !== 'office') return metrics;
+    const glyph = (start: number, end: number, x: number, width: number) =>
+      ({ start, end, rtl: false, text: request.text.slice(start, end), x, width, line: 0, inkAscent: 0, inkDescent: 0 });
+    return { ...metrics, glyphs: [glyph(0, 1, 0, 10), glyph(1, 4, 10, 30), glyph(4, 5, 40, 10), glyph(5, 6, 50, 10)] };
+  });
+  const at = renderFrames(React.createElement(TextReveal, { ...unitProps, unit: 'grapheme', children: 'office' }));
+  assert.deepEqual(unitsOf(at(100)).map(place), [
+    { text: 'o', x: 0, y: 0 },
+    { text: 'f', x: 10, y: 0 },
+    { text: 'f', x: 20, y: 0 },
+    { text: 'i', x: 30, y: 0 },
+    { text: 'c', x: 40, y: 0 },
+    { text: 'e', x: 50, y: 0 },
+  ]);
+});
+
+test('explicit style runs are cut at every unit and every line, as span runs are', () => {
+  install(measureGlyphs);
+  const style = { fontSize: 10, colorRuns: [{ start: 3, end: 5, color: '#ff0000' }], fontRuns: [{ start: 0, end: 2, fontWeight: 700 }] };
+  const words = renderFrames(React.createElement(TextReveal, { ...unitProps, style, unit: 'word', children: 'ab cd' }));
+  const [ab, cd] = unitsOf(words(100));
+  assert.deepEqual(ab.style.colorRuns ?? [], []);
+  assert.deepEqual(ab.style.fontRuns, [{ start: 0, end: 2, fontWeight: 700 }]);
+  assert.deepEqual(cd.style.colorRuns, [{ start: 0, end: 2, color: '#ff0000' }]);
+  assert.deepEqual(cd.style.fontRuns ?? [], []);
+  // Lines too: the run covers `cd` only, not the same offsets of the next line.
+  const lines = renderFrames(React.createElement(TextReveal, { ...unitProps, style, children: 'ab cd\nef gh' }));
+  const [first, second] = lineTexts(lines(100));
+  assert.deepEqual(first.style.colorRuns, [{ start: 3, end: 5, color: '#ff0000' }]);
+  assert.deepEqual(second.style.colorRuns ?? [], []);
+  assert.deepEqual(second.style.fontRuns ?? [], []);
+});
+
 test('a right-to-left line puts each unit at its leftmost glyph', () => {
   // The first character sits at the right end: glyph i of n is at (n - 1 - i) * size.
   install((request) => {

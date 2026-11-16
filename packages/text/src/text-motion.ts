@@ -118,8 +118,19 @@ export function TextReveal({
   }
   const theme = React.useContext(ThemeContext);
   style = themedTextStyle(style, {}, theme, '<TextReveal>');
-  const flat = flattenTextContent(themeTextContent(children, theme), '<TextReveal> children');
-  withTextRuns(style ?? {}, flat, '<TextReveal>');
+  const spans = flattenTextContent(themeTextContent(children, theme), '<TextReveal> children');
+  withTextRuns(style ?? {}, spans, '<TextReveal>');
+  // Runs given in `style` count code points of the whole text, as `<Span>`
+  // runs do: move them into the text so each line and unit gets its part.
+  const flat: FlatText = {
+    ...spans,
+    colorRuns: style?.colorRuns?.length ? style.colorRuns : spans.colorRuns,
+    fontRuns: style?.fontRuns?.length ? style.fontRuns : spans.fontRuns,
+  };
+  if (style) {
+    const { colorRuns: _colorRuns, fontRuns: _fontRuns, ...rest } = style;
+    style = rest;
+  }
   const frame = useCurrentFrame();
   const { width } = useVideoConfig();
   const height = lineHeight ?? style?.lineHeight ?? style?.fontSize ?? 48;
@@ -227,8 +238,10 @@ function RevealUnits({
       const xs = units.map(([unitStart, unitEnd]) => {
         // The unit's left edge as drawn: the leftmost of its glyphs, which
         // for right-to-left text is its last character, not its first.
+        // Inside a cluster of several characters (a ligature), the unit
+        // takes its share of the cluster's advance, as `textCaret` does.
         const own = (glyphs ?? []).filter((glyph) => glyph.end > unitStart && glyph.start < unitEnd);
-        if (own.length > 0) return Math.min(...own.map((glyph) => glyph.x));
+        if (own.length > 0) return Math.min(...own.map((glyph) => leftEdge(glyph, unitStart, unitEnd)));
         if (unitStart === 0) return 0;
         // No glyph positions (the browser): the width of the text before
         // the unit, which is right for left-to-right text only.
@@ -264,6 +277,18 @@ function RevealUnits({
     }),
   ));
   return React.createElement(Group, groupProps, layers);
+}
+
+/**
+ * Where the part of `glyph` that covers code points `[start, end)` begins
+ * on the left: the whole cluster for one character, its share of the
+ * advance for a cluster of several.
+ */
+function leftEdge(glyph: TextMetrics['glyphs'][number], start: number, end: number): number {
+  const span = Math.max(1, glyph.end - glyph.start);
+  const from = (Math.max(start, glyph.start) - glyph.start) / span;
+  const to = (Math.min(end, glyph.end) - glyph.start) / span;
+  return glyph.x + glyph.width * (glyph.rtl ? 1 - to : from);
 }
 
 /** The shaped clusters, or null where the measurer has none (the browser). */

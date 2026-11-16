@@ -16,7 +16,11 @@ unchanged), `'word'`, `'phrase'`, or `'grapheme'`.
   holding one `Text` per unit, placed at its measured x in the line minus
   `align` times the line's width.
 - `stagger` counts units in reading order across lines.
-- Spans are sliced per unit as they are per line.
+- Spans are sliced per unit as they are per line. So are `style.colorRuns`
+  and `style.fontRuns`: `TextReveal` moves them into the flattened text
+  before splitting. This also fixes the `'line'` path, which used to give
+  every line the whole text's runs (a run over `cd` in `'ab cd\nef gh'`
+  also colored `gh`; with `unit="word"` the exporter rejected the runs).
 - An unknown `unit` throws.
 
 ## Implementation
@@ -31,7 +35,10 @@ line's text, the layout style with the line's font runs, without colors,
 `align`, or `lineHeight`) and memoises all of them on their JSON, so a
 frame that changes only colors or progress measures nothing. The split
 into units is memoised on the text, the line ranges, and `unit`. A unit's x is
-the smallest `x` of the glyphs it covers where the measurer reports glyphs; where it
+the smallest left edge of the glyphs it covers where the measurer reports
+glyphs, a cluster of several characters (a ligature such as `ffi` in Noto
+Serif) giving each character its share of the advance, as `textCaret`
+does, so letters of a ligature do not land on one x; where it
 does not (the browser), it is the measured width of the line's text before
 the unit, with the font runs that fall in that prefix.
 
