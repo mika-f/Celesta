@@ -22,7 +22,10 @@ Design: [`docs/superpowers/specs/2026-11-16-animation-text-helpers-design.md`](.
   `<Sequence from={f}>`.
 - It throws, with the key's index, for: no keys, a non-finite `frame`
   argument, key frame, or value, keys out of order, a third key on one
-  frame, values of different shapes, and an unknown easing name.
+  frame, a value that is neither a number nor an object of numbers (an
+  array, `null`), values of different shapes, and an unknown easing name.
+- A number result is typed `number` (`KeyframeValue<T>`), not the union of
+  the keys' literal values.
 
 `frameKeyframes()` is unchanged: it still builds an `Animatable<number>`
 for props that take keyframes (audio volume, playback rate, pitch), with

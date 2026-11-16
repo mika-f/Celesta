@@ -49,7 +49,14 @@ export interface ValueKeyframe<T extends number | Record<string, number>> {
 export function keyframes<T extends number | Record<string, number>>(
   frame: number,
   keys: readonly ValueKeyframe<T>[],
-): T {
+): KeyframeValue<T> {
+  return valueAt(frame, keys) as KeyframeValue<T>;
+}
+
+/** What `keyframes()` returns for keys of `T`: a number for numbers, not the keys' literal values. */
+export type KeyframeValue<T> = T extends number ? number : T;
+
+function valueAt<T extends number | Record<string, number>>(frame: number, keys: readonly ValueKeyframe<T>[]): T {
   if (!Number.isFinite(frame)) {
     throw new Error('keyframes() requires a finite frame');
   }
@@ -60,6 +67,9 @@ export function keyframes<T extends number | Record<string, number>>(
   keys.forEach((key, index) => {
     if (!Number.isFinite(key.frame)) {
       throw new Error(`keyframes() requires a finite frame (key ${index})`);
+    }
+    if (valueShape(key.value) === 'invalid') {
+      throw new Error(`keyframes() requires each value to be a number or an object of numbers (key ${index})`);
     }
     if (valueShape(key.value) !== shape) {
       throw new Error(`keyframes() requires every value to have the same shape (key ${index})`);

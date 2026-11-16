@@ -80,6 +80,19 @@ test('every Easing name resolves to the Easings curve of the same name', () => {
   }
 });
 
+test('a value that is neither a number nor an object of numbers throws', () => {
+  assert.throws(() => keyframes(0, [{ frame: 0, value: [960, 540] as never }]), /a number or an object of numbers \(key 0\)/);
+  assert.throws(() => keyframes(0, [{ frame: 0, value: null as never }]), /a number or an object of numbers \(key 0\)/);
+  assert.throws(() => keyframes(0, [{ frame: 0, value: 0 }, { frame: 1, value: '1' as never }]), /a number or an object of numbers \(key 1\)/);
+  assert.throws(() => keyframes(0, [{ frame: 0, value: { x: '1' } as never }]), /finite value \(key 0\)/);
+});
+
+test('a number result is typed as a number, not as the keys\' literals', () => {
+  const value = keyframes(5, [{ frame: 0, value: 0 }, { frame: 10, value: 4 }]);
+  // Compiles only when the result is `number`: `0 | 4` has no overlap with 2.
+  assert.equal(value === 2, true);
+});
+
 test('a factory name is not an easing name', () => {
   assert.throws(
     () => keyframes(0, [{ frame: 0, value: 0 }, { frame: 1, value: 1, easing: 'cubic-bezier' as never }]),
