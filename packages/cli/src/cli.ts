@@ -22,6 +22,7 @@ import {
   listComponentSchemas,
   listPrimitiveProperties,
   mount,
+  movedToPlugin,
   prepareDependencies,
   setAudioDecoder,
   setMediaProbe,
@@ -152,18 +153,40 @@ export interface ReadyMessage {
   primitiveProperties: Record<string, WirePropertyTable>;
   propertySchema: Record<string, ProjectPropertyField> | null;
   dependencies: PrepareDependency[];
-  /** Imports of the scope before `@celesta.studio`, which still resolve; absent when there are none. */
+  /**
+   * Imports of the scope before `@celesta.studio`, and of the packages that
+   * became plugins, which still resolve; absent when there are none.
+   */
   legacyImports?: LegacyImport[];
 }
 
-/** An import of a package by its name before the `@celesta.studio` scope. */
+/**
+ * An import of a package by its name before the `@celesta.studio` scope, or
+ * of a package that became a first-party plugin (`@celesta.studio/code`).
+ */
 export interface LegacyImport {
   /** The importing file, relative to the entry's directory, with `/` separators. */
   file: string;
-  /** What it imports: `@celesta/react`. */
+  /** What it imports: `@celesta/react`, or `@celesta.studio/code`. */
   specifier: string;
-  /** The current name: `@celesta.studio/react`. */
+  /** What to import instead: `@celesta.studio/react`, or `@celesta-plugin/code`. */
   current: string;
+  /**
+   * For a package that became a plugin, what `celesta plugin add` takes to
+   * add it: its id, with this Celesta's version when that is a pre-release.
+   */
+  plugin?: string;
+}
+
+/**
+ * What `celesta plugin add` takes for the first-party plugin `id`: the id,
+ * or with this Celesta's version when that is a pre-release, which a bare id
+ * (any version, pre-releases left out) would not match. First-party plugins
+ * follow Celesta's version.
+ */
+function pluginRequirement(id: string): string {
+  const { version } = require('../package.json') as { version: string };
+  return version.includes('-') ? `${id}@${version}` : id;
 }
 
 /** The answer to a `FrameRequest`. */
@@ -660,10 +683,16 @@ async function loadEntry(entryPath: string, sourceLocations: boolean): Promise<L
             return { errors: [{ text: `${args.path} is not a Celesta package` }] };
           }
           const current = currentPackageName(args.path);
-          if (current !== args.path) {
+          // Still the bundled package, with a warning naming the plugin.
+          const plugin = movedToPlugin(current);
+          if (current !== args.path || plugin !== undefined) {
             const file = path.relative(entryDirectory, args.importer).split(path.sep).join('/');
             if (!legacyImports.some((known) => known.file === file && known.specifier === args.path)) {
-              legacyImports.push({ file, specifier: args.path, current });
+              legacyImports.push(
+                plugin === undefined
+                  ? { file, specifier: args.path, current }
+                  : { file, specifier: args.path, current: `@celesta-plugin/${plugin}`, plugin: pluginRequirement(plugin) },
+              );
             }
           }
           return { path: pathToFileURL(resolved).href, external: true };

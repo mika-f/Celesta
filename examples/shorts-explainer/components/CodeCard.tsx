@@ -1,10 +1,10 @@
 import { Group, Rect, Text } from '@celesta.studio/react';
-import { highlightCode } from '@celesta.studio/code';
-import type { CodeTheme, HighlightedCodeLine } from '@celesta.studio/code';
+import { highlightCode } from '@celesta-plugin/code';
+import type { CodeTheme, HighlightedCodeLine } from '@celesta-plugin/code';
 import { C, FONT } from '../constants';
 import { Label } from './Label';
 
-// The video's own colors for @celesta.studio/code's token types: tags and calls
+// The video's own colors for @celesta-plugin/code's token types: tags and calls
 // in blue, keywords in pink, attributes in yellow, values in mint.
 const THEME: CodeTheme = {
   foreground: C.codeText,

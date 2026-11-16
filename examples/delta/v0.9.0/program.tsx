@@ -1,6 +1,6 @@
 import type { ComponentType, ReactNode } from 'react';
 import { Group, Rect, Sequence, Span, Text, useCurrentFrame, useScene } from '@celesta.studio/react';
-import type { CodeLanguage } from '@celesta.studio/code';
+import type { CodeLanguage } from '@celesta-plugin/code';
 import { CaptionTrack, LowerThird } from '@celesta.studio/components';
 import { LayoutBounds } from '@celesta.studio/layout';
 import { Backdrop } from '../components/Backdrop';

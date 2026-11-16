@@ -5,7 +5,6 @@
     "test": "tsc -p bench && vitest run"
   },
   "dependencies": {
-    "@celesta.studio/code": "workspace:*",
     "@celesta.studio/components": "workspace:*",
     "@celesta.studio/react": "workspace:*",
     "@celesta.studio/shapes": "workspace:*",

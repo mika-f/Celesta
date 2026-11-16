@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -59,4 +59,21 @@ test('an entry importing only the current names reports no legacy imports', () =
   );
   assert.equal(response.error, undefined);
   assert.equal(response.legacyImports, undefined);
+});
+
+test('an entry importing a package that became a plugin still uses it, naming the plugin', () => {
+  const response = load(
+    `import { Composition } from '@celesta.studio/react';\nimport { voicevoxVowelShape } from '@celesta.studio/voicevox';\n` +
+      `import { lipSyncFromAivisSpeech } from '@celesta/aivis-speech';\n` +
+      `export default () => <Composition width={voicevoxVowelShape && lipSyncFromAivisSpeech ? 10 : 0} height={10} fps={1} durationInFrames={1} />;\n`,
+  );
+  assert.equal(response.error, undefined);
+  assert.equal(response.config?.width, 10);
+  // A pre-release Celesta names its own version, which a bare id would not match.
+  const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
+  const add = (id: string) => (version.includes('-') ? `${id}@${version}` : id);
+  assert.deepEqual(response.legacyImports, [
+    { file: 'entry.tsx', specifier: '@celesta.studio/voicevox', current: '@celesta-plugin/voicevox', plugin: add('voicevox') },
+    { file: 'entry.tsx', specifier: '@celesta/aivis-speech', current: '@celesta-plugin/aivis-speech', plugin: add('aivis-speech') },
+  ]);
 });

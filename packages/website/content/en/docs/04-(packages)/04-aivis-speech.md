@@ -1,8 +1,20 @@
-`@celesta.studio/aivis-speech` reads an AivisSpeech AudioQuery together with the WAV synthesized from it: where each mora, phoneme, and pause falls in the WAV, and a LipSyncTrack built from that timing. Dialogue components and LipSyncTrack are in `@celesta.studio/character`; VOICEVOX voices use [@celesta.studio/voicevox](/en/docs/voicevox/).
+`@celesta-plugin/aivis-speech` reads an AivisSpeech AudioQuery together with the WAV synthesized from it: where each mora, phoneme, and pause falls in the WAV, and a LipSyncTrack built from that timing. Dialogue components and LipSyncTrack are in `@celesta.studio/character`; VOICEVOX voices use [@celesta-plugin/voicevox](/en/docs/voicevox/).
 
 AivisSpeech serves the VOICEVOX API, but its model chooses every phoneme length itself, so the query’s lengths are dummy zeros. The query gives the moras in order, including ん, っ, and punctuation; the WAV gives where they fall. The voice’s start and end are exact; the times inside it are estimated from the WAV’s loudness, so pauses land on the silences the model made.
 
-The desktop app and CLI bundle this package separately. Building the runtime builds it too, and File → Set Up TypeScript includes its declarations and import mapping. It is private and is not published to npm. The browser playground does not support it.
+> [!NOTE]
+> **Add the plugin**
+> `@celesta-plugin/aivis-speech` is a first-party plugin from Celesta's [plugin registry](/en/docs/plugins/#registry-plugins). Add it to the project with the `celesta` command, which declares it in `celesta.config.json`, locks it in `celesta.lock`, and downloads it:
+>
+> ```sh
+> celesta plugin add aivis-speech
+> ```
+>
+> The plugin's versions follow Celesta's. On a pre-release of Celesta, name that version, as in `celesta plugin add aivis-speech@0.10.0-alpha.4`: a requirement without a pre-release matches none. The desktop app does not read `celesta.lock` yet, so for its preview and exports also install the plugin for every project with `celesta plugin install --global aivis-speech` (with the same version on a pre-release).
+>
+> A composition that imports `@celesta.studio/aivis-speech` keeps working: Celesta still includes that package, and warns with the import to use and the `celesta plugin add` command to run.
+
+The browser playground does not support it.
 
 ## Drive a dialogue line from its query and WAV
 
@@ -11,7 +23,7 @@ Use the AudioQuery that produced the WAV: its speedScale, prePhonemeLength, and 
 ```tsx file=examples/aivis-speech.tsx title="aivis-speech.tsx"
 ```
 
-**@celesta.studio/aivis-speech**
+**@celesta-plugin/aivis-speech**
 
 | API | Use it for |
 | --- | --- |

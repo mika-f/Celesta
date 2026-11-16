@@ -2,7 +2,6 @@
   "name": "@celesta.studio/example-spectra",
   "private": true,
   "dependencies": {
-    "@celesta.studio/code": "workspace:*",
     "@celesta.studio/components": "workspace:*",
     "@celesta.studio/layout": "workspace:*",
     "@celesta.studio/math": "workspace:*",

@@ -1,5 +1,5 @@
 // What `<Vrm>` sends: the layer's data as a pure function of the frame
-// (`vrmData`), the host element's props (`vrmElementProps`), and the layer a
+// (`vrmData`), the `<PluginLayer>` props (`vrmElementProps`), and the layer a
 // mounted composition renders. Run after `pnpm run build:runtime`
 // (repository root), which builds the `@celesta.studio/react` and
 // `@celesta.studio/character` the module imports.
@@ -207,14 +207,14 @@ test('element_props_keep_only_the_common_ones', () => {
     tracks: { head: { yaw: [{ frame: 0, value: 0 }] } },
   };
   const element = vrmElementProps(props, 45, 30);
-  assert.deepEqual(Object.keys(element).sort(), ['data', 'id', 'scale', 'src', 'time', 'x']);
+  assert.deepEqual(Object.keys(element).sort(), ['assets', 'data', 'id', 'plugin', 'scale', 'time', 'x']);
+  assert.equal(element.plugin, 'vrm');
+  assert.deepEqual(element.assets, { model: src });
   // Motions add their clips, by asset name, for the layer to resolve.
   const moving = vrmElementProps({ ...props, motions: [{ src: './idle.vrma' }] }, 45, 30);
-  assert.deepEqual(Object.keys(moving).sort(), ['clips', 'data', 'id', 'scale', 'src', 'time', 'x']);
-  assert.deepEqual(moving.clips, { motion0: './idle.vrma' });
+  assert.deepEqual(moving.assets, { model: src, motion0: './idle.vrma' });
   assert.equal(element.scale, 0.5);
   assert.equal(element.x, 10);
-  assert.equal(element.src, src);
   assert.equal(element.time, 1.5);
   assert.deepEqual(element.data, vrmData(props, 45, 30));
 });

@@ -1,7 +1,7 @@
 // Builds plugins into plugin directories Celesta loads: for each, its manifest
 // (celesta-plugin.json), its process when it has one, the component module
 // entries import as `@celesta-plugin/<id>` and that module's declarations
-// when it has one, and the license files it lists, under licenses/. Each
+// (js/index.d.ts and the files it imports from) when it has one, and the license files it lists, under licenses/. Each
 // plugin's plugin.json says what it has, its version and roles included. A
 // plugin with a process gives the same version in its Cargo package, and one
 // whose versions differ is refused before that plugin is built. Every
@@ -37,7 +37,7 @@
 // lists.
 import { spawnSync } from 'node:child_process';
 import type { SpawnSyncOptions } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -217,8 +217,11 @@ async function buildModule(source: string, out: string, module: string): Promise
     }),
   );
   run(process.execPath, [fromRuntime.resolve('typescript/bin/tsc'), '-p', join(types, 'tsconfig.json')]);
-  mkdirSync(join(out, 'js'), { recursive: true });
-  copyFileSync(join(types, 'out', 'index.d.ts'), join(out, 'js', 'index.d.ts'));
+  // Every declaration file, in the layout of the module's sources: a module
+  // of several files has an index.d.ts that re-exports from the others.
+  rmSync(join(out, 'js'), { recursive: true, force: true });
+  cpSync(join(types, 'out'), join(out, 'js'), { recursive: true });
+  if (!existsSync(join(out, 'js', 'index.d.ts'))) fail(`${entry} gave no index.d.ts; name the module's entry index.ts`);
   rmSync(types, { recursive: true, force: true });
 
   // `react`, `@celesta.studio/*`, and Node's modules stay imports: the CLI points

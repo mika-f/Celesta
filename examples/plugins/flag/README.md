@@ -30,7 +30,7 @@ where you drag, as **Add > Image** does: its manifest lists the component
 ## How it works
 
 - [`js/index.ts`](js/index.ts) is the module entries import. `<Flag>` renders
-  a host element, and the function registered for it turns its props into
+  a `<PluginLayer>` from `@celesta.studio/react`, which turns its props into
   plugin content: plugin `flag`, the image as asset `image`, the sequence's
   time, and the wave settings as `data`.
 - [`src/lib.rs`](src/lib.rs) is the plugin's `ContentProvider`. `open` reads

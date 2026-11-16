@@ -9,7 +9,7 @@ import { readFile } from 'node:fs/promises';
 import { Easings, Group, Rect, Text, progress } from '@celesta.studio/react';
 import { buildEnvelope, decodeWav } from '@celesta.studio/character';
 import type { MouthShape } from '@celesta.studio/character';
-import { timingFromVoicevox } from '@celesta.studio/voicevox';
+import { timingFromVoicevox } from '@celesta-plugin/voicevox';
 
 import type { ZundaFace } from '../../script.ts';
 import { FACE_PARADE, faceAt } from '../cast/acting.ts';

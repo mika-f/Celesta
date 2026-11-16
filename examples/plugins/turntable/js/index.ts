@@ -8,33 +8,19 @@
 
 import * as React from 'react';
 
-import { useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
-import type { CommonProps, LayerContent } from '@celesta.studio/react';
-import { registerHostElement } from '@celesta.studio/react/internal';
-import type { HostNode } from '@celesta.studio/react/internal';
+import { PluginLayer } from '@celesta.studio/react';
+import type { CommonProps } from '@celesta.studio/react';
 
 export interface TurntableProps extends CommonProps {
   /** Turns of the cube each second; negative turns it the other way. Default 0.5. */
   speed?: number;
 }
 
-const ELEMENT = 'celesta-plugin-turntable';
-
-export function Turntable(props: TurntableProps): React.ReactElement {
-  const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
-  return React.createElement(ELEMENT, { ...props, time: frame / fps });
-}
-
 /** The layer the plugin draws: no assets, the speed as data. */
-function turntableContent(node: HostNode): LayerContent {
-  const props = node.props as unknown as TurntableProps & { time: number };
-  return {
-    type: 'plugin',
+export function Turntable({ speed, ...common }: TurntableProps): React.ReactElement {
+  return React.createElement(PluginLayer, {
+    ...common,
     plugin: 'turntable',
-    time: props.time,
-    ...(props.speed !== undefined ? { data: { speed: props.speed } } : {}),
-  };
+    ...(speed !== undefined ? { data: { speed } } : {}),
+  });
 }
-
-registerHostElement(ELEMENT, { content: turntableContent });

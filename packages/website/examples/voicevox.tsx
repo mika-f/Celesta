@@ -4,7 +4,7 @@ import { Character, CharacterView, Dialogue } from '@celesta.studio/character';
 import type { AssetReference } from '@celesta.studio/react';
 import type { CharacterViewReference } from '@celesta.studio/character';
 
-import { lipSyncFromVoicevox } from '@celesta.studio/voicevox';
+import { lipSyncFromVoicevox } from '@celesta-plugin/voicevox';
 import query from './voicevox-query.json';
 
 const track = lipSyncFromVoicevox(query);

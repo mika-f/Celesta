@@ -1,7 +1,7 @@
 // The beep-voice plugin, imported by entries as `@celesta-plugin/beep-voice`:
 // a speech channel that voices dialogue lines with game-style beeps, one per
 // character, instead of a speech engine. It has no process of its own; its
-// module runs in the entry's `prepare()`, as `@celesta.studio/voicevox` does, and
+// module runs in the entry's `prepare()`, as `@celesta-plugin/voicevox` does, and
 // hands `planDialogue()` lines with `audio` and `lipSync` set, so
 // `<DialogueSeries>` and `<CharacterView>` treat them like any other voice.
 //

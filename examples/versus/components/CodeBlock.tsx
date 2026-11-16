@@ -1,5 +1,5 @@
 import { Group, Rect, Text, useTextMetrics } from '@celesta.studio/react';
-import { Code, type CodeTheme } from '@celesta.studio/code';
+import { Code, type CodeTheme } from '@celesta-plugin/code';
 import { useMemo } from 'react';
 import { FONT } from '../constants';
 

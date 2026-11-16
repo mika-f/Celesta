@@ -41,11 +41,11 @@ or `ERROR:` per frame (`UNSUPPORTED inspection:` for text it cannot measure). Di
 
 | Message | Cause and fix |
 | --- | --- |
-| `UNSUPPORTED inspection: inspect.mjs cannot shape text, …` | Not a scene error: without an exporter, `inspect.mjs` cannot run `useTextMetrics`/`measureText`/`TextBox`/`useFitText`/`fitText`/`@celesta.studio/code`/`subtitle.render` `metrics`. No exporter supporting `--inspect` was found (or `--no-native` was given): rerun with `--native <Celesta-export>` ([verify.md](verify.md#measured-text---native)), or verify with a PNG export. |
+| `UNSUPPORTED inspection: inspect.mjs cannot shape text, …` | Not a scene error: without an exporter, `inspect.mjs` cannot run `useTextMetrics`/`measureText`/`TextBox`/`useFitText`/`fitText`/`@celesta-plugin/code`/`subtitle.render` `metrics`. No exporter supporting `--inspect` was found (or `--no-native` was given): rerun with `--native <Celesta-export>` ([verify.md](verify.md#measured-text---native)), or verify with a PNG export. |
 | `… exited before the inspection handshake` (inspect.mjs `--native`) | The exporter is older than `--inspect`: update Celesta, or verify with PNG frames / a contact sheet ([verify.md](verify.md#look-at-real-frames)). |
 | `fitText: … must be a finite number greater than 0` / `maxFontSize … must not be less than minFontSize` / `maxLines must be a whole number of at least 1` | Fix the `TextBox`/`useFitText`/`fitText` options. |
 | `<TextBox> text "…" does not fit W×H … even at minFontSize N` | `overflow="error"` and the text is too long: shorten it, enlarge the box, allow more lines, or lower `minFontSize`. |
-| `Code only supports left alignment` / `Code requires positive fontSize and lineHeight` / `Code line is out of range` / `Code column is out of range` | Fix `@celesta.studio/code` props; positions are one-based ([code.md](code.md)). |
+| `Code only supports left alignment` / `Code requires positive fontSize and lineHeight` / `Code line is out of range` / `Code column is out of range` | Fix `@celesta-plugin/code` props; positions are one-based ([code.md](code.md)). |
 | `warning: font family "X" (weight N) is not installed or loaded; text layer "…" uses a fallback font` | Load the font with `<Font src>` and use its internal family name ([text.md](text.md#fonts-fallback-and-emoji)). |
 | `warning: font family "X" (weight 400) has no glyph for "…"; text layer "y" draws them with a fallback font` | The family lacks those characters. With `<Font google text>` or a Google Fonts `text=` URL, add the characters to `text`; with `<Font google subsets>`, add their script or omit `subsets`; otherwise pick a family that covers them. Emoji are reported only when no font has them; then load an emoji font with `<Font>`. |
 

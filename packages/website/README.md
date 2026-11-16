@@ -80,8 +80,9 @@ packages/website/
   `public/showcase/` and the showcase's fonts, licenses, and portraits to `public/showcase-assets/`.
 - **`examples/`**: complete documentation examples, including the VOICEVOX and AivisSpeech
   entries. They are excluded from the site's type-check and checked by `pnpm check:examples`
-  against the real `@celesta.studio/react` and the separately staged `@celesta.studio/voicevox` and
-  `@celesta.studio/aivis-speech` instead.
+  against the real `@celesta.studio/react` instead, with the first-party plugins they import
+  (`@celesta-plugin/voicevox`, `@celesta-plugin/aivis-speech`, `@celesta-plugin/code`) staged
+  as Celesta stages an installed plugin's declarations (`scripts/check-examples.mjs`).
 
 ## Adding a chapter
 
@@ -301,8 +302,9 @@ pnpm check:examples
 pnpm deploy:check
 ```
 
-`check:examples` uses the declarations staged by `packages/cli`'s build
-(`dist/project-types/`); run `pnpm run build:runtime` from the repository root first.
+`check:examples` copies the declarations staged by `packages/cli`'s build
+(`dist/project-types/`) to `.celesta/`, which ignores itself in Git, with the plugins' under
+`.celesta/plugins/<id>/`; run `pnpm run build:runtime` from the repository root first.
 
 Then run `pnpm preview:cloudflare` and check, at desktop and mobile widths in light and dark:
 `/` redirects by `Accept-Language`; `/docs/export/` reaches `/en/docs/export/` in an English
@@ -314,5 +316,5 @@ languages, and the language switch on documentation and static pages.
 The user guide follows the React workflow in the root README. Keep CLI flags aligned with
 `crates/exporter/src/main.rs` and `crates/editor/src/cli.rs`, package import examples aligned
 with each package's public `src/index.ts`, and run `pnpm check:examples` after changing any
-example. In particular, VOICEVOX and AivisSpeech adapters are imported from `@celesta.studio/voicevox`
-and `@celesta.studio/aivis-speech`, not `@celesta.studio/react`.
+example. In particular, VOICEVOX and AivisSpeech adapters are imported from the plugins
+`@celesta-plugin/voicevox` and `@celesta-plugin/aivis-speech`, not `@celesta.studio/react`.

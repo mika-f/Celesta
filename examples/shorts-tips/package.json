@@ -2,7 +2,6 @@
   "name": "@celesta.studio/example-shorts-tips",
   "private": true,
   "dependencies": {
-    "@celesta.studio/code": "workspace:*",
     "@celesta.studio/project": "workspace:*",
     "@celesta.studio/react": "workspace:*",
     "@celesta.studio/shapes": "workspace:*",

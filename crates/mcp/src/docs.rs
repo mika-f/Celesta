@@ -54,7 +54,7 @@ pub static TOPICS: &[Topic] = &[
     ),
     reference!(
         "code",
-        "Syntax-highlighted and typed code (@celesta.studio/code)"
+        "Syntax-highlighted and typed code (the code plugin, @celesta-plugin/code)"
     ),
     reference!(
         "helpers",

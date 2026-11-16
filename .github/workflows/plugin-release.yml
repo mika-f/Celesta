@@ -1,14 +1,14 @@
 name: Plugin release
 
-# Builds the first-party media plugins (ffmpeg, ffmpeg-x264, avfoundation,
-# mediafoundation) for each target and publishes them to
-# registry.celesta.studio, on the same release tags as package.yml. The
+# Builds the first-party plugins for each target and publishes them to
+# registry.celesta.studio, on the same release tags as package.yml: those with
+# a process (ffmpeg, ffmpeg-x264, avfoundation, mediafoundation, vrm) once per
+# target, and the component-only ones (aivis-speech, code, lottie, voicevox)
+# once, for the target `any`. The
 # registry allows this workflow's tag runs through the PUBLISH_WORKFLOW_REFS
 # entry `mika-f/Celesta/.github/workflows/plugin-release.yml@refs/tags/v*`,
 # so keep this file's name. There is no workflow_dispatch: a run from a
 # branch would need an exact `@refs/heads/<branch>` entry of its own there.
-# vrm is not published until it no longer needs @celesta.studio/react/internal
-# (docs/handoff/2026-11-14-plugin-registry-design.md).
 
 on:
   push:
@@ -53,7 +53,8 @@ jobs:
       - uses: actions/checkout@v7.0.1
 
       # The plugins' manifests take their `celesta` range from the workspace
-      # version, and the media plugins give that version as their own.
+      # version, and every first-party plugin gives that version as its own
+      # (FOLLOWS_CELESTA in scripts/plugins/version.mts).
       - name: Check release tag matches the workspace version
         id: version
         env:
@@ -64,20 +65,21 @@ jobs:
             echo "Release $RELEASE_TAG does not match the workspace version $version in Cargo.toml" >&2
             exit 1
           fi
-          for plugin in ffmpeg ffmpeg-x264 avfoundation mediafoundation; do
-            plugin_version="$(node -p "require('./plugins/$plugin/plugin.json').version")"
+          for manifest in plugins/*/plugin.json; do
+            plugin_version="$(node -p "require('./$manifest').version")"
             if [[ "$plugin_version" != "$version" ]]; then
-              echo "plugins/$plugin/plugin.json gives $plugin_version, not the workspace version $version; run node scripts/plugins/bump-version.mts" >&2
+              echo "$manifest gives $plugin_version, not the workspace version $version; run node scripts/plugins/bump-version.mts" >&2
               exit 1
             fi
           done
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-  # Each runner builds the plugins that run on its system and writes one
-  # registry archive per plugin, target/registry/<id>/<target>.zip (the
-  # plugin directory's contents at the root), with package-media-plugins.py:
-  # the same build, licence collection, library bundling and macOS signing
-  # and notarization as the release's ffmpeg-x264 download.
+  # Each runner builds the plugins with a process that run on its system and
+  # writes one registry archive per plugin, target/registry/<id>/<target>.zip
+  # (the plugin directory's contents at the root), with
+  # package-media-plugins.py: the same build, licence collection, library
+  # bundling and macOS signing and notarization as the release's ffmpeg-x264
+  # download.
   build:
     name: Build ${{ matrix.target }}
     needs: validate
@@ -132,6 +134,15 @@ jobs:
         with:
           version: 2026.11.4
           cache_save: false
+
+      # vrm's module: build.mts checks a module's declarations against the
+      # runtime's project types and bundles it with the runtime's esbuild.
+      # Codegen first, as in ci.yml, to add --locked.
+      - name: Build Celesta packages
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --dir packages/react run codegen --locked
+          pnpm run build:runtime
 
       # As package-build.yml: a throwaway keychain, made the default so
       # codesign finds the Developer ID identity and notarytool finds the
@@ -196,6 +207,51 @@ jobs:
           path: target/registry/
           if-no-files-found: error
 
+  # The component-only plugins: a module each and no program, so one archive
+  # (target/registry/<id>/any.zip) serves every system and one runner builds
+  # them all.
+  components:
+    name: Build the component plugins
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Isolate Rust toolchain
+        run: echo "RUSTUP_HOME=$RUNNER_TEMP/celesta-rustup" >> "$GITHUB_ENV"
+
+      # @celesta.studio/react's codegen runs Cargo.
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: 1.99.1
+
+      - uses: jdx/mise-action@v5.2.7
+        with:
+          version: 2026.11.4
+          cache_save: false
+
+      - name: Build Celesta packages
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --dir packages/react run codegen --locked
+          pnpm run build:runtime
+
+      - name: Build registry archives
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          # PLUGIN_TARGETS is split into one argument per target on purpose.
+          # shellcheck disable=SC2086
+          python3 scripts/package-media-plugins.py --registry --targets $PLUGIN_TARGETS \
+            --version "$VERSION" --plugins aivis-speech code lottie voicevox
+
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: registry-plugins-any
+          path: target/registry/
+          if-no-files-found: error
+
   # Attests every archive and publishes each plugin in this one job, so the
   # attestation comes from the run that publishes (the registry checks the
   # bundle's workflow, commit and run against the publish token's). Every
@@ -204,7 +260,7 @@ jobs:
   # is "1".
   publish:
     name: Publish to the registry
-    needs: [validate, build]
+    needs: [validate, build, components]
     runs-on: ubuntu-latest
     permissions:
       contents: read

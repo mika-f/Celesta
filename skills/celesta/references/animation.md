@@ -66,7 +66,7 @@ For randomness and noise, use [`@celesta.studio/math`](math.md).
 | A line being drawn | `Polyline progress` ([react-core.md](react-core.md#path-line-polyline)) |
 | An arrow growing toward its target | `Arrow` with animated `x2`/`y2` ([react-core.md](react-core.md#circle-ellipse-arrow)) |
 | Text revealed line by line, typed, or a counting number | `TextReveal`, `useTypewriter`, `useCountUp` ([text.md](text.md#text-motion)); `Counter`, `StatCard`, and `BarChart` from `@celesta.studio/components` ([react-core.md](react-core.md#counter-statcard-barchart-ranking-numbers-and-bar-charts)) |
-| Code being typed | `@celesta.studio/code` with `useTypewriter` ([code.md](code.md)) |
+| Code being typed | `@celesta-plugin/code` with `useTypewriter` ([code.md](code.md)) |
 
 ## Hooks
 

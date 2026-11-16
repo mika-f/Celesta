@@ -1,0 +1,7 @@
+{
+  "id": "aivis-speech",
+  "name": "AivisSpeech",
+  "version": "0.10.0-alpha.3",
+  "module": "../../packages/aivis-speech/src/index.ts",
+  "licenses": ["../../LICENSE-MIT", "../../LICENSE-APACHE"]
+}

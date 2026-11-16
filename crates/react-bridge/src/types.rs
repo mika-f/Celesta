@@ -258,26 +258,39 @@ pub struct PrepareDependency {
 }
 
 /// An import of a Celesta package by its name before the `@celesta.studio`
-/// scope (`@celesta/react`). The runtime still resolves it, and the editor
-/// and the exporter warn about it.
+/// scope (`@celesta/react`), or of a package that became a first-party
+/// plugin (`@celesta.studio/code`). The runtime still resolves it, and the
+/// editor and the exporter warn about it.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct LegacyImport {
     /// The importing file, relative to the entry's directory, with `/`
     /// separators.
     pub file: String,
-    /// What it imports: `@celesta/react`.
+    /// What it imports: `@celesta/react`, or `@celesta.studio/code`.
     pub specifier: String,
-    /// The package's current name: `@celesta.studio/react`.
+    /// What to import instead: `@celesta.studio/react`, or
+    /// `@celesta-plugin/code`.
     pub current: String,
+    /// For a package that became a plugin, what `celesta plugin add` takes
+    /// to add it: `code`, or `code@0.10.0-alpha.4` on a pre-release.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin: Option<String>,
 }
 
 impl std::fmt::Display for LegacyImport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{} imports {}, an old name; import {} instead",
-            self.file, self.specifier, self.current
-        )
+        match &self.plugin {
+            Some(plugin) => write!(
+                f,
+                "{} imports {}, which is now a plugin; run `celesta plugin add {}` and import {} instead",
+                self.file, self.specifier, plugin, self.current
+            ),
+            None => write!(
+                f,
+                "{} imports {}, an old name; import {} instead",
+                self.file, self.specifier, self.current
+            ),
+        }
     }
 }
 

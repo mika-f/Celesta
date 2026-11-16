@@ -9,8 +9,8 @@
 import { useCurrentFrame } from '@celesta.studio/react';
 import { planDialogue } from '@celesta.studio/character';
 import type { DialoguePlan, PlannedDialogueLine } from '@celesta.studio/character';
-import { prepareNarration } from '@celesta.studio/voicevox';
-import type { NarratedLine, NarrationLine, VoicevoxVoice } from '@celesta.studio/voicevox';
+import { prepareNarration } from '@celesta-plugin/voicevox';
+import type { NarratedLine, NarrationLine, VoicevoxVoice } from '@celesta-plugin/voicevox';
 
 import { LINES } from '../script.ts';
 import type { Line, SceneId } from '../script.ts';

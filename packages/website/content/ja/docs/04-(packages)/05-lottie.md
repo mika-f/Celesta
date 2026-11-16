@@ -1,6 +1,18 @@
-`@celesta.studio/lottie` は、After Effects から Bodymovin で書き出した Lottie の JSON を、コンポジションのフレームに合わせて描きます。各フレームはその時刻だけから決まるパス・グループ・マスクとして描かれるので、プレビュー、書き出し、`@celesta.studio/web` のどれでも同じ絵になり、どのフレームへスクラブしても再生したときと同じ結果になります。
+`@celesta-plugin/lottie` は、After Effects から Bodymovin で書き出した Lottie の JSON を、コンポジションのフレームに合わせて描きます。各フレームはその時刻だけから決まるパス・グループ・マスクとして描かれるので、プレビュー、書き出し、`@celesta.studio/web` のどれでも同じ絵になり、どのフレームへスクラブしても再生したときと同じ結果になります。
 
-デスクトップアプリ、CLI、`@celesta.studio/web` に同梱されています。非公開パッケージのため npm では配布していません。
+> [!NOTE]
+> **プラグインを追加する**
+> `@celesta-plugin/lottie` は Celesta の[プラグインレジストリ](/ja/docs/plugins/#レジストリのプラグイン)にある公式プラグインです。`celesta` コマンドでプロジェクトに追加すると、`celesta.config.json` に宣言し、`celesta.lock` にバージョンを記録して、ダウンロードします。
+>
+> ```sh
+> celesta plugin add lottie
+> ```
+>
+> プラグインのバージョンは Celesta と同じです。Celesta のプレリリースでは、`celesta plugin add lottie@0.10.0-alpha.4` のようにそのバージョンを指定してください。プレリリースを含まない指定はプレリリースに一致しません。デスクトップアプリはまだ `celesta.lock` を読まないため、アプリのプレビューと書き出しには `celesta plugin install --global lottie` でも全プロジェクト向けにインストールしてください（プレリリースでは同じくバージョンを指定します）。
+>
+> `@celesta.studio/lottie` をインポートするコンポジションもそのまま動きます。Celesta はそのパッケージを引き続き同梱し、使うべきインポートと実行する `celesta plugin add` コマンドを警告で示します。
+
+ブラウザのプレイグラウンド（`@celesta.studio/web`）ではプラグインは不要です。`@celesta-plugin/lottie` をそのまま使えます。
 
 ## アニメーションを置く
 
@@ -8,7 +20,7 @@ JSON ファイルを読み込み、その内容を `data` に渡します。
 
 ```tsx
 import { Composition, Sequence } from '@celesta.studio/react';
-import { Lottie } from '@celesta.studio/lottie';
+import { Lottie } from '@celesta-plugin/lottie';
 
 import confetti from './confetti.json';
 

@@ -153,7 +153,7 @@ produces a video that differs between preview and export.
      a React entry exactly like Celesta does, runs `prepare()`, evaluates
      frames, and reports every layer, audio clip, and missing media file.
      Entries that measure text (`useTextMetrics`, `TextBox`, `fitText`,
-     `@celesta.studio/code`, …) are evaluated through the exporter, which it finds
+     `@celesta-plugin/code`, …) are evaluated through the exporter, which it finds
      in the usual install and build locations or takes from
      `--native <Celesta-export>`; without one those frames report
      `UNSUPPORTED inspection` and exit code 2
@@ -190,7 +190,6 @@ layers sit; it does not prove the rendered pixels.
 | --- | --- |
 | `@celesta.studio/react` | `Composition`, `Sequence`, `Series`, `Scenes`/`defineScenes`/`useScene`, `listChapters` (`<Composition chapters>`), `Stagger`, `FreezeFrame`, `MotionBlur`, `Trail`, `Group`, `Rect`, `Text`, `Span`, `Theme`/`useTheme`, `Image`, `Video`, `Audio`, `Font`, `Assets`, `useCurrentFrame`/`useCurrentTime`/`useVideoConfig`/`useIsPreview`/`useDebugGuides`, `interpolate`, `interpolateColor`, `Easings`, `spring`, `progress`, `frameKeyframes`, `useBeat`/`useCue`, timecodes, `parseSubtitles`/`formatSubtitles`/`Subtitles`, `measureText`/`useTextMetrics`/`textCaret`, `registerComponent`, `defineProjectProperties`/`getProjectProperty`, and the scene types |
 | `@celesta.studio/shapes` | `Line`, `Polyline`, `Path`, `Circle`, `Ellipse`, `Arrow`, `Triangle`, `Polygon`, `Star`, `Pie`, `Heart`, `pointOnPolyline`, `trianglePath`/`polygonPath`/`starPath`/`piePath`/`heartPath`, `pointOnPath`/`tangentOnPath`, `measurePath`/`getLength`/`getPointAtLength`/`getTangentAtLength`, `interpolatePath`, `trimPath`, `parseSvgPath`/`toSvgPath` |
-| `@celesta.studio/lottie` | `Lottie` (Lottie/Bodymovin JSON animations), `inspectLottie`, `lottieFrameAt`, and the Lottie file types |
 | `@celesta.studio/shader` | `defineShader` (custom WGSL filters for the `shader` prop), and the built-in filters for the same array: the color filters `brightness`, `contrast`, `saturation`, `hue`, `grayscale`, `invert`, `tint`, `vignette`, the stylize effects `pixelate`, `halftone`, `chromaticAberration`, `wave`, `noise`, `scanlines`, `zoomBlur`, and `chromaKey` |
 | `@celesta.studio/components` | `FrameChrome` (corner brackets, title, timecode, chapter, and progress bar around the picture), `PatternBackground` (dots, grid, stripes, or custom marks repeated over an area), `Panel` (a sized box with background, border, padding, shadow, and clip), `Badge` (a label or chip sized from its measured text), `Counter` (a counting number with a fixed locale, decimals, prefix/suffix), `StatCard` (a card with a label, a counting number, and a note), `BarChart` and `Ranking` (horizontal bars that grow while their values count up, with ranks), `Callout` (a measured note box with a line and arrowhead to a target point), `formatNumber`, `MediaFrame` (an image or a video fitted into a framed box, contain or cover, with a caption), `CaptionTrack` (timed captions from data on a band, wrapped, emphasized, and faded, or lit word by word and paged), `Motion` (one element's entrance, hold, and exit), `TitleCard` (chapter number, kicker, fitted title, and subtitle as one title screen), `TypewriterText` (text typed out with a measured caret), `LowerThird` (a name and role on a band in a corner of the frame) |
 | `@celesta.studio/layout` | `Center`, `Stack`, `Grid`, `Fit`, `SafeArea`, `safeAreaInsets`, `LayoutBounds`, `useLayoutBounds`, `Camera` |
@@ -201,9 +200,32 @@ layers sit; it does not prove the rendered pixels.
 | `@celesta.studio/project` | `ProjectProvider`, `ProjectTimeline`, `ProjectTrack`, `useProject`, `useProjectProperty`, `useProjectTrack`, `loadProject`, and the project file types |
 | `@celesta.studio/debug` | `DebugOverlay`, `DebugBounds` |
 | `@celesta.studio/math` | `random`, `noise`, `loopNoise`, and math helpers |
-| `@celesta.studio/code` | `Code`, `highlightCode`, and syntax highlighting |
-| `@celesta.studio/voicevox` | `prepareNarration` (synthesize and cache a script's voices with VOICEVOX Engine), `NarrationError`, `lipSyncFromVoicevox`, `timingFromVoicevox`, `voicevoxVowelShape`, and their types |
-| `@celesta.studio/aivis-speech` | `lipSyncFromAivisSpeech`, `timingFromAivisSpeech`, and their types |
+
+### First-party plugins
+
+These come from Celesta's plugin registry (see
+[plugins.md](references/plugins.md#registry-plugins)), are imported as
+`@celesta-plugin/<id>`, and follow Celesta's version:
+
+| Plugin | Provides |
+| --- | --- |
+| `@celesta-plugin/code` | `Code`, `highlightCode`, and syntax highlighting |
+| `@celesta-plugin/lottie` | `Lottie` (Lottie/Bodymovin JSON animations), `inspectLottie`, `lottieFrameAt`, and the Lottie file types |
+| `@celesta-plugin/voicevox` | `prepareNarration` (synthesize and cache a script's voices with VOICEVOX Engine), `NarrationError`, `lipSyncFromVoicevox`, `timingFromVoicevox`, `voicevoxVowelShape`, and their types |
+| `@celesta-plugin/aivis-speech` | `lipSyncFromAivisSpeech`, `timingFromAivisSpeech`, and their types |
+| `@celesta-plugin/vrm` | `Vrm` (VRM 1.0 avatars in 3D; a program per system) |
+
+A project that uses one declares it: `celesta plugin add <id>` (with
+Celesta's version on a pre-release, `code@0.10.0-alpha.4`, since a bare id
+matches no pre-release) writes `plugins.dependencies` in
+`celesta.config.json` and `celesta.lock`; run it only when the user wants
+the plugin added. The four component plugins were packages
+(`@celesta.studio/code`, `@celesta.studio/lottie`,
+`@celesta.studio/voicevox`, `@celesta.studio/aivis-speech`): those imports
+still work, and warn (``<file> imports @celesta.studio/code, which is now a
+plugin; run `celesta plugin add code` and import @celesta-plugin/code
+instead``). Write `@celesta-plugin/<id>` in new code. The browser
+playground serves `code` and `lottie` under either import without a plugin.
 
 An import from the wrong package fails with `@celesta.studio/react does not export
 Circle; import it from @celesta.studio/shapes`; move it to the named package. Code
@@ -228,7 +250,7 @@ Load only the one you need; each is self-contained.
 | Frame hooks, `interpolate`, `interpolateColor`, `Easings`, `spring`, `progress`, `Sequence`, `Series`, `Scenes`/`useScene`, `<Composition chapters>`/`listChapters`, `FrameChrome`, `TransitionSeries`, `Stagger`, `Motion`, `Transition`, `useBeat`, `useCue`, `Camera`, timecodes | [animation.md](references/animation.md) |
 | `Text`, `TextStyle`, shorthand props and `Theme`, fonts and fallback, font stacks (和欧混植), text language (`lang`), emoji, line breaking, `TextReveal`, `TypewriterText`, `useTypewriter`, `useCountUp`, `useTextMetrics`/`measureText`, `TextBox`/`useFitText`/`fitText`, `TitleCard`, `LowerThird` | [text.md](references/text.md) |
 | Subtitle files: reading SRT/WebVTT (`parseSubtitles`), drawing timed captions from data (`CaptionTrack`), `<Subtitles>`, writing them with `formatSubtitles` or `--subtitles` on export | [subtitles.md](references/subtitles.md) |
-| Syntax-highlighted code, typing code, highlighted lines, carets, drawing code lines yourself (`@celesta.studio/code`) | [code.md](references/code.md) |
+| Syntax-highlighted code, typing code, highlighted lines, carets, drawing code lines yourself (`@celesta-plugin/code`) | [code.md](references/code.md) |
 | About to write a small helper (clamp, eased progress, random hash, timecode, text width, current section): the API that already does it | [helpers.md](references/helpers.md) |
 | Seeded random, noise, clamp/lerp/remap, waves, angles, points (`@celesta.studio/math`) | [math.md](references/math.md) |
 | A seamless loop (Shorts, TikTok): loop length from beats and bars, periodic motion, looping noise, folding the music's tail back, `inspect.mjs --loop`, exporting with `--loop` | [loops.md](references/loops.md) |

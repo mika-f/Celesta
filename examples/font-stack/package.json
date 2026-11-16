@@ -2,7 +2,6 @@
   "name": "@celesta.studio/example-font-stack",
   "private": true,
   "dependencies": {
-    "@celesta.studio/code": "workspace:*",
     "@celesta.studio/react": "workspace:*",
     "@celesta.studio/text": "workspace:*",
     "react": "^19.3.0"
