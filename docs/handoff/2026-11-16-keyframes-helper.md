@@ -45,4 +45,6 @@ after it, which gives the cut rule without a special case. Exported from
 - `pnpm --filter @celesta.studio/react test`.
 - `node skills/celesta/scripts/inspect.mjs packages/cli/examples/with-keyframes.tsx --frames 0,60,119,120,179`:
   the camera group is at scale 2.2 looking at (557.4, 380) on frame 119 and
-  at scale 1.8 looking at (1400, 760) on frame 120.
+  at scale 1.8 looking at (1300, 700) on frame 120.
+- `celesta-exporter --react packages/cli/examples/with-keyframes.tsx --frames 60,119,120 frame.png`,
+  looked at: frame 119 shows the harbor, frame 120 the observatory.

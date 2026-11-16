@@ -18,14 +18,14 @@ const CAMERA = [
   { frame: 90, value: { x: 520, y: 380, zoom: 2.2 } },
   // Two keys on one frame cut: frame 120 already shows the second.
   { frame: 120, value: { x: 560, y: 380, zoom: 2.2 }, easing: 'ease-in-quad' as const },
-  { frame: 120, value: { x: 1400, y: 760, zoom: 1.8 } },
+  { frame: 120, value: { x: 1300, y: 700, zoom: 1.8 } },
   // A slightly different value drifts through the rest of the shot.
-  { frame: 180, value: { x: 1440, y: 740, zoom: 1.9 } },
+  { frame: 180, value: { x: 1330, y: 690, zoom: 1.9 } },
 ];
 
 const PLACES = [
   { x: 520, y: 380, name: 'Harbor', color: '#5FD3B5' },
-  { x: 1400, y: 760, name: 'Observatory', color: '#F2B544' },
+  { x: 1300, y: 700, name: 'Observatory', color: '#F2B544' },
   { x: 1180, y: 260, name: 'Market', color: '#E96A6A' },
 ];
 
