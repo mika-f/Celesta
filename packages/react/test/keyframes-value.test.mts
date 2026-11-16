@@ -93,6 +93,19 @@ test('a number result is typed as a number, not as the keys\' literals', () => {
   assert.equal(value === 2, true);
 });
 
+test('fields of keys declared as const are typed as numbers', () => {
+  const CAMERA = [
+    { frame: 0, value: { x: 960, zoom: 1 } },
+    { frame: 60, value: { x: 520, zoom: 2.2 } },
+  ] as const;
+  const cam = keyframes(30, CAMERA);
+  // Compiles only when the fields are `number`: `960 | 520` has no overlap with 740.
+  assert.equal(cam.x === 740, true);
+  let zoom = cam.zoom;
+  zoom = 1.6;
+  assert.equal(zoom, 1.6);
+});
+
 test('a factory name is not an easing name', () => {
   assert.throws(
     () => keyframes(0, [{ frame: 0, value: 0 }, { frame: 1, value: 1, easing: 'cubic-bezier' as never }]),

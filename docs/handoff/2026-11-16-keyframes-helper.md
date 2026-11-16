@@ -24,8 +24,11 @@ Design: [`docs/superpowers/specs/2026-11-16-animation-text-helpers-design.md`](.
   argument, key frame, or value, keys out of order, a third key on one
   frame, a value that is neither a number nor an object of numbers (an
   array, `null`), values of different shapes, and an unknown easing name.
-- A number result is typed `number` (`KeyframeValue<T>`), not the union of
-  the keys' literal values.
+- The result is typed `number`, or an object of the same fields typed
+  `number` (`KeyframeValue<T>`), never the keys' literal values. The type
+  parameter is the key type, inferred from every key, so keys declared
+  `as const` (each with its own literals) are accepted; mismatched shapes
+  are then caught at run time only.
 
 `frameKeyframes()` is unchanged: it still builds an `Animatable<number>`
 for props that take keyframes (audio volume, playback rate, pitch), with

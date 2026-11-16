@@ -46,15 +46,21 @@ export interface ValueKeyframe<T extends number | Record<string, number>> {
  * For `<Audio volume>` and other props that take keyframes themselves, use
  * `frameKeyframes()`.
  */
-export function keyframes<T extends number | Record<string, number>>(
+export function keyframes<K extends ValueKeyframe<number | Record<string, number>>>(
   frame: number,
-  keys: readonly ValueKeyframe<T>[],
-): KeyframeValue<T> {
-  return valueAt(frame, keys) as KeyframeValue<T>;
+  keys: readonly K[],
+): KeyframeValue<K['value']> {
+  // The type comes from every key, so keys declared `as const` (each with
+  // its own literal values) are accepted; the shapes are checked here.
+  return valueAt(frame, keys) as KeyframeValue<K['value']>;
 }
 
-/** What `keyframes()` returns for keys of `T`: a number for numbers, not the keys' literal values. */
-export type KeyframeValue<T> = T extends number ? number : T;
+/**
+ * What `keyframes()` returns for keys whose values are `T`: a number, or an
+ * object of the same fields as numbers, never the keys' literal values,
+ * since the result lies between them.
+ */
+export type KeyframeValue<T> = T extends number ? number : { -readonly [Field in keyof T]: number };
 
 function valueAt<T extends number | Record<string, number>>(frame: number, keys: readonly ValueKeyframe<T>[]): T {
   if (!Number.isFinite(frame)) {
