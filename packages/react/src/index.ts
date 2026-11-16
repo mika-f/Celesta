@@ -127,8 +127,8 @@ export type {
   SpringOptions,
 } from './animation';
 
-export { frameKeyframes } from './keyframes';
-export type { FrameKeyframe, FrameKeyframesOptions } from './keyframes';
+export { frameKeyframes, keyframes } from './keyframes';
+export type { FrameKeyframe, FrameKeyframesOptions, ValueKeyframe } from './keyframes';
 
 export { measureText, textCaret, useTextMetrics } from './text-measure';
 export type { GlyphMetrics, MeasureTextOptions, TextMetrics } from './text-measure';
