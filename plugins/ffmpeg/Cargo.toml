@@ -3,7 +3,7 @@ name = "celesta-codec-ffmpeg"
 description = "Celesta's FFmpeg codec plugin: probes, decodes, encodes, and muxes media for Celesta in a process of its own."
 # Celesta's version, which plugin.json gives too; both are bumped with the
 # root's by `node scripts/plugins/bump-version.mts`.
-version = "0.10.0-alpha.3"
+version = "0.10.0-alpha.4"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/mika-f/celesta"
@@ -12,9 +12,9 @@ rust-version = "1.89"
 [dependencies]
 # Celesta's crates, pinned to Celesta's version for crates.io; the pins are
 # bumped by `node scripts/plugins/bump-version.mts`, here and below.
-celesta-composition = { path = "../../crates/composition", version = "=0.10.0-alpha.3" }
-celesta-media = { path = "../../crates/media", version = "=0.10.0-alpha.3" }
-celesta-plugin-host = { path = "../../crates/plugin-host", version = "=0.10.0-alpha.3" }
+celesta-composition = { path = "../../crates/composition", version = "=0.10.0-alpha.4" }
+celesta-media = { path = "../../crates/media", version = "=0.10.0-alpha.4" }
+celesta-plugin-host = { path = "../../crates/plugin-host", version = "=0.10.0-alpha.4" }
 ez-ffmpeg = "0.19"
 # The same FFmpeg bindings ez-ffmpeg links, for reading decoded frames.
 ffmpeg-sys-next = "8.1.0"
@@ -27,8 +27,8 @@ serde_json = "1.0.154"
 ez-ffmpeg = { version = "0.19", features = ["static"] }
 
 [dev-dependencies]
-celesta-exporter = { path = "../../crates/exporter", version = "=0.10.0-alpha.3" }
-celesta-gpu-renderer = { path = "../../crates/gpu-renderer", version = "=0.10.0-alpha.3" }
-celesta-project = { path = "../../crates/project", version = "=0.10.0-alpha.3" }
+celesta-exporter = { path = "../../crates/exporter", version = "=0.10.0-alpha.4" }
+celesta-gpu-renderer = { path = "../../crates/gpu-renderer", version = "=0.10.0-alpha.4" }
+celesta-project = { path = "../../crates/project", version = "=0.10.0-alpha.4" }
 png = "0.18.1"
 tempfile = "3.23.0"

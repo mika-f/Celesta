@@ -668,6 +668,7 @@ mod tests {
             kind: kind(false),
             description: description.into(),
             latest: Some(version(latest)),
+            license: None,
             deprecated: None,
         }
     }
@@ -699,6 +700,8 @@ mod tests {
             withdrawn: false,
             deprecated: None,
             source: None,
+            license: None,
+            license_refs: BTreeMap::new(),
             targets: BTreeMap::from([(host(), artifact(size))]),
         }
     }
