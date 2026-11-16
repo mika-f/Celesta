@@ -1,6 +1,6 @@
 {
   "name": "@celesta.studio/react",
-  "version": "0.10.0-alpha.4",
+  "version": "0.10.0",
   "private": true,
   "description": "Core React components, hooks, and renderer for Celesta compositions, evaluated into the shared Rust Scene model.",
   "license": "MIT OR Apache-2.0",

@@ -1,6 +1,6 @@
 {
   "name": "@celesta.studio/voicevox",
-  "version": "0.10.0-alpha.4",
+  "version": "0.10.0",
   "private": true,
   "description": "VOICEVOX AudioQuery lip sync and cached narration synthesis for Celesta compositions.",
   "license": "MIT OR Apache-2.0",
