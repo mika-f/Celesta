@@ -80,6 +80,10 @@ pub(crate) struct BlockedPlugin {
     pub(crate) fixed: Option<String>,
     /// It is one of Celesta's own plugins.
     pub(crate) bundled: bool,
+    /// It is a version the registry client installed (the store's).
+    pub(crate) from_store: bool,
+    /// Its folder.
+    pub(crate) directory: PathBuf,
 }
 
 /// What one discovery found.
@@ -216,6 +220,12 @@ impl FoundPlugins {
                     title: title.clone(),
                     fixed: fixed.clone(),
                     bundled: bundled.as_ref().is_some_and(|dir| path.starts_with(dir)),
+                    from_store: registry
+                        .store
+                        .as_ref()
+                        .is_some_and(|store| path.starts_with(store)),
+                    // `path` is the plugin's manifest.
+                    directory: path.parent().unwrap_or(path).to_path_buf(),
                 }),
                 _ => None,
             })
@@ -1451,6 +1461,12 @@ mod tests {
                 title: "Reads files outside the project".into(),
                 fixed: Some("1.3.0".into()),
                 bundled: false,
+                from_store: true,
+                directory: locked
+                    .folder
+                    .join("store")
+                    .join("acme.charts")
+                    .join("1.2.3"),
             }]
         );
         assert!(

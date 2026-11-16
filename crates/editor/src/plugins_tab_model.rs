@@ -6,7 +6,7 @@
 //! applies to it, and the commands of its menu. Reads nothing from disk.
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use celesta_plugin_host::{
     CELESTA_VERSION, LockProblem, LockedPlugin, PluginEntry, PluginRole, PluginSource,
@@ -44,8 +44,13 @@ pub(crate) enum SectionAction {
     Download { count: usize },
     /// Locks what `celesta.config.json` declares and the lock misses.
     UpdatePlugins,
-    /// A job is changing the project.
-    Working { done: u64, total: u64 },
+    /// A job is changing the project: `label` says what it does
+    /// (`Installing…`, `Updating…`, `Removing…`).
+    Working {
+        label: &'static str,
+        done: u64,
+        total: u64,
+    },
 }
 
 /// One copy of a plugin.
@@ -63,12 +68,20 @@ pub(crate) struct TabRow {
     /// It comes from one of the project's own plugin folders, whose
     /// decoders the tab counts.
     pub project_folder: bool,
+    /// The copy that comes with Celesta, which its second line says
+    /// whatever its state.
+    pub bundled: bool,
 }
 
 impl TabRow {
     /// The row's second line: its kind and its state.
     pub(crate) fn detail(&self) -> String {
-        format!("{} · {}", self.kind, self.state.label())
+        // `Bundled` says so itself.
+        if self.bundled && self.state != RowState::Bundled {
+            format!("{} · Bundled · {}", self.kind, self.state.label())
+        } else {
+            format!("{} · {}", self.kind, self.state.label())
+        }
     }
 }
 
@@ -98,6 +111,11 @@ pub(crate) enum RowState {
     /// Another copy of its id runs: `runs` names where that one is from.
     NotUsed {
         runs: String,
+    },
+    /// Another copy of its id, found first, waits for approval and keeps
+    /// this one from running: `waits` names where that one is from.
+    HeldBack {
+        waits: String,
     },
     /// Being installed, updated, or downloaded.
     Working {
@@ -130,6 +148,7 @@ impl RowState {
             Self::NoBuildHere => "No build for this computer".to_owned(),
             Self::Bundled => "Bundled · On".to_owned(),
             Self::NotUsed { runs } => format!("Not used: {runs} runs"),
+            Self::HeldBack { waits } => format!("Not used: {waits} waits for approval"),
             Self::Working { .. } => "Installing…".to_owned(),
             Self::Removing => "Removing…".to_owned(),
             Self::NoNewer { celesta } => {
@@ -227,18 +246,14 @@ impl<'a> Reading<'a> {
         }
     }
 
-    fn project_section(
-        &self,
-        root: &std::path::Path,
-        claimed: &mut BTreeSet<(String, String)>,
-    ) -> ProjectSection {
+    fn project_section(&self, root: &Path, claimed: &mut BTreeSet<PathBuf>) -> ProjectSection {
         let found = self.found;
         let lock_label = match (&found.lock, &found.lock_problem) {
             (Some(lock), _) => format!("celesta.lock · {}", lock.celesta),
             (None, Some(LockProblem::Unreadable(_))) => "celesta.lock can’t be read".to_owned(),
             (None, _) => "No celesta.lock".to_owned(),
         };
-        let rows: Vec<TabRow> = found
+        let mut rows: Vec<TabRow> = found
             .lock
             .iter()
             .flat_map(|lock| lock.plugins.iter())
@@ -265,7 +280,16 @@ impl<'a> Reading<'a> {
             .filter(|row| row.state == RowState::NotInstalled)
             .count();
         let action = if busy || rows.iter().any(TabRow::working) {
-            Some(SectionAction::Working { done, total })
+            // A job on the whole project refuses another, so the rows offer
+            // none while it runs.
+            for row in &mut rows {
+                row.action = None;
+            }
+            Some(SectionAction::Working {
+                label: self.work_label(&rows),
+                done,
+                total,
+            })
         } else if matches!(
             found.lock_problem,
             Some(LockProblem::NoLock | LockProblem::OutOfDate { .. })
@@ -288,14 +312,11 @@ impl<'a> Reading<'a> {
         id: &str,
         locked: &LockedPlugin,
         has_build: bool,
-        claimed: &mut BTreeSet<(String, String)>,
+        claimed: &mut BTreeSet<PathBuf>,
     ) -> TabRow {
         let version = locked.version.to_string();
         let (entry, on) = self.entry(id, PluginSource::Locked);
-        let blocked = self.blocked(id, &version, None);
-        if blocked.is_some() {
-            claimed.insert((id.to_owned(), version.clone()));
-        }
+        let blocked = self.registry_blocked(id, &version, claimed);
         let state = if let Some(working) = self.working(id) {
             working
         } else if let Some(blocked) = blocked {
@@ -305,10 +326,9 @@ impl<'a> Reading<'a> {
         } else if entry.is_none() {
             if !has_build {
                 RowState::NoBuildHere
-            } else if let Some(runs) = self.runs_before(id, PluginSource::Locked) {
-                RowState::NotUsed { runs }
             } else {
-                RowState::NotInstalled
+                self.shadowed(id, PluginSource::Locked)
+                    .unwrap_or(RowState::NotInstalled)
             }
         } else if !on {
             RowState::Off
@@ -336,10 +356,11 @@ impl<'a> Reading<'a> {
             menu,
             directory: entry.map(|entry| entry.directory.clone()),
             project_folder: false,
+            bundled: false,
         }
     }
 
-    fn global_rows(&self, claimed: &mut BTreeSet<(String, String)>) -> Vec<TabRow> {
+    fn global_rows(&self, claimed: &mut BTreeSet<PathBuf>) -> Vec<TabRow> {
         let found = self.found;
         let installed = found
             .registry_plugins
@@ -366,29 +387,26 @@ impl<'a> Reading<'a> {
         rows.into_iter().map(|(_, row)| row).collect()
     }
 
-    fn registry_row(
-        &self,
-        id: &str,
-        version: &Version,
-        claimed: &mut BTreeSet<(String, String)>,
-    ) -> TabRow {
+    fn registry_row(&self, id: &str, version: &Version, claimed: &mut BTreeSet<PathBuf>) -> TabRow {
         let (entry, on) = self.entry(id, PluginSource::Registry);
         let shown = version.to_string();
-        let blocked = self.blocked(id, &shown, None);
-        if blocked.is_some() {
-            claimed.insert((id.to_owned(), shown.clone()));
-        }
+        let blocked = self.registry_blocked(id, &shown, claimed);
+        let unbuilt = match entry {
+            Some(entry) => !entry.manifest.executable.is_empty() && entry.executable().is_none(),
+            // Known only from an index fetched earlier.
+            None => self.indexed_build(id, version) == Some(false),
+        };
         let state = if let Some(working) = self.working(id) {
             working
         } else if let Some(blocked) = blocked {
             RowState::Blocked {
                 advisory: blocked.advisory.clone(),
             }
+        } else if unbuilt {
+            RowState::NoBuildHere
         } else if entry.is_none() {
-            match self.runs_before(id, PluginSource::Registry) {
-                Some(runs) => RowState::NotUsed { runs },
-                None => RowState::NotInstalled,
-            }
+            self.shadowed(id, PluginSource::Registry)
+                .unwrap_or(RowState::NotInstalled)
         } else if !on {
             RowState::Off
         } else {
@@ -415,13 +433,14 @@ impl<'a> Reading<'a> {
             menu,
             directory: entry.map(|entry| entry.directory.clone()),
             project_folder: false,
+            bundled: false,
         }
     }
 
     /// Each copy in Celesta's own folder: the one that runs, one the user
     /// turned off, one an advisory stops, and one another copy of its id
     /// keeps from running.
-    fn bundled_rows(&self, claimed: &mut BTreeSet<(String, String)>) -> Vec<TabRow> {
+    fn bundled_rows(&self, claimed: &mut BTreeSet<PathBuf>) -> Vec<TabRow> {
         let found = self.found;
         let row = |entry: &PluginEntry, state: RowState| {
             let menu = match state {
@@ -438,6 +457,7 @@ impl<'a> Reading<'a> {
                 menu,
                 directory: Some(entry.directory.clone()),
                 project_folder: false,
+                bundled: true,
             }
         };
         let mut rows: Vec<TabRow> = self
@@ -453,21 +473,23 @@ impl<'a> Reading<'a> {
                 continue;
             }
             let id = copy.manifest.id.as_str();
-            let state = if let Some(blocked) = self.blocked(id, &copy.manifest.version, Some(true))
-            {
-                claimed.insert((id.to_owned(), blocked.version.clone()));
+            let blocked = found
+                .blocked
+                .iter()
+                .find(|blocked| blocked.bundled && blocked.directory == copy.directory);
+            let state = if let Some(blocked) = blocked {
+                claimed.insert(blocked.directory.clone());
                 RowState::Blocked {
                     advisory: blocked.advisory.clone(),
                 }
-            } else if let Some(taker) = self.taker(id) {
-                if taker.directory == copy.directory {
-                    // A lock's version that this copy satisfies.
-                    RowState::Bundled
-                } else {
-                    RowState::NotUsed {
-                        runs: source_name(taker.source).to_owned(),
-                    }
-                }
+            } else if self
+                .running(id)
+                .is_some_and(|running| running.directory == copy.directory)
+            {
+                // A lock's version that this copy satisfies.
+                RowState::Bundled
+            } else if let Some(shadowed) = self.shadowed(id, PluginSource::Bundled) {
+                shadowed
             } else {
                 continue;
             };
@@ -475,8 +497,7 @@ impl<'a> Reading<'a> {
         }
         // Stopped bundled copies the folder's own listing did not give.
         for blocked in found.blocked.iter().filter(|blocked| blocked.bundled) {
-            let key = (blocked.id.clone(), blocked.version.clone());
-            if claimed.insert(key) {
+            if claimed.insert(blocked.directory.clone()) {
                 rows.push(blocked_row(blocked, self.registry_kind(&blocked.id)));
             }
         }
@@ -487,7 +508,7 @@ impl<'a> Reading<'a> {
     /// project's folders, and the plugin path, by where they came from (in
     /// search order), then by id; and the stopped ones no other section
     /// lists.
-    fn by_hand_rows(&self, claimed: &BTreeSet<(String, String)>) -> Vec<TabRow> {
+    fn by_hand_rows(&self, claimed: &BTreeSet<PathBuf>) -> Vec<TabRow> {
         let found = self.found;
         let by_hand = |source: PluginSource| {
             matches!(
@@ -514,6 +535,7 @@ impl<'a> Reading<'a> {
                     menu,
                     directory: Some(entry.directory.clone()),
                     project_folder: entry.source == PluginSource::Project,
+                    bundled: false,
                 },
             )
         };
@@ -558,7 +580,7 @@ impl<'a> Reading<'a> {
         let stopped = found
             .blocked
             .iter()
-            .filter(|blocked| !claimed.contains(&(blocked.id.clone(), blocked.version.clone())))
+            .filter(|blocked| !blocked.bundled && !claimed.contains(&blocked.directory))
             .map(|blocked| blocked_row(blocked, self.registry_kind(&blocked.id)));
         rows.into_iter()
             .map(|(_, row)| row)
@@ -581,33 +603,88 @@ impl<'a> Reading<'a> {
             .map_or((None, false), |(entry, on)| (Some(entry), on))
     }
 
-    /// The copy of `id` that runs, or waits in its place.
-    fn taker(&self, id: &str) -> Option<&'a PluginEntry> {
-        let found = self.found;
-        found
+    /// The copy of `id` that runs.
+    fn running(&self, id: &str) -> Option<&'a PluginEntry> {
+        self.found
             .installed
             .plugins
             .iter()
-            .chain(found.pending.iter().map(|pending| &pending.entry))
             .find(|entry| entry.manifest.id == id)
     }
 
-    /// Where the copy of `id` that runs in place of one from `source`
-    /// comes from, when that copy is found before `source`.
-    fn runs_before(&self, id: &str, source: PluginSource) -> Option<String> {
-        self.taker(id)
-            .filter(|taker| taker.source < source)
-            .map(|taker| source_name(taker.source).to_owned())
+    /// Why a copy of `id` from `source` that discovery did not list does
+    /// not run, when a copy found before it took its id: that one runs, or
+    /// waits for approval.
+    fn shadowed(&self, id: &str, source: PluginSource) -> Option<RowState> {
+        let name = |entry: &PluginEntry| source_name(entry.source).to_owned();
+        if let Some(running) = self.running(id).filter(|entry| entry.source < source) {
+            return Some(RowState::NotUsed {
+                runs: name(running),
+            });
+        }
+        self.found
+            .pending
+            .iter()
+            .map(|pending| &pending.entry)
+            .find(|entry| entry.manifest.id == id && entry.source < source)
+            .map(|waiting| RowState::HeldBack {
+                waits: name(waiting),
+            })
     }
 
-    /// What stops version `version` of `id`; with `bundled`, only a copy
-    /// that is (or is not) Celesta's own.
-    fn blocked(&self, id: &str, version: &str, bundled: Option<bool>) -> Option<&'a BlockedPlugin> {
-        self.found.blocked.iter().find(|blocked| {
+    /// What stops version `version` of `id` as the store or Celesta's own
+    /// folder holds it (a hand-placed copy is its own row), claimed for the
+    /// row that shows it.
+    fn registry_blocked(
+        &self,
+        id: &str,
+        version: &str,
+        claimed: &mut BTreeSet<PathBuf>,
+    ) -> Option<&'a BlockedPlugin> {
+        let blocked = self.found.blocked.iter().find(|blocked| {
             blocked.id == id
                 && blocked.version == version
-                && bundled.is_none_or(|bundled| blocked.bundled == bundled)
-        })
+                && (blocked.from_store || blocked.bundled)
+        })?;
+        claimed.insert(blocked.directory.clone());
+        Some(blocked)
+    }
+
+    /// Whether `id`'s cached index gives `version` a build for this
+    /// computer; `None` without one.
+    fn indexed_build(&self, id: &str, version: &Version) -> Option<bool> {
+        let index = match self.registry?.indexes.get(id)? {
+            Fetch::Loaded { value, .. } => value,
+            _ => return None,
+        };
+        let entry = index
+            .versions
+            .iter()
+            .find(|entry| entry.version == *version)?;
+        Some(entry.targets.contains_key(&self.host) || entry.targets.contains_key(&Target::ANY))
+    }
+
+    /// What the work on the project's rows does, for its heading.
+    fn work_label(&self, rows: &[TabRow]) -> &'static str {
+        let works: Vec<&Work> = self
+            .registry
+            .iter()
+            .flat_map(|registry| {
+                rows.iter()
+                    .filter_map(|row| registry.in_flight.get(&row.id))
+            })
+            .map(|in_flight| &in_flight.work)
+            .collect();
+        if works
+            .iter()
+            .any(|work| matches!(work, Work::Remove | Work::Uninstall))
+        {
+            "Removing…"
+        } else if works.iter().any(|work| matches!(work, Work::Update)) {
+            "Updating…"
+        } else {
+            "Installing…"
+        }
     }
 
     /// The row state for work in flight on `id`.
@@ -741,9 +818,10 @@ fn blocked_row(blocked: &BlockedPlugin, kind: &'static str) -> TabRow {
             advisory: blocked.advisory.clone(),
         },
         action: None,
-        menu: Vec::new(),
-        directory: None,
+        menu: vec![MenuCommand::ShowFolder],
+        directory: Some(blocked.directory.clone()),
         project_folder: false,
+        bundled: blocked.bundled,
     }
 }
 
@@ -788,6 +866,7 @@ mod tests {
     use super::*;
     use crate::plugins::BlockedPlugin;
     use crate::registry::EditorRegistry;
+    use crate::scratch::scratch_dir;
     use celesta_plugin_host::{
         InstalledPlugins, LockedArtifact, Lockfile, Manifest, PendingPlugin, RegistryPlugin,
     };
@@ -878,14 +957,22 @@ mod tests {
     /// per id; the test registry serves nothing the model reads.
     struct Registry {
         _served: TestRegistry,
+        user: PathBuf,
         state: RegistryState,
+    }
+
+    impl Drop for Registry {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.user);
+        }
     }
 
     impl Registry {
         fn new(latest: &[(&str, &str)]) -> Self {
             let served = TestRegistry::new();
-            let unused = std::env::temp_dir().join("celesta-tab-model-unused");
-            let client = Arc::new(EditorRegistry::for_test(&served, &unused));
+            // The model reads nothing there.
+            let user = scratch_dir("tab-model");
+            let client = Arc::new(EditorRegistry::for_test(&served, &user));
             let mut state = RegistryState::new(client);
             state.search = Fetch::Loaded {
                 value: SearchList {
@@ -911,6 +998,7 @@ mod tests {
             };
             Self {
                 _served: served,
+                user,
                 state,
             }
         }
@@ -1031,7 +1119,10 @@ mod tests {
             rows_of(&model.global),
             [
                 ("avfoundation", "Media · On".to_owned()),
-                ("avfoundation", "Media · Not used: Registry runs".to_owned()),
+                (
+                    "avfoundation",
+                    "Media · Bundled · Not used: Registry runs".to_owned(),
+                ),
                 ("ffmpeg", "Media · Bundled · On".to_owned()),
             ]
         );
@@ -1141,18 +1232,29 @@ mod tests {
         assert_eq!(section.rows[0].menu, [MenuCommand::RemoveFromProject]);
     }
 
-    #[test]
-    fn blocked_rows_name_the_advisory() {
-        let blocked = |id: &str, bundled| BlockedPlugin {
+    /// Version 1.0.0 of `id` stopped by an advisory, in `directory`.
+    fn blocked(id: &str, directory: &str) -> BlockedPlugin {
+        BlockedPlugin {
             id: id.into(),
             version: "1.0.0".into(),
             advisory: "CELESTA-2026-0003".into(),
             title: "Runs code from any file".into(),
             fixed: Some("1.0.1".into()),
-            bundled,
-        };
+            bundled: directory.starts_with("Bundled"),
+            from_store: directory.starts_with("store"),
+            directory: PathBuf::from(directory),
+        }
+    }
+
+    #[test]
+    fn blocked_rows_name_the_advisory() {
         let mut found = project(lockfile(vec![("vrm", locked("1.0.0", &[Target::host()]))]));
-        found.blocked = vec![blocked("vrm", false), blocked("beep", false)];
+        // The locked version, and a copy of the same version placed by hand.
+        found.blocked = vec![
+            blocked("vrm", "store/vrm/1.0.0"),
+            blocked("vrm", "User/vrm"),
+            blocked("beep", "User/beep"),
+        ];
         let model = tab_model(&found, None);
         let section = model.project.unwrap();
         assert_eq!(
@@ -1163,23 +1265,144 @@ mod tests {
         );
         assert_eq!(section.rows[0].state.label(), "Blocked · CELESTA-2026-0003");
         assert_eq!(section.action, None, "a stopped version is not downloaded");
-        // One no section claims is listed by hand.
+        // The ones no section claims are listed by hand, each with its folder.
         assert_eq!(
             rows_of(&model.by_hand),
-            [("beep", "Plugin · Blocked · CELESTA-2026-0003".to_owned())]
+            [
+                ("vrm", "Plugin · Blocked · CELESTA-2026-0003".to_owned()),
+                ("beep", "Plugin · Blocked · CELESTA-2026-0003".to_owned()),
+            ]
         );
+        assert_eq!(model.by_hand[0].directory, Some(PathBuf::from("User/vrm")));
+        assert_eq!(model.by_hand[0].menu, [MenuCommand::ShowFolder]);
         assert!(model.global.is_empty());
+    }
 
-        let bundled = FoundPlugins {
-            blocked: vec![blocked("ffmpeg", true)],
+    #[test]
+    fn bundled_copies_say_bundled_in_every_state() {
+        let ffmpeg = entry("ffmpeg", "1.0.0", PluginSource::Bundled, PluginRole::Media);
+        let found = FoundPlugins {
+            disabled: vec![entry(
+                "avfoundation",
+                "1.0.0",
+                PluginSource::Bundled,
+                PluginRole::Media,
+            )],
+            // One stopped copy the folder's listing has, one it does not.
+            bundled: vec![ffmpeg],
+            blocked: vec![
+                blocked("ffmpeg", "Bundled/ffmpeg"),
+                blocked("mediafoundation", "Bundled/mediafoundation"),
+            ],
             ..FoundPlugins::default()
         };
-        let model = tab_model(&bundled, None);
+        let model = tab_model(&found, None);
         assert_eq!(
             rows_of(&model.global),
-            [("ffmpeg", "Plugin · Blocked · CELESTA-2026-0003".to_owned())]
+            [
+                ("avfoundation", "Media · Bundled · Off".to_owned()),
+                (
+                    "ffmpeg",
+                    "Media · Bundled · Blocked · CELESTA-2026-0003".to_owned()
+                ),
+                (
+                    "mediafoundation",
+                    "Plugin · Bundled · Blocked · CELESTA-2026-0003".to_owned()
+                ),
+            ]
         );
         assert!(model.by_hand.is_empty());
+    }
+
+    #[test]
+    fn a_copy_behind_a_waiting_one_says_it_waits() {
+        let found = FoundPlugins {
+            pending: vec![PendingPlugin {
+                entry: entry("ffmpeg", "2.0.0", PluginSource::User, PluginRole::Media),
+                fingerprint: "sha256:ffmpeg".into(),
+                changed: false,
+                from_the_internet: false,
+            }],
+            registry_plugins: vec![RegistryPlugin {
+                id: "ffmpeg".into(),
+                version: version("1.0.0"),
+                tree_hash: Hash([3; 32]),
+            }],
+            bundled: vec![entry(
+                "ffmpeg",
+                "1.0.0",
+                PluginSource::Bundled,
+                PluginRole::Media,
+            )],
+            ..FoundPlugins::default()
+        };
+        let model = tab_model(&found, None);
+        let held = RowState::HeldBack {
+            waits: "User folder".into(),
+        };
+        let states: Vec<(&RowState, Option<&RowAction>)> = model
+            .global
+            .iter()
+            .map(|row| (&row.state, row.action.as_ref()))
+            .collect();
+        // Not "Not installed" with a Download, nor "User folder runs".
+        assert_eq!(states, [(&held, None), (&held, None)]);
+        assert_eq!(held.label(), "Not used: User folder waits for approval");
+    }
+
+    #[test]
+    fn a_registry_copy_without_a_build_here_offers_nothing() {
+        let found = FoundPlugins {
+            registry_plugins: vec![RegistryPlugin {
+                id: "acme.codec".into(),
+                version: version("1.0.0"),
+                tree_hash: Hash([3; 32]),
+            }],
+            ..FoundPlugins::default()
+        };
+        let mut registry = Registry::new(&[]);
+        let index = serde_json::json!({
+            "id": "acme.codec",
+            "generated": "2026-11-10T00:00:00Z",
+            "publisher": "acme",
+            "kind": { "roles": ["media"], "program": true, "module": false },
+            "description": "",
+            "versions": [{
+                "version": "1.0.0",
+                "celesta": "*",
+                "protocol": 2,
+                "published": "2026-11-01T00:00:00Z",
+                "yanked": false,
+                "withdrawn": false,
+                "targets": {
+                    "plan9-mips": {
+                        "url": "https://example.invalid/a.tar.gz",
+                        "size": 1,
+                        "sha256": format!("sha256:{}", "0".repeat(64)),
+                        "treeHash": format!("sha256:{}", "0".repeat(64)),
+                    },
+                },
+            }],
+        });
+        registry.state.indexes.insert(
+            "acme.codec".into(),
+            Fetch::Loaded {
+                value: serde_json::from_value(index).unwrap(),
+                at: OffsetDateTime::UNIX_EPOCH,
+                offline: false,
+            },
+        );
+        let row = tab_model(&found, Some(&registry.state)).global[0].clone();
+        assert_eq!(row.state, RowState::NoBuildHere);
+        assert_eq!(row.action, None);
+        assert_eq!(row.kind, "Media");
+        // Without an index nothing says so, and the missing copy can be
+        // downloaded again.
+        let row = tab_model(&found, None).global[0].clone();
+        assert_eq!(
+            (row.state, row.action),
+            (RowState::NotInstalled, Some(RowAction::Download))
+        );
     }
 
     #[test]
@@ -1280,8 +1503,41 @@ mod tests {
         assert_eq!(
             section.action,
             Some(SectionAction::Working {
+                label: "Updating…",
                 done: 10,
                 total: 40
+            })
+        );
+    }
+
+    #[test]
+    fn rows_offer_nothing_while_the_project_is_changing() {
+        let found = project(lockfile(vec![
+            ("acme.charts", locked("1.0.0", &[Target::ANY])),
+            ("acme.old", locked("1.0.0", &[Target::ANY])),
+        ]));
+        let mut registry = Registry::new(&[]);
+        registry.state.in_flight.insert(
+            "acme.old".into(),
+            InFlight {
+                work: Work::Remove,
+                done: 0,
+                total: 0,
+            },
+        );
+        let section = tab_model(&found, Some(&registry.state)).project.unwrap();
+        assert_eq!(section.rows[0].state, RowState::NotInstalled);
+        assert_eq!(
+            section.rows[0].action, None,
+            "the download would be refused"
+        );
+        assert_eq!(section.rows[1].state, RowState::Removing);
+        assert_eq!(
+            section.action,
+            Some(SectionAction::Working {
+                label: "Removing…",
+                done: 0,
+                total: 0
             })
         );
     }

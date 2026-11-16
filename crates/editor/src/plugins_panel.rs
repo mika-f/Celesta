@@ -26,9 +26,14 @@ use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, IconName, Sizable as _, WindowExt as _, h_flex, v_flex,
 };
 use gpui_kit::prelude::*;
-use gpui_kit::{Anchor, AnyElement, App, Context, ElementId, SharedString, Window, div};
+use gpui_kit::{Anchor, AnyElement, App, Context, ElementId, SharedString, Window, div, rems};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
+
+/// The width of a row's action lane, in `rem`: wide enough for
+/// `Update to 0.10.0` at the xsmall button size; a longer label widens its
+/// own row's lane.
+const ACTION_LANE_WIDTH: f32 = 8.;
 
 /// Which section a row is in, which says what its commands work on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -280,9 +285,9 @@ impl EditorView {
                     });
                 }))
                 .into_any_element(),
-            SectionAction::Working { done, total } => h_flex()
+            SectionAction::Working { label, done, total } => h_flex()
                 .gap_1()
-                .child("Installing…")
+                .child(label)
                 .when(total > 0, |working| {
                     working.child(
                         div()
@@ -435,7 +440,15 @@ impl EditorView {
                         )
                     }),
             )
-            .children(action)
+            // A lane of its own, so actions and menus line up down the tab
+            // whether or not a row has an action.
+            .child(
+                h_flex()
+                    .flex_none()
+                    .min_w(rems(ACTION_LANE_WIDTH))
+                    .justify_end()
+                    .children(action),
+            )
             .child(menu)
             .into_any_element()
     }
@@ -714,6 +727,7 @@ mod tests {
             menu: Vec::new(),
             directory: Some(PathBuf::from(directory)),
             project_folder: false,
+            bundled: false,
         };
         let (store, bundled) = (row("/store/avfoundation"), row("/bundled/avfoundation"));
         assert_ne!(
