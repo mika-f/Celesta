@@ -427,8 +427,9 @@ cargo run -p celesta-exporter -- --react examples/plugins/turntable/demo.tsx tur
 
 ```sh
 celesta plugin add vrm                  # プレリリースではバージョンを指定します：vrm@0.10.0-alpha.4
-celesta plugin install --global vrm     # まだ celesta.lock を読まないデスクトップアプリ向け
 ```
+
+デスクトップアプリは、信頼したプロジェクト（信頼を保存済みで、`celesta.config.json` があるもの）の `celesta.lock` を読み、ロックしたバージョンを実行します。ロックしたプラグインがダウンロードされていないそのようなプロジェクトを開いたときは、ダウンロードするかどうかを尋ねます。
 
 公式のコンポーネントプラグイン `aivis-speech`・`code`・`lottie`・`voicevox` も同じです。それぞれのページで説明しています。
 

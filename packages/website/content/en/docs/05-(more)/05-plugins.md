@@ -432,8 +432,9 @@ The `vrm` plugin draws VRM 1.0 avatars (`.vrm`) in 3D, toon-shaded with MToon as
 
 ```sh
 celesta plugin add vrm                  # on a pre-release, name it: vrm@0.10.0-alpha.4
-celesta plugin install --global vrm     # for the desktop app, which does not read celesta.lock yet
 ```
+
+The desktop app reads the `celesta.lock` of a project you trust (saved trust, with `celesta.config.json`) and runs the locked versions, and offers to download them when you open such a project whose locked plugins are not downloaded.
 
 The same goes for the first-party component plugins `aivis-speech`, `code`, `lottie`, and `voicevox`, each described on its own page.
 

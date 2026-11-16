@@ -258,9 +258,9 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
 
 The `vrm` plugin draws VRM 1.0 avatars (`.vrm`) as a 3D layer,
 MToon-shaded as UniVRM draws them. It is in the registry (`celesta plugin
-add vrm`, with Celesta's version on a pre-release; `celesta plugin install
---global vrm` for the desktop app, which does not read `celesta.lock`
-yet). From a checkout of the Celesta repository, build `plugins/vrm` with
+add vrm`, with Celesta's version on a pre-release; the desktop app reads the
+`celesta.lock` of a trusted project and runs the locked versions, offering
+to download them on opening a project whose locked plugins are missing). From a checkout of the Celesta repository, build `plugins/vrm` with
 `node scripts/plugins/build.mts plugins/vrm` (after `pnpm install && pnpm
 run build:runtime` at the repository root); it writes `plugins/dist/vrm`,
 which the user copies into a plugin folder, or name `plugins/dist` with

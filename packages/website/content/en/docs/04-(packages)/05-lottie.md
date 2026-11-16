@@ -8,7 +8,7 @@
 > celesta plugin add lottie
 > ```
 >
-> The plugin's versions follow Celesta's. On a pre-release of Celesta, name that version, as in `celesta plugin add lottie@0.10.0-alpha.4`: a requirement without a pre-release matches none. The desktop app does not read `celesta.lock` yet, so for its preview and exports also install the plugin for every project with `celesta plugin install --global lottie` (with the same version on a pre-release).
+> The plugin's versions follow Celesta's. On a pre-release of Celesta, name that version, as in `celesta plugin add lottie@0.10.0-alpha.4`: a requirement without a pre-release matches none. The desktop app reads the `celesta.lock` of a project you trust (saved trust, with `celesta.config.json`) and runs the locked versions; when you open such a project and its locked plugins are not downloaded, it offers to download them.
 >
 > A composition that imports `@celesta.studio/lottie` keeps working: Celesta still includes that package, and warns with the import to use and the `celesta plugin add` command to run.
 
