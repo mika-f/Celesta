@@ -487,7 +487,10 @@ pub(crate) fn footer(
     });
 
     let secondary = secondary.map(|button| match busy(Changes::Project) {
-        Some(_) if button.enabled => FooterButton::disabled(button.label),
+        Some(why) if button.enabled => {
+            reason.get_or_insert_with(|| why.to_owned());
+            FooterButton::disabled(button.label)
+        }
         _ => button,
     });
 
@@ -986,6 +989,10 @@ mod tests {
             .set_project_busy(PathBuf::from("/projects/demo"));
         let by_project = footer_of(&project_busy, &pinned);
         assert!(by_project.primary.enabled);
+        assert_eq!(
+            by_project.reason.as_deref(),
+            Some("Another plugin change is running for this project")
+        );
         let pin = by_project.secondary.unwrap();
         assert_eq!(pin.label, "Pin to this project");
         assert!(!pin.enabled);
