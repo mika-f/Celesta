@@ -24,27 +24,27 @@ const CAMERA = [
 ];
 
 const PLACES = [
-  { x: 520, y: 380, name: 'Harbor', color: '#5FD3B5' },
-  { x: 1300, y: 700, name: 'Observatory', color: '#F2B544' },
-  { x: 1180, y: 260, name: 'Market', color: '#E96A6A' },
+  { x: 520, y: 380, name: 'Harbor', color: '#7CE0C3' },
+  { x: 1300, y: 700, name: 'Observatory', color: '#FF4D1F' },
+  { x: 1180, y: 260, name: 'Market', color: '#FFD166' },
 ];
 
 function Map() {
   return (
     <>
-      <Rect width={WIDTH} height={HEIGHT} fill="#0F2A3D" />
+      <Rect width={WIDTH} height={HEIGHT} fill="#101820" />
       {Array.from({ length: 16 }, (_, i) => (
-        <Rect key={`v${i}`} x={i * 120 + 60} width={2} height={HEIGHT} fill="#1D4055" />
+        <Rect key={`v${i}`} x={i * 120 + 60} width={2} height={HEIGHT} fill="#24303C" />
       ))}
       {Array.from({ length: 9 }, (_, i) => (
-        <Rect key={`h${i}`} y={i * 120 + 60} width={WIDTH} height={2} fill="#1D4055" />
+        <Rect key={`h${i}`} y={i * 120 + 60} width={WIDTH} height={2} fill="#24303C" />
       ))}
       {PLACES.map((place) => (
         <Circle key={place.name} x={place.x} y={place.y} anchorX={0.5} anchorY={0.5} radius={26} fill={place.color} />
       ))}
       {PLACES.map((place) => (
         <Text key={place.name} x={place.x} y={place.y + 44} anchorX={0.5} fontFamily="sans-serif" fontSize={28}
-          fontWeight={700} color="#EAF4F2">
+          fontWeight={700} color="#F4F1EA">
           {place.name}
         </Text>
       ))}
