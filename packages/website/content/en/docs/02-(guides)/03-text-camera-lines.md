@@ -33,6 +33,8 @@ For a quick monospaced caret, use `length × advance` as an estimate. For actual
 </Camera>
 ```
 
+For a move through several stops, with a hold or a cut between them, compute the props with `keyframes` and spread them: `<Camera {...keyframes(frame, keys)}>`; see [Animation](/en/docs/animation/).
+
 To blur a fast camera move, wrap the camera in a `MotionBlur` and compute its props from the frame the blur passes in, so they change between its moments; see [Animation](/en/docs/animation/).
 
 ## Lines and charts

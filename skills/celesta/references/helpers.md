@@ -12,6 +12,7 @@ preview and export, and other people (and agents) reading the file know them.
 | `easing(clamp((f - start) / frames))` | `progress(f, start, frames, easing?)` | `@celesta.studio/react` |
 | A copy of `easeOutBack` with another constant, a bezier solved by hand, `Math.floor(t * n) / n` | `Easings.back(overshoot).easeOut`, `Easings.cubicBezier(x1, y1, x2, y2)`, `Easings.steps(n)` (also `Easings.elastic({ amplitude, period })`) | `@celesta.studio/react` |
 | A frame range mapped to values, with easing | `interpolate(f, [a, b], [from, to], { easing, extrapolateLeft: 'clamp', extrapolateRight: 'clamp' })` | `@celesta.studio/react` |
+| Several `interpolate` calls chained with `frame < 100 ? … : …`, or `useCue` + `progress` per stop, to move through keys with different easings | `keyframes(f, [{ frame, value, easing }])` (a number or an object of numbers; two keys on one frame cut) | `@celesta.studio/react` |
 | A hex color blended by hand | `interpolateColor(f, [a, b], ['#…', '#…'])` | `@celesta.studio/react` |
 | `fract(Math.sin(i * 12.9898 + …) * 43758.5453)` | `random(seed)`, `randomRange(seed, min, max)`, `randomInt(...)` | `@celesta.studio/math` |
 | Wobble from summed sines | `noise(seed, t)`, `loopNoise(seed, t, period)` for loops | `@celesta.studio/math` |
