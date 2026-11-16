@@ -55,10 +55,11 @@ import {
   WAITING_IMPORTS_ENV,
   WAITING_PLUGIN_PATH_ENV,
   findPlugins,
+  readProjectPlugins,
   resolvePluginImport,
   standInSource,
 } from './plugins';
-import type { Plugins, StandIn } from './plugins';
+import type { Plugins, ProjectPlugins, StandIn } from './plugins';
 import { resolvePropertyInputs } from './property-inputs';
 import type { PropertyInputLayer, PropertyIssue } from './property-inputs';
 
@@ -703,11 +704,18 @@ async function loadEntry(entryPath: string, sourceLocations: boolean): Promise<L
         // plugins installed since.
         let plugins: Promise<Plugins> | undefined;
         let waiting: Promise<Plugins> | undefined;
+        let project: Promise<ProjectPlugins | undefined> | undefined;
         build.onResolve({ filter: PLUGIN_SPECIFIER }, async (args) => {
           plugins ??= findPlugins();
           waiting ??= findPlugins(process.env[WAITING_PLUGIN_PATH_ENV] ?? '');
           const standIns = process.env[WAITING_IMPORTS_ENV] === 'stand-in';
-          const resolved = resolvePluginImport(args.path, await plugins, await waiting, standIns);
+          let resolved = resolvePluginImport(args.path, await plugins, await waiting, standIns);
+          if ('error' in resolved) {
+            // The entry's project, read only for an import that fails, says
+            // what would install a plugin it declares.
+            project ??= readProjectPlugins(entryDirectory);
+            resolved = resolvePluginImport(args.path, await plugins, await waiting, standIns, await project);
+          }
           if ('error' in resolved) return { errors: [{ text: resolved.error }] };
           if ('standIn' in resolved) {
             return { path: resolved.standIn.module, namespace: STAND_IN_NAMESPACE, pluginData: resolved.standIn };
