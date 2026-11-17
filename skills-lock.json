@@ -1,29 +1,44 @@
 {
-  "version": 1,
+  "version": 2,
   "skills": {
     "gpui-kit": {
       "source": "longbridge/gpui-kit",
       "sourceType": "github",
       "skillPath": "skills/gpui-kit/SKILL.md",
-      "computedHash": "711da6fe691b91a77b5bf91fd1db63993d98d334b4c67acb0d280025d18ba92a"
+      "computedHash": "753654477463fbebe9633748d5dd8925d785fa84699a575d70de80fefa879f3a"
     },
     "gpui-kit-design-guides": {
       "source": "longbridge/gpui-kit",
       "sourceType": "github",
       "skillPath": "skills/gpui-kit-design-guides/SKILL.md",
-      "computedHash": "f5e085823154439a093fbfb947d522213c40842e1d06ebc611e033a854127c0b"
+      "computedHash": "1c38f251f161d2e09b4b830aa48f23db3d5d28214a7cfa73a6a448f1b2c46a8e"
     },
     "ponytail": {
       "source": "dietrichgebert/ponytail",
       "sourceType": "github",
       "skillPath": "skills/ponytail/SKILL.md",
-      "computedHash": "9e8d05cbbaf6dc38f0cffc924c09b3cbe76d94ba4ba0d09bde803da2f8c6b5a0"
+      "computedHash": ""
     },
     "rust-best-practices": {
-      "source": "apollographql/skills",
+      "source": "morganlinton/BeautifulRust",
+      "commit": "b9718436d77ee7bcf17cdcb6aa27628feb95d97a",
       "sourceType": "github",
       "skillPath": "skills/rust-best-practices/SKILL.md",
-      "computedHash": "a3db351ec552ed9d36b59e547d6c1d94077867eb5bcb98b3f802dfebb0a8a248"
+      "computedHash": "313bea7637531b7f6fe60798bed2108e49594914d4db44e303b7d2312868b3d1"
+    },
+    "rust-port": {
+      "source": "morganlinton/BeautifulRust",
+      "commit": "b9718436d77ee7bcf17cdcb6aa27628feb95d97a",
+      "sourceType": "github",
+      "skillPath": "skills/rust-port/SKILL.md",
+      "computedHash": "b125be23ffeac1c4b67d018282f60acee159a228a83d6aebfc4848dd3d3c2efa"
+    },
+    "rust-review": {
+      "source": "morganlinton/BeautifulRust",
+      "commit": "b9718436d77ee7bcf17cdcb6aa27628feb95d97a",
+      "sourceType": "github",
+      "skillPath": "skills/rust-review/SKILL.md",
+      "computedHash": "a12087e797445bac38dc7c0b3e7441cb515fe7decb31ed983fcf24008c0523c1"
     }
   }
 }
