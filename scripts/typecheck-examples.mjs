@@ -45,6 +45,29 @@ function declaredPlugins(project) {
   return Object.keys(JSON.parse(readFileSync(config, 'utf8')).plugins?.dependencies ?? {});
 }
 
+const samples = join(examples, 'plugins');
+
+/** The `.ts` and `.tsx` files under `dir`, without node_modules and `.celesta`. */
+function sources(dir) {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    if (entry.name === 'node_modules' || entry.name === '.celesta') return [];
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return sources(path);
+    return /\.tsx?$/.test(entry.name) ? [path] : [];
+  });
+}
+
+/** The sample plugins (examples/plugins/<id>) `project` imports as `@celesta-plugin/<id>`, other than `declared`. */
+function sampleImports(project, declared) {
+  const ids = new Set();
+  for (const file of sources(project)) {
+    for (const [, id] of readFileSync(file, 'utf8').matchAll(/['"]@celesta-plugin\/([a-z0-9.-]+)['"]/g)) {
+      if (!declared.includes(id) && existsSync(join(samples, id, 'plugin.json'))) ids.add(id);
+    }
+  }
+  return [...ids].sort();
+}
+
 // Every first-party plugin the examples declare, built once.
 const plugins = [...new Set(targets.flatMap((name) => declaredPlugins(join(examples, name))))].sort();
 for (const id of plugins) {
@@ -86,6 +109,12 @@ for (const name of targets) {
       recursive: true,
       filter: (source) => !source.endsWith('.js'),
     });
+  }
+  // A sample plugin from examples/plugins that the example imports is
+  // checked from its module's source, which needs no build (its program
+  // does, for a render, but not for its types).
+  for (const id of sampleImports(project, declaredPlugins(project))) {
+    cpSync(join(samples, id, 'js'), join(support, 'plugins', id), { recursive: true });
   }
 
   console.log(`examples/${name}`);

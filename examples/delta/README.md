@@ -4,24 +4,93 @@ Celesta のリリースごとに「前のバージョンから何が変わった
 インク黒とオレンジ、Bebas Neue の見出し、Space Grotesk の本文、JetBrains Mono のコードで、
 各機能をリリースノートの 1 ページのように見せます。見出し、何ができるか、それを使う差分、マージされた PR、そしてその場で動くデモです。
 
-- `film-0.9.0.tsx` — v0.8.0 → main の 91 秒「ON AIR」（エントリ）。Celesta の File → Open… で開きます。
+- `film-0.10.0.tsx` — v0.9.0 → v0.10.0 の 84 秒「PATCH」（エントリ）。Celesta の File → Open… で開きます。
+  サンプルプラグインの `flag` と `turntable` を使うので、Plugins タブの Add Folder… で `examples/plugins/dist` を足して許可してください（下の「書き出し」）。
+- `film-0.9.0.tsx` — v0.8.0 → main の 91 秒「ON AIR」（エントリ）。
 - `shorts-0.9.0.tsx` — 同じ 91 秒を 1080×1920 に組み直したショート版（エントリ）。
 - `film-0.8.0.tsx` — v0.7.0 → v0.8.0 の 96 秒「PROOF」（エントリ）。
 - `shorts-0.8.0.tsx` — 同じ 96 秒を 1080×1920 の窓で見たショート版（エントリ）。
 - `film-0.7.0.tsx`・`shorts-0.7.0.tsx` — v0.6.0 → v0.7.0 の 91 秒と、そのショート版。
 - `film-0.6.0.tsx` — v0.5.0 → v0.6.0 の 62 秒。
 - `components/` — シリーズ共通の見た目。配色・書体（`theme.ts`）、章のページ（`ChapterShell.tsx`）、右上の進行表示（`Hud.tsx`）、差分パネル（`DiffPanel.tsx`）、WGSL シェーダー（`shaders.ts`）、背景のドット（`Backdrop.tsx`）、Δ マーク（`Delta.tsx`）。0.7.0 は BGM のメーター付きの `Hud.tsx` を `v0.7.0/` に持ちます。
-- `v0.9.0/`・`v0.8.0/`・`v0.7.0/`・`v0.6.0/` — 各リリースの中身。冒頭（`Open.tsx`）、章の一覧（`chapters.tsx`）とデモ（`demos/`）、アウトロ（`Outro.tsx`）、リリースノートの PR 一覧（`prs.ts`）、テンポと章の位置（`timeline.ts`）。
+- `v0.10.0/`・`v0.9.0/`・`v0.8.0/`・`v0.7.0/`・`v0.6.0/` — 各リリースの中身。冒頭（`Open.tsx`）、章の一覧（`chapters.tsx`）とデモ（`demos/`）、アウトロ（`Outro.tsx`）、リリースノートの PR 一覧（`prs.ts`）、テンポと章の位置（`timeline.ts`）。
   0.7.0 以降は 2 つのエントリが同じカット（`reel.tsx`）を、それぞれのキャンバスに組んで再生します。
   0.8.0 は章をページとして切り替える代わりに、1 枚の紙（`sheet.ts`・`tiles.tsx`）をカメラが読む構成で、冒頭は `open.tsx` です。
   0.9.0 は放送の構成で、マルチビューアー（`multiview.tsx`）と、機能ごとの番組（`program.tsx`、縦長は `ShortProgram.tsx`）、音のミックス（`mix.ts`・`voices.ts`）を持ちます。
+  0.10.0 はモジュラーラックの構成で、ラック（`rack.tsx`）と、モジュールのパネル（`module.tsx`）、機能ごとのページ（`program.tsx`）を持ちます。
 - `make-score-<version>.py` — BGM を生成する Python スクリプト。標準ライブラリのみ。
-- `poster-0.9.0.jpg`・`poster-0.8.0.jpg`・`poster-0.7.0.jpg`・`poster.jpg` — 0.9.0 から 0.7.0 は `poster` コンポジションの書き出し（0.9.0 と 0.8.0 は JPEG で直接）、0.6.0 は映像のアウトロから抽出した静止画。
+- `poster-0.10.0.jpg`・`poster-0.9.0.jpg`・`poster-0.8.0.jpg`・`poster-0.7.0.jpg`・`poster.jpg` — 0.10.0 から 0.7.0 は `poster` コンポジションの書き出し（0.10.0 から 0.8.0 は JPEG で直接）、0.6.0 は映像のアウトロから抽出した静止画。
 
 次のリリースは `film-<version>.tsx` と `v<version>/` を足し、`components/` を使い回します。
 `components/` は v0.6.0 の API だけで書かれており、0.6.0 の映像はそのまま v0.6.0 で動きます。
 
-![poster](poster-0.9.0.jpg)
+![poster](poster-0.10.0.jpg)
+
+## 構成（v0.10.0）
+
+v0.9.0 のタグから v0.10.0 のタグまでの差分です（PR 一覧は v0.9.0 以降にマージされた 117 本。Renovate の依存更新 47 本は数だけ数えています）。
+
+0.10.0 では、Celesta が中で抱えていたもの（レイヤーを描くもの、動画と音声の読み書き、その入手先）がプラグインとして外に出ました。
+そこで映像はモジュラーシンセのラックです。電源が入ったコアに 14 の機能がモジュールとして差し込まれ、ケーブルで 1 つずつ次へつながれ、
+カメラがその 1 つずつに入っていきます。各ページは、左に見出しと差分とラックの縮図、右にモジュールのパネル（画面にデモ、その下の帯に 1 語ずつ光るキャプション、
+下にジャック）、左下に機能名のローワーサード。小節の頭で入力のケーブルが刺さって LED が点き、終わり近くで出力のケーブルが次のモジュールへ刺さります。
+ページの切り替えは、入ってくるブロックの色のフェースプレートが画面を横切るスティンガーです。
+
+1920×1080、30 fps、120 BPM のモジュラーテクノ（1 拍 = 15 フレーム、1 小節 = 60 フレーム。シリーズの `components/theme.ts` の格子そのまま）。
+冒頭 4 小節、14 の機能が 2 小節ずつ、MORE が 2 拍ずつ 12 枚、締め 4 小節で 84 秒です。
+
+| 時間 | 内容 |
+| --- | --- |
+| 0–2 秒 | ラックのレールと空きスロット。コアの電源が入り、画面に CELESTA 0.10.0 |
+| 2–4 秒 | 14 のモジュールと MORE が 16 分音符ごとに 1 つずつスロットに収まる。下に PR が流れる |
+| 4–6 秒 | タイトル「DELTA 0.10.0 PATCH」。ケーブルが 16 分音符ごとに 1 本ずつ刺さり、刺さったモジュールから点灯してデモが動く |
+| 6–8 秒 | カメラが最初のモジュールに入り、小節の頭でそのページになる |
+| 8–24 秒 | CONTENT: Δ01 CONTENT PLUGINS・Δ02 3D SCENES・Δ03 VRM・Δ04 APPROVALS。各 4 秒 |
+| 24–36 秒 | MEDIA: Δ05 MEDIA PLUGINS・Δ06 NATIVE CODECS・Δ07 PIPELINE |
+| 36–52 秒 | REGISTRY: Δ08 REGISTRY・Δ09 CELESTA PLUGIN・Δ10 LOCK・Δ11 FIND PLUGINS |
+| 52–64 秒 | EDITOR: Δ12 INSPECTOR・Δ13 TIMELINE・Δ14 EXPORT PAGE |
+| 64–76 秒 | MORE — X264 / BT.709 / STILLS / PRESETS / @CELESTA.STUDIO / CRATES.IO / FONT FACE / INSTANCES / EDIT GAPS / NAN / TOOLING / FIXES を 2 拍ずつ |
+| 76–84 秒 | エンドカードを 1 小節。それがコアの画面に収まるようにラック全体へ引き、最後の小節でモジュールが 16 分音符ごとに電源を落とす（最後のフレームがポスター） |
+
+ケーブルの色はブロックごとで、CONTENT がオレンジ、MEDIA が青、REGISTRY が緑、EDITOR が紫です。
+
+BGM は F マイナー（Fm – D♭ – A♭ – E♭）。4 つ打ちのキック、2・4 拍のクラップ、16 分のハイハット、裏拍のベース、16 分のシーケンサーのブリップに、
+モジュールが収まる音とケーブルが刺さる音（各ページの 8 フレーム目と終わり近く）を重ねています。MEDIA でアシッドのラインが入ってフィルターが章ごとに開き、
+REGISTRY の最初はブレイク（キックは 1 拍目だけ、パッド）、EDITOR でベルのリード、MORE はカードごとにスタブ。最後の小節は電源が落ちる下降音と、モジュールごとのクリックです。
+
+## 新機能で作っている部分（v0.10.0）
+
+- CONTENT PLUGINS と APPROVALS のデモ、ラックの中の同じモジュールは、`examples/plugins/flag` の本物の `<Flag>` です。フレームごとにプラグインのプロセスがメッシュを返し、Celesta が描いています。
+- 3D SCENES のデモは `examples/plugins/turntable` の本物の `<Turntable>` で、プラグインのプロセスが返す 3D シーン（カメラ、ライト、WGSL のトゥーンとアウトライン）を Celesta が深度つきで描いています。
+- 差分パネルのコードの色分けは、このプロジェクトが `celesta.config.json` で宣言し `celesta.lock` で固定しているレジストリプラグイン `code` の `highlightCode()` です。LOCK のデモはその 2 つのファイルの中身です。
+- 書き出しの動画と音声はメディアプラグインが書いています。macOS では H.264 が AVFoundation（VideoToolbox）で、映像は BT.709 で変換・タグ付けされます。
+  NATIVE CODECS と EXPORT PAGE のエンコーダー名は、この映像の書き出しが JSON で報告したものです。
+- ポスターは `--composition poster --quality 85` で、組み込みの JPEG エンコーダー（`builtin/jpeg`）が書いています。
+
+## 書き出し（v0.10.0）
+
+サンプルプラグインを一度ビルドしてから（Rust のプログラムを含みます）、`--plugin-dir` で渡します。
+
+```sh
+pnpm install && pnpm run build:runtime                  # リポジトリのルートで一度
+node scripts/plugins/build.mts examples/plugins/flag examples/plugins/turntable
+python3 examples/delta/make-score-0.10.0.py
+cd examples/delta
+Celesta-export --react --loudness streaming --plugin-dir ../plugins/dist ./film-0.10.0.tsx delta-0.10.0.mp4 \
+  --subtitles 'delta-0.10.0.{lang}.srt' --subtitles 'delta-0.10.0.{lang}.vtt'
+```
+
+エントリは `./film-0.10.0.tsx` のようにディレクトリ付きで渡してください。`film-0.10.0.tsx` だけだと、`<Flag>` の画像の相対パスがプラグインのプロセスで解決できずに失敗します（Celesta 0.10.0 の不具合）。
+
+## 本物と演出（v0.10.0）
+
+- **実際の機能**: 上に挙げたもののほか、VRM のデモの揺れ物は、プラグインと同じく 60 Hz の固定ステップで 0 秒から積み上げた計算です（どのフレームを先に求めても同じ結果）。
+  MEDIA PLUGINS のコンポーネント一覧は `Celesta-export --list-components` の出力、CELESTA PLUGIN の出力は `celesta plugin search` の結果と `crates/cli` が出力する文面、
+  REGISTRY の鍵と有効期限は公式レジストリのルート鍵とオンライン鍵、ハッシュはこのプロジェクトの `celesta.lock` の値です。
+  INSPECTOR のキャンバスのカードは表示している値どおりの実際の `Panel` です。
+- **説明のための描画**: VRM のデモの胸像（リポジトリに VRM のモデルがないため、図形で描いています）、APPROVALS の Plugins タブ、FIND PLUGINS のプラグインページ、
+  INSPECTOR・TIMELINE・EXPORT PAGE のエディタ画面は、各 PR の handoff の記述に合わせて似せて描いたものです。PIPELINE のレーンとリングも図解です。
+- **数値**: EXPORT PAGE のフレーム数はこの映像の長さ、PR とコミットの数は `git` と `gh` で数えたものです。
 
 ## 構成（v0.9.0）
 
