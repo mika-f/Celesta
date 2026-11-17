@@ -6,6 +6,7 @@ use crate::edit_history::EditHistory;
 use crate::element_edit::{ElementEdit, ScopeCache};
 use crate::element_rows::ElementRows;
 use crate::export_control::ExportPageSlot;
+use crate::export_status::ExportStatus;
 use crate::export_worker::{ExportWorker, spawn_export};
 use crate::helpers::ExportLoudness;
 use crate::inline_text_view::{EditEvent, InlineTextSession, KeptOverride};
@@ -32,7 +33,7 @@ use crate::transform_drag::TransformDrag;
 use crate::transform_handles::{PivotMode, ResizeTool};
 use celesta_composition::{AudioClip, Rational};
 use celesta_editor_core::{AssetSummary, EditorDocument, TimelineClock, TrackSummary};
-use celesta_exporter::{ExportCancellation, ExportProgress};
+use celesta_exporter::ExportCancellation;
 use celesta_gpu_renderer::{
     GpuDriver, GpuRenderOptions, GpuRenderer, HitRegion, LayerFrame, TextLayout,
 };
@@ -249,7 +250,8 @@ pub(crate) struct EditorView {
     pub(crate) tracks: Vec<TrackSummary>,
     pub(crate) preview: ShownPreview,
     pub(crate) export_worker: ExportWorker,
-    pub(crate) export_progress: Option<ExportProgress>,
+    /// The running export's stage, for the status bar.
+    pub(crate) export_status: Option<ExportStatus>,
     pub(crate) export_path: Option<PathBuf>,
     pub(crate) export_cancellation: Option<ExportCancellation>,
     pub(crate) export_cancelling: bool,
@@ -596,7 +598,7 @@ impl EditorView {
             tracks,
             preview: ShownPreview::default(),
             export_worker,
-            export_progress: None,
+            export_status: None,
             export_path: None,
             export_cancellation: None,
             export_cancelling: false,

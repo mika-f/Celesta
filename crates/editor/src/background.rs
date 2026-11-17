@@ -9,6 +9,7 @@ use crate::refresh::LookupFate;
 use crate::view::EditorView;
 use celesta_exporter::ExportProgress;
 use std::collections::HashMap;
+use std::time::Instant;
 
 impl EditorView {
     pub(crate) fn poll_background_work(&mut self) {
@@ -216,7 +217,7 @@ impl EditorView {
         if let Some(error) = polled.stopped
             && self.export_cancellation.is_some()
         {
-            self.export_progress = None;
+            self.export_status = None;
             self.export_path = None;
             self.export_cancellation = None;
             self.export_cancelling = false;
@@ -235,16 +236,12 @@ impl EditorView {
             ExportEvent::Progress(ExportProgress::Note(note)) => {
                 self.export_notices.note(note);
             }
-            // `Finished` reports the output, and the label stays on the last
-            // stage until then.
-            ExportEvent::Progress(
-                ExportProgress::Composition(_)
-                | ExportProgress::Output(_)
-                | ExportProgress::ReactCompositions { .. }
-                | ExportProgress::Wrote(_),
-            ) => {}
+            // `Finished` reports the output; the status bar stays on the
+            // last stage until then.
             ExportEvent::Progress(progress) => {
-                self.export_progress = Some(progress);
+                if let Some(status) = &mut self.export_status {
+                    status.update(&progress, Instant::now());
+                }
             }
             ExportEvent::Finished {
                 output,
@@ -252,7 +249,7 @@ impl EditorView {
                 cancelled,
                 loudness,
             } => {
-                self.export_progress = None;
+                self.export_status = None;
                 self.export_cancellation = None;
                 self.export_cancelling = false;
                 self.problems.log_export_notices(&mut self.export_notices);

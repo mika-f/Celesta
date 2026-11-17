@@ -2,7 +2,7 @@ use crate::preview::{CpuPreviewFrame, PreviewPresentation};
 use crate::view::EditorView;
 use celesta_composition::{Rational, Time};
 use celesta_editor_core::ClipKind;
-use celesta_exporter::{AudioLoudness, ExportProgress, ExportRange, LoudnessTarget};
+use celesta_exporter::{AudioLoudness, ExportRange, LoudnessTarget};
 use celesta_gpu_renderer::PreviewFrame as GpuPreviewFrame;
 use celesta_react_bridge::import_path;
 use gpui_kit::{App, Context, PathPromptOptions, RenderImage};
@@ -54,21 +54,6 @@ pub(crate) fn format_time(time: Time) -> String {
     let minutes = ((total % 3600.0) / 60.0).floor() as u64;
     let seconds = total % 60.0;
     format!("{hours:02}:{minutes:02}:{seconds:06.3}")
-}
-
-pub(crate) fn export_progress_label(progress: &ExportProgress) -> String {
-    match progress {
-        ExportProgress::Rendering { frame: 0, total: 0 }
-        | ExportProgress::Composition(_)
-        | ExportProgress::Output(_)
-        | ExportProgress::ReactCompositions { .. } => "Starting export…".to_owned(),
-        ExportProgress::Rendering { frame, total } => {
-            format!("Exporting frame {frame}/{total}")
-        }
-        ExportProgress::MixingAudio => "Mixing export audio…".to_owned(),
-        ExportProgress::Muxing | ExportProgress::Wrote(_) => "Muxing…".to_owned(),
-        ExportProgress::Warning(message) | ExportProgress::Note(message) => message.clone(),
-    }
 }
 
 /// The loudness an export reports for its mix, as `-16.2 LUFS, -1.0 dBTP`.
