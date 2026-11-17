@@ -10,7 +10,9 @@ preview and export, and other people (and agents) reading the file know them.
 | `Math.min(1, Math.max(0, x))` | `clamp01(x)`, `clamp(x, min, max)` | `@celesta.studio/math` |
 | `a + (b - a) * t`, mapping one range onto another | `lerp(a, b, t)`, `remap(v, inMin, inMax, outMin, outMax)`, `remapClamped(...)` | `@celesta.studio/math` |
 | `easing(clamp((f - start) / frames))` | `progress(f, start, frames, easing?)` | `@celesta.studio/react` |
+| A copy of `easeOutBack` with another constant, a bezier solved by hand, `Math.floor(t * n) / n` | `Easings.back(overshoot).easeOut`, `Easings.cubicBezier(x1, y1, x2, y2)`, `Easings.steps(n)` (also `Easings.elastic({ amplitude, period })`) | `@celesta.studio/react` |
 | A frame range mapped to values, with easing | `interpolate(f, [a, b], [from, to], { easing, extrapolateLeft: 'clamp', extrapolateRight: 'clamp' })` | `@celesta.studio/react` |
+| Several `interpolate` calls chained with `frame < 100 ? … : …`, or `useCue` + `progress` per stop, to move through keys with different easings | `keyframes(f, [{ frame, value, easing }])` (a number or an object of numbers; two keys on one frame cut) | `@celesta.studio/react` |
 | A hex color blended by hand | `interpolateColor(f, [a, b], ['#…', '#…'])` | `@celesta.studio/react` |
 | `fract(Math.sin(i * 12.9898 + …) * 43758.5453)` | `random(seed)`, `randomRange(seed, min, max)`, `randomInt(...)` | `@celesta.studio/math` |
 | Wobble from summed sines | `noise(seed, t)`, `loopNoise(seed, t, period)` for loops | `@celesta.studio/math` |
@@ -31,6 +33,7 @@ preview and export, and other people (and agents) reading the file know them.
 | A chapter number, kicker, title, and subtitle placed and staggered by hand | `<TitleCard chapter="01" kicker="…" title="…" subtitle="…" />` | `@celesta.studio/components` |
 | A name and role on a `<Rect>` band measured with `useTextMetrics` and slid in from a corner | `<LowerThird title="…" subtitle="…" placement="bottom-left" />` | `@celesta.studio/components` |
 | `useTypewriter` text plus a caret `<Rect>` at `length * advance` or `textCaret(…)` | `<TypewriterText caretShape="block">…</TypewriterText>` | `@celesta.studio/components` |
+| `from + i * framesPerChar` computed by hand to put a sound or a flash on each typed character | `typewriterFrames(text, { from, framesPerChar, pauses })` (or `useTypewriter(…).frames`) | `@celesta.studio/text` |
 | `from: i * 6` on each item | `<Stagger each={6}>` | `@celesta.studio/react` |
 | Scene start frames summed by hand | `<Series>` + `computeSeries` | `@celesta.studio/react` |
 | A beat counter from the BPM | `useBeat({ bpm })` | `@celesta.studio/react` |

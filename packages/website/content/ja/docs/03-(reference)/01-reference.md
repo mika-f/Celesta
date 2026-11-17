@@ -35,7 +35,7 @@ Celesta は Remotion のようにパッケージに分かれています。コ�
 | `progress` | `@celesta.studio/react` | フレームの区間を、イージング付きの 0〜1 に制限した値にします。 |
 | `useBeat()` / `beatAt` | `@celesta.studio/react` | BPM のテンポから拍・小節・パルスを取得します。 |
 | `useCue()` / `cueAt` | `@celesta.studio/react` | `{ at, …data }` のリストから現在のキューを取得します。 |
-| `TextReveal`, `useTypewriter()`, `useCountUp()` | `@celesta.studio/text` | マスク付きの行表示、入力効果、数値カウンター。 |
+| `TextReveal`, `useTypewriter()`, `typewriterFrames()`, `useCountUp()` | `@celesta.studio/text` | マスク付きの行表示、入力効果（各文字が表示されるフレームも取得できます）、数値カウンター。 |
 | `Camera` | `@celesta.studio/layout` | 大きなワールドの一部を、ズーム・回転・揺れ付きで映します。 |
 | `Line` / `Polyline` / `Path` / `pointOnPolyline` | `@celesta.studio/shapes` | 線分・曲線・塗りつぶした形。折れ線とパスは段階的に描けます。 |
 | `pointOnPath` / `tangentOnPath` / `measurePath` / `getLength` / `getPointAtLength` / `getTangentAtLength` | `@celesta.studio/shapes` | パスコマンド上の位置・向き・長さ。曲線も含みます。 |
@@ -45,6 +45,7 @@ Celesta は Remotion のようにパッケージに分かれています。コ�
 | `trianglePath` / `polygonPath` / `starPath` / `piePath` / `heartPath` | `@celesta.studio/shapes` | 同じ図形のパスコマンド。`Path` に渡したり変形したりできます。 |
 | `interpolate` / `Easings` | `@celesta.studio/react` | フレームを、イージング・外挿付きの値に変換します。 |
 | `interpolateColor` | `@celesta.studio/react` | フレームを `#RRGGBBAA` の色に変換し、乗算済みアルファで混ぜます。 |
+| `keyframes` | `@celesta.studio/react` | keyframes(frame, keys) は、キー `{ frame, value, easing? }` の並びから、そのフレームでの値を返します。値は数値か数値だけのオブジェクトで、各区間には終点のキーのイージングがかかります。同じフレームにキーを2つ置くとカットになります。[アニメーション](/ja/docs/animation/)を参照してください。 |
 | `frameKeyframes` | `@celesta.studio/react` | frameKeyframes(keys, { fps, origin? }) は、フレーム番号から音量・再生速度・ピッチのキーフレームを作ります。時刻は Audio を囲む Sequence の時計で (frame - origin) / fps 秒となり、origin の既定値は 0 です。音声のフェードなどに使えます。ブラウザでの書き出しは、音量と再生速度のキーフレームにも対応しますが、ピッチは使えません。 |
 | `spring` | `@celesta.studio/react` | 物理モデルで 0 から 1 に収束する値。 |
 | `useCurrentFrame()` / `useCurrentTime()` | `@celesta.studio/react` | 親シーケンスを基準にした現在のフレームまたは正確な時刻。 |

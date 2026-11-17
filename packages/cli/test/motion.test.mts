@@ -71,7 +71,11 @@ test('progress clamps, eases, and rejects an empty span', () => {
 });
 
 test('every easing starts at exactly 0 and ends at exactly 1', () => {
-  for (const [name, easing] of Object.entries(Easings)) {
+  // `cubicBezier`, `steps`, `back`, and `elastic` build curves; their own
+  // tests check the curves they return.
+  const factories = new Set(['cubicBezier', 'steps', 'back', 'elastic']);
+  for (const [name, easing] of Object.entries(Easings) as [string, (t: number) => number][]) {
+    if (factories.has(name)) continue;
     // `===` rather than Object.is: -0 at the start is fine.
     assert.ok(easing(0) === 0, `${name}(0) = ${easing(0)}`);
     assert.ok(easing(1) === 1, `${name}(1) = ${easing(1)}`);

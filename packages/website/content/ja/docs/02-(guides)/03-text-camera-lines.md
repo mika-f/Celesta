@@ -6,9 +6,10 @@
 
 | API | 用途 |
 | --- | --- |
-| `TextReveal` | 文字列の各行を、それぞれのマスクの裏から順にスライド表示します。`lineHeight`、`from`、`stagger`、`durationInFrames` を設定し、`align` で各行の横方向の揃え位置（0 左、0.5 中央、1 右）を指定します。行は `\n` で区切ります。`maxWidth` を渡すと `<Text maxWidth>` と同じ位置（`style.lineBreak: 'phrase'` を含む）でも折り返し、折り返した行も 1 行ずつ表示します。 |
+| `TextReveal` | 文字列の各行を、それぞれのマスクの裏から順にスライド表示します。`lineHeight`、`from`、`stagger`、`durationInFrames` を設定し、`align` で各行の横方向の揃え位置（0 左、0.5 中央、1 右）を指定します。行は `\n` で区切ります。`maxWidth` を渡すと `<Text maxWidth>` と同じ位置（`style.lineBreak: 'phrase'` を含む）でも折り返し、折り返した行も 1 行ずつ表示します。`unit` を指定すると、行より細かい単位で表示します：`'word'`（単語）、`'phrase'`（日本語の文節）、`'grapheme'`（一文字ずつ）。このとき `stagger` は行をまたいで単位を数えます。 |
 | `TypewriterText`（`@celesta.studio/components`） | 線またはブロックのカーソル付きで、文字を一文字ずつ入力して見せます。送りは `useTypewriter` と同じです。カーソルは組版を計測した位置に置くので、比例フォント・日本語・`\n`・`maxWidth` の折り返しでも等幅フォントは要りません。 |
-| `useTypewriter(text, options)` | 入力済みの `text`、その `length`、`done`、`caretVisible`。入力中は固定、停止中は点滅します。 |
+| `useTypewriter(text, options)` | 入力済みの `text`、その `length`、`done`、`caretVisible`。入力中は固定、停止中は点滅します。`pauses`（`{ '、': 4, '。': 10 }`）を渡すと、その文字のあとに指定したフレーム数だけ待ちます。`<TypewriterText>` にも同じプロパティがあります。`frames` は各文字が表示されるフレームの一覧です。 |
+| `typewriterFrames(text, options)` | 同じフレームの一覧を返す関数です。キーを打つ音を一文字ごとに置くときなどに使います：`typewriterFrames(text, { from, framesPerChar, pauses })`。 |
 | `useCountUp(to, options)` | `to` まで数える数値。`from`、`delay`、`durationInFrames`、`easing`、`decimals` で調整します。 |
 | `Counter`、`StatCard`（`@celesta.studio/components`） | 数えた数値を整形して描く `<Text>` と、ラベル・数値・補足を載せたカードです。`useCountUp` と同じ既定のタイミングで数え、`locale`（既定 `'en-US'`。実行環境の locale には依存しません）、`decimals`（常に表示）、`prefix` / `suffix`、`formatter` で表示を決めます。`anchorX={1}` にすると、桁が増えても末尾の桁と単位が動きません。 |
 
@@ -19,6 +20,15 @@
   {'36 DAYS\nOF CELESTA'}
 </TextReveal>
 ```
+
+```tsx title="一文字ずつ表示"
+<TextReveal x={160} y={300} lineHeight={120} unit="grapheme" stagger={1} durationInFrames={14}
+  style={{ fontFamily: 'Noto Sans JP', fontWeight: 700, fontSize: 96 }}>
+  {'一文字ずつ、\n順番に出します。'}
+</TextReveal>
+```
+
+`unit` を指定すると、各単位は行を計測した位置に置かれ、それぞれ別のテキストとして描かれます。そのため、単位をまたぐカーニングや合字は失われます。日本語のように空白のない行は、全体で 1 つの `'word'` になります。日本語には `'grapheme'` か `'phrase'` を使ってください。
 
 等幅フォントのカーソル位置は、`length × advance` を目安に計算できます。実際の文字の位置や幅を使う場合は、デスクトップの useTextMetrics() を利用してください。詳しくは「テキストとフォント」を参照してください。
 
@@ -32,6 +42,8 @@
   <TimelineWorld />
 </Camera>
 ```
+
+途中にホールドやカットを挟みながら複数の地点を巡るには、`keyframes` で props を計算して `<Camera {...keyframes(frame, keys)}>` のように渡します。[アニメーション](/ja/docs/animation/)を参照してください。
 
 速いカメラの動きをぼかすには、カメラを `MotionBlur` で包み、ブラーが渡すフレームから props を計算して、各時点で値が変わるようにします。[アニメーション](/ja/docs/animation/)を参照してください。
 

@@ -22,6 +22,7 @@ For randomness and noise, use [`@celesta.studio/math`](math.md).
 - [Easings](#easings)
 - [spring](#spring)
 - [progress](#progress)
+- [keyframes](#keyframes)
 - [Sequence](#sequence)
 - [Loop](#loop)
 - [FreezeFrame](#freezeframe)
@@ -44,6 +45,7 @@ For randomness and noise, use [`@celesta.studio/math`](math.md).
 | You want… | Use |
 | --- | --- |
 | A value from A to B over some frames | `interpolate` with `'clamp'`, or `progress` |
+| A value through several keys, each leg with its own easing, with holds and cuts (a camera path) | `keyframes` |
 | A color from A to B (fill, gradient stop, shadow) | `interpolateColor` |
 | A bouncy pop-in | `spring` |
 | Scenes back to back | `Series` + `computeSeries` |
@@ -140,6 +142,25 @@ Same `inputRange` rules and `easing` as `interpolate`, but takes `#RRGGBB` /
 `(t: number) => number` works too. JSON keyframes use the same names in
 kebab case (`ease-out-back`).
 
+Four members build a curve from numbers instead of being one:
+
+| Call | Returns |
+| --- | --- |
+| `Easings.cubicBezier(x1, y1, x2, y2)` | The curve of CSS `cubic-bezier()`, so values from a design tool or a stylesheet paste in. `x1` and `x2` must be in 0–1; `y1`/`y2` outside 0–1 overshoot. |
+| `Easings.steps(count)` | A staircase of `count` equal steps (a positive integer), 1 only at the end: stop-motion and tick-by-tick moves. |
+| `Easings.back(overshoot?)` | `{ easeIn, easeOut, easeInOut }` like the `Back` curves, with that overshoot (default `1.70158`, theirs; larger overshoots further, 0 not at all). |
+| `Easings.elastic({ amplitude?, period? })` | `{ easeIn, easeOut, easeInOut }` like the `Elastic` curves: `amplitude` (at least 1, default 1) is how far the swings reach, `period` (above 0, default 0.3) the length of one swing as a share of the span (`easeInOut` uses one and a half times it). |
+
+```tsx
+const pop = progress(frame, 0, 20, Easings.back(2.2).easeOut);
+const slide = progress(frame, 10, 24, Easings.cubicBezier(0.4, 0, 0.2, 1));
+const tick = progress(frame, 0, 60, Easings.steps(6));
+```
+
+Build a curve once (at module level or outside the per-item loop) and reuse
+it. These are functions for React code only: JSON keyframes and
+`frameKeyframes()` take the named curves.
+
 ## spring
 
 `spring({ frame, fps, config?, from?, to?, delay?, durationInFrames? })`
@@ -163,6 +184,44 @@ const scale = spring({ frame, fps, delay: 10, config: { damping: 12 } });
 `frame` in the span, with `easing` applied (linear by default). The building
 block of entrances:
 `opacity={progress(frame, 10, 20, Easings.easeOutExpo)}`.
+
+## keyframes
+
+`keyframes(frame, keys)`: the value at `frame` of a list of keys
+`{ frame, value, easing? }`. Unlike `interpolate`, each segment has its own
+easing, a value may be an object of numbers that move together, and a move
+can hold or cut.
+
+```tsx
+const cam = keyframes(useCurrentFrame(), [
+  { frame: 0,   value: { x: 960, y: 540, zoom: 1 } },
+  { frame: 100, value: { x: 880, y: 520, zoom: 1.12 }, easing: Easings.easeInOutCubic },
+  { frame: 120, value: { x: 880, y: 520, zoom: 1.12 } },  // same value: a hold
+  { frame: 120, value: { x: 300, y: 400, zoom: 1 } },     // same frame: a cut
+  { frame: 180, value: { x: 320, y: 390, zoom: 1.04 } },  // a slow drift
+]);
+<Camera {...cam}>…</Camera>
+```
+
+- `value` is a number or an object of numbers; every key must have the same
+  fields. The result has the same shape (a new object each call).
+- `easing` shapes the segment that **ends** at the key, as in JSON
+  keyframes: a function (`Easings.easeOutBack`,
+  `Easings.cubicBezier(…)`), or a curve's JSON name (`'ease-out-back'`).
+  Default linear. An easing that overshoots overshoots every field.
+- Before the first key the value is the first key's; after the last, the
+  last key's. `frame` may be fractional (inside `<MotionBlur>`).
+- **Cut**: two keys on one frame `f`. Frames below `f` end on the first
+  key's value; frame `f` and later use the second, as a
+  `<Sequence from={f}>` would. A third key on one frame throws.
+- Keys must be in order of `frame`; a non-finite frame or value, values of
+  different shapes, or an unknown easing name throws with the key's index
+  (`keyframes() requires keys in order of frame (key 3)`).
+- Colors are not numbers: blend them with `interpolateColor`.
+- `<Audio volume>` and the other props that take keyframes themselves need
+  [`frameKeyframes()`](react-core.md#keyframe-values), not this.
+
+Runnable: [`packages/cli/examples/with-keyframes.tsx`](../../../packages/cli/examples/with-keyframes.tsx).
 
 ## Sequence
 
@@ -693,7 +752,9 @@ world point (`x`, `y`) at the center of the current area (canvas,
 `SafeArea`, or `Fit`), magnified by `zoom` about that point. Defaults look at
 the center, so `<Camera zoom={1.05}>` is a slow push-in. `shake` is the
 largest drift in world pixels, smoothed by `@celesta.studio/math`'s `noise()`.
-Animate the props from the frame for pans and zooms. To blur a fast pan,
+Animate the props from the frame for pans and zooms; for a path through
+several stops with holds and cuts, spread [`keyframes()`](#keyframes):
+`<Camera {...keyframes(frame, keys)}>`. To blur a fast pan,
 wrap the camera in a `<MotionBlur>` with a function child that computes the
 props from the frame it is given ([MotionBlur and Trail](#motionblur-and-trail)).
 

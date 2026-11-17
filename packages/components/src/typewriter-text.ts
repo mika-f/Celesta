@@ -43,6 +43,11 @@ export interface TypewriterTextProps extends Omit<CommonProps, 'anchorX' | 'anch
   from?: number;
   /** Frames per character; below 1 types several characters a frame. Defaults to 1. */
   framesPerChar?: number;
+  /**
+   * Extra frames to wait after a character before the next, by character
+   * (one code point each), as for `useTypewriter()`: `{ '、': 4, '。': 10 }`.
+   */
+  pauses?: Readonly<Record<string, number>>;
   /** Length of one caret blink cycle (on, then off) while idle, in frames. Defaults to one second. */
   blinkFrames?: number;
   /** Draws the caret. Defaults to `true`; compute it to hide the caret from some frame on. */
@@ -130,7 +135,7 @@ export function TypewriterText(props: TypewriterTextProps): React.ReactElement {
   const {
     children, style, lang, maxWidth, anchorX = 0, anchorY = 0,
     fontFamily, fontSize, fontWeight, color,
-    from = 0, framesPerChar = 1, blinkFrames,
+    from = 0, framesPerChar = 1, pauses, blinkFrames,
     caret = true, caretShape = 'line', caretColor, caretWidth, caretHeight,
     ...groupProps
   } = props;
@@ -141,7 +146,7 @@ export function TypewriterText(props: TypewriterTextProps): React.ReactElement {
     throw new Error(`<TypewriterText> caretShape must be 'line' or 'block', got ${JSON.stringify(caretShape)}`);
   }
   const theme = useTheme();
-  const typed = useTypewriter(children, { from, framesPerChar, blinkFrames });
+  const typed = useTypewriter(children, { from, framesPerChar, pauses, blinkFrames });
   const textStyle = textStyleOf(style, { fontFamily, fontSize, fontWeight, color }, lang, theme);
   const metrics = useTextMetrics(children, textStyle, maxWidth === undefined ? {} : { maxWidth });
   // The font's own box: what a caret spans, whatever leading the text adds.

@@ -35,7 +35,7 @@ Celesta is split into packages, like Remotion. The core APIs come from `@celesta
 | `progress` | `@celesta.studio/react` | A clamped, eased 0–1 value for a span of frames. |
 | `useBeat()` / `beatAt` | `@celesta.studio/react` | Beats, bars, and a pulse for a tempo in BPM. |
 | `useCue()` / `cueAt` | `@celesta.studio/react` | The cue in effect from a list of `{ at, …data }`. |
-| `TextReveal`, `useTypewriter()`, `useCountUp()` | `@celesta.studio/text` | Masked line reveals, typing, and counting numbers. |
+| `TextReveal`, `useTypewriter()`, `typewriterFrames()`, `useCountUp()` | `@celesta.studio/text` | Masked line reveals, typing (with the frame each character appears on), and counting numbers. |
 | `Camera` | `@celesta.studio/layout` | Look at a point of a larger world, with zoom, rotation, and shake. |
 | `Line` / `Polyline` / `Path` / `pointOnPolyline` | `@celesta.studio/shapes` | Segments, curves, and filled shapes; polylines and paths can draw themselves on. |
 | `pointOnPath` / `tangentOnPath` / `measurePath` / `getLength` / `getPointAtLength` / `getTangentAtLength` | `@celesta.studio/shapes` | Points, directions, and lengths along path commands, curves included. |
@@ -45,6 +45,7 @@ Celesta is split into packages, like Remotion. The core APIs come from `@celesta
 | `trianglePath` / `polygonPath` / `starPath` / `piePath` / `heartPath` | `@celesta.studio/shapes` | The same shapes as path commands, to pass to a `Path` or reshape. |
 | `interpolate` / `Easings` | `@celesta.studio/react` | Map a frame to a value, with easing and extrapolation. |
 | `interpolateColor` | `@celesta.studio/react` | Map a frame to a `#RRGGBBAA` color, blending with premultiplied alpha. |
+| `keyframes` | `@celesta.studio/react` | keyframes(frame, keys) returns the value at a frame of keys `{ frame, value, easing? }`: a number or an object of numbers, each segment eased by the key it ends on. Two keys on one frame cut. See [Animation](/en/docs/animation/). |
 | `frameKeyframes` | `@celesta.studio/react` | frameKeyframes(keys, { fps, origin? }) builds volume, playbackRate, or pitch keyframes from frame numbers. Times are (frame - origin) / fps on the enclosing sequence’s clock; origin defaults to 0. Use it for audio fades. The browser exporter supports keyframed volume and playback rate, but not pitch. |
 | `spring` | `@celesta.studio/react` | A physics-based value that settles from 0 to 1. |
 | `useCurrentFrame()` / `useCurrentTime()` | `@celesta.studio/react` | The current frame, or the exact time, local to an enclosing sequence. |

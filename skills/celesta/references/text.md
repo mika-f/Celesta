@@ -523,10 +523,51 @@ staggered. Props: `children` (text, which may hold `<Span>`; a span crossing
 a line break continues on the next line), `style`, `maxWidth` (wrap width,
 see below), `lineHeight` (mask height and line spacing; defaults to
 `style.lineHeight`, then `fontSize`), `baseline` (0.8: baseline position
-inside each line box), `align` (0/0.5/1 pivot of each line), `from`,
+inside each line box), `align` (0/0.5/1 pivot of each line), `unit` (what
+arrives on its own, `'line'` by default; see below), `from`,
 `stagger` (4), `durationInFrames` (20), `easing` (`easeOutExpo`),
 `direction` (`'in'` or `'out'`), plus common props. `x`/`y` are the
 top-left of the first line box.
+
+`unit` reveals pieces finer than a line, each rising on its own from behind
+its line's mask:
+
+| `unit` | One piece is… |
+| --- | --- |
+| `'line'` | A line (the default). |
+| `'word'` | A run of characters between spaces, punctuation kept with its word. A line without spaces (Japanese) is one word. |
+| `'phrase'` | A Japanese phrase (文節), as `phrases()` from `@celesta.studio/text` splits the line: the places [`lineBreak: 'phrase'`](#line-breaking) may break. |
+| `'grapheme'` | One character as a reader sees it: a kana, a letter with its accents, an emoji. Use this for Japanese typed in one character at a time. |
+
+```tsx
+<TextReveal x={160} y={300} lineHeight={120} unit="grapheme" stagger={1} durationInFrames={14}
+  style={{ fontFamily: 'Noto Sans JP', fontWeight: 700, fontSize: 96 }}>
+  {'一文字ずつ、\n順番に出します。'}
+</TextReveal>
+```
+
+- `stagger` counts pieces in reading order across lines: piece `n` starts
+  at `from + n * stagger`. It stays 4 by default, so lower it for
+  `'grapheme'` (a 20-character line at 4 takes 80 frames to start them all).
+- Spaces and empty lines make no piece and use no stagger step; spaces keep
+  their width and empty lines their row.
+- Lines are found first, as without `unit` (`\n` and `maxWidth`), then each
+  line is split. `align` pivots the whole line, so pieces come to rest
+  exactly where the line would sit.
+- A `<Span>` keeps its style in every piece it covers.
+- Each piece is placed by measuring its line, even without `maxWidth`, so
+  `unit` needs the editor, exporter, or browser preview runtime, like
+  [`useTextMetrics`](#measure-text) (`inspect.mjs` needs `--native`). The
+  browser preview has no glyph positions and places a piece after the
+  measured width of the text before it, so positions there are approximate.
+- Each piece is shaped as text of its own: kerning and ligatures across
+  pieces are lost (at rest, `'grapheme'` text can sit a fraction of a pixel
+  off the same `<Text>`), and scripts whose letters join, such as Arabic,
+  should use `'line'` or `'word'`.
+- Right-to-left text is placed correctly in the editor and the exporter.
+  The browser preview places pieces as if the line read left to right.
+
+Runnable: [`packages/cli/examples/with-text-reveal.tsx`](../../../packages/cli/examples/with-text-reveal.tsx).
 
 - Without `maxWidth`, lines break only at `\n`: a long line runs past the
   frame instead of wrapping.
@@ -575,7 +616,8 @@ import { TypewriterText } from '@celesta.studio/components';
 
 Props: `children` (text, which may hold `<Span>`), `style`, the shorthand
 `fontFamily`/`fontSize`/`fontWeight`/`color`, `lang`, `maxWidth`, `from`
-(0), `framesPerChar` (1), `blinkFrames` (one second), `caret` (`true`),
+(0), `framesPerChar` (1), `pauses` (extra frames after a character, as for `useTypewriter` below),
+`blinkFrames` (one second), `caret` (`true`),
 `caretShape` (`'line'` or `'block'`), `caretColor` (hex or `<Theme>` name;
 defaults to the text's solid fill, else white), `caretWidth`,
 `caretHeight`, plus common props.
@@ -605,12 +647,36 @@ defaults to the text's solid fill, else white), `caretWidth`,
   caret is measured from the typed part of its line instead, without
   `<Span>` fonts.
 
-### `useTypewriter(text, { from?, framesPerChar?, blinkFrames? })`
+### `useTypewriter(text, { from?, framesPerChar?, pauses?, blinkFrames? })`
 
-Returns `{ text, length, done, caretVisible }`. Counts by code point, so kana
-and emoji count once. `framesPerChar` below 1 types several characters per
-frame. The caret is steady while typing and blinks (period `blinkFrames`,
-default one second) otherwise. For typed text with a caret, use
+Returns `{ text, length, done, caretVisible, frames }`. Counts by code point,
+so kana and emoji count once. `framesPerChar` below 1 types several
+characters per frame. The caret is steady while typing and blinks (period
+`blinkFrames`, default one second) otherwise.
+
+- `pauses` waits extra frames **after** a character before the next one:
+  `{ '、': 6, '。': 12 }`. Each name is one character (one code point), each
+  value at least 0, or it throws. The caret stays steady during a pause. A
+  pause after the last character delays nothing.
+- `frames` has one entry per character of the whole text: the first frame
+  it is shown on, on the hook's clock (`from` included). Characters typed
+  on the same frame share it.
+- `typewriterFrames(text, { from?, framesPerChar?, pauses? })` returns the
+  same list for a plain string, without a hook: use it at module level or
+  in `prepare()`, and to place something on each character.
+
+```tsx
+import { typewriterFrames } from '@celesta.studio/text';
+
+const LINE = 'pnpm run build';
+const TYPING = { from: 10, framesPerChar: 2 };
+const CLICKS = typewriterFrames(LINE, TYPING);
+
+<TypewriterText {...TYPING}>{LINE}</TypewriterText>
+{CLICKS.map((at, i) => <Sequence key={i} from={at}><Audio src="./key.wav" /></Sequence>)}
+```
+
+For typed text with a caret, use
 [`<TypewriterText>`](#typewritertext). For code, pass `length` to
 `<Code visibleCharacters>` ([code.md](code.md)).
 

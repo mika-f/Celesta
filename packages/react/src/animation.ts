@@ -314,7 +314,115 @@ export const Easings = {
   },
   easeInOutBounce: (t: number): number =>
     t < 0.5 ? (1 - Easings.easeOutBounce(1 - 2 * t)) / 2 : (1 + Easings.easeOutBounce(2 * t - 1)) / 2,
+
+  /**
+   * The curve of CSS `cubic-bezier(x1, y1, x2, y2)`: from (0, 0) to (1, 1)
+   * with control points (`x1`, `y1`) and (`x2`, `y2`). `x1` and `x2` must be
+   * in 0–1; `y1` and `y2` may leave it, which makes the curve overshoot.
+   * Inputs outside 0–1 return 0 and 1.
+   */
+  cubicBezier: (x1: number, y1: number, x2: number, y2: number): ((t: number) => number) => {
+    if (![x1, y1, x2, y2].every(Number.isFinite)) {
+      throw new Error('Easings.cubicBezier() requires finite control points');
+    }
+    if (x1 < 0 || x1 > 1) throw new Error('Easings.cubicBezier() requires x1 in 0–1');
+    if (x2 < 0 || x2 > 1) throw new Error('Easings.cubicBezier() requires x2 in 0–1');
+    const bezier = (a: number, b: number, s: number): number =>
+      ((1 - 3 * b + 3 * a) * s + (3 * b - 6 * a)) * s * s + 3 * a * s;
+    return (t) => {
+      if (!(t > 0)) return 0;
+      if (t >= 1) return 1;
+      // x(s) never decreases while x1 and x2 are in 0–1, so bisection finds
+      // the s whose x is t, however steep the curve.
+      let low = 0;
+      let high = 1;
+      for (let i = 0; i < 53; i++) {
+        const mid = (low + high) / 2;
+        if (bezier(x1, x2, mid) < t) low = mid;
+        else high = mid;
+      }
+      return bezier(y1, y2, (low + high) / 2);
+    };
+  },
+
+  /**
+   * A staircase of `count` equal steps: 0 until the first step, each step
+   * held until the next, and 1 only at the end (CSS `steps(count)`).
+   */
+  steps: (count: number): ((t: number) => number) => {
+    if (!Number.isInteger(count) || count <= 0) {
+      throw new Error('Easings.steps() requires a positive integer count');
+    }
+    return (t) => (t >= 1 ? 1 : !(t > 0) ? 0 : Math.floor(t * count) / count);
+  },
+
+  /**
+   * The `Back` curves with a chosen `overshoot` (default `1.70158`, the
+   * named curves' own; larger pulls back and overshoots further, 0 not at
+   * all).
+   */
+  back: (overshoot = 1.70158): EasingFamily => {
+    if (!Number.isFinite(overshoot) || overshoot < 0) {
+      throw new Error('Easings.back() requires a finite overshoot of at least 0');
+    }
+    const c1 = overshoot;
+    const c2 = c1 * 1.525;
+    const c3 = c1 + 1;
+    return {
+      easeIn: (t) => (t === 1 ? 1 : c3 * t * t * t - c1 * t * t),
+      easeOut: (t) => (t === 0 ? 0 : 1 + c3 * --t * t * t + c1 * t * t),
+      easeInOut: (t) =>
+        t < 0.5
+          ? (Math.pow(2 * t, 2) * ((c2 + 1) * 2 * t - c2)) / 2
+          : (Math.pow(2 * t - 2, 2) * ((c2 + 1) * (t * 2 - 2) + c2) + 2) / 2,
+    };
+  },
+
+  /**
+   * The `Elastic` curves with a chosen `amplitude` (how far the swings
+   * reach, at least 1) and `period` (the length of one swing, as a share of
+   * the span). Without options these are the named curves, whose amplitude
+   * is 1 and whose period is 0.3 (`easeInOut`: 0.45). A given `period`
+   * applies to `easeIn` and `easeOut`, and one and a half times it to
+   * `easeInOut`.
+   */
+  elastic: (options: { amplitude?: number; period?: number } = {}): EasingFamily => {
+    const { amplitude, period } = options;
+    if (amplitude === undefined && period === undefined) {
+      return { easeIn: Easings.easeInElastic, easeOut: Easings.easeOutElastic, easeInOut: Easings.easeInOutElastic };
+    }
+    const a = amplitude ?? 1;
+    const p = period ?? 0.3;
+    if (!Number.isFinite(a) || a < 1) throw new Error('Easings.elastic() requires a finite amplitude of at least 1');
+    if (!Number.isFinite(p) || p <= 0) throw new Error('Easings.elastic() requires a finite period above 0');
+    // The swing starts a quarter period early at amplitude 1, less above it,
+    // so the curve still leaves 0 and reaches 1 exactly.
+    const wave = (t: number, length: number): number =>
+      Math.sin(((t - (length / (2 * Math.PI)) * Math.asin(1 / a)) * 2 * Math.PI) / length);
+    const guarded = (curve: (t: number) => number) => (t: number): number => (t === 0 ? 0 : t === 1 ? 1 : curve(t));
+    return {
+      easeIn: guarded((t) => -a * Math.pow(2, 10 * t - 10) * wave(t - 1, p)),
+      easeOut: guarded((t) => a * Math.pow(2, -10 * t) * wave(t, p) + 1),
+      easeInOut: guarded((t) =>
+        t < 0.5
+          ? (-a * Math.pow(2, 20 * t - 10) * wave(2 * t - 1, p * 1.5)) / 2
+          : (a * Math.pow(2, -20 * t + 10) * wave(2 * t - 1, p * 1.5)) / 2 + 1),
+    };
+  },
 };
+
+/** The three curves of one easing family, as `Easings.back()` and `Easings.elastic()` return them. */
+export interface EasingFamily {
+  easeIn: (t: number) => number;
+  easeOut: (t: number) => number;
+  easeInOut: (t: number) => number;
+}
+
+/**
+ * The members of `Easings` that build a curve instead of being one. Code
+ * that walks `Easings` as a map of curves skips these.
+ */
+export const EASING_FACTORY_NAMES = ['cubicBezier', 'steps', 'back', 'elastic'] as const;
 
 export interface SpringConfig {
   damping?: number;

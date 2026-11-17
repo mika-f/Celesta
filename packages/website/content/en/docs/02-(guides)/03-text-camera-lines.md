@@ -6,9 +6,10 @@ Titles that reveal themselves, a camera that travels, and lines that draw on. Li
 
 | API | Use it for |
 | --- | --- |
-| `TextReveal` | Lines of a string slide up from behind their own masks, one after another. Set `lineHeight`, `from`, `stagger`, and `durationInFrames`; `align` pivots each line. `\n` breaks a line; with `maxWidth`, lines also wrap where `<Text maxWidth>` wraps (`style.lineBreak: 'phrase'` included), and each wrapped line is revealed on its own. |
+| `TextReveal` | Lines of a string slide up from behind their own masks, one after another. Set `lineHeight`, `from`, `stagger`, and `durationInFrames`; `align` pivots each line. `\n` breaks a line; with `maxWidth`, lines also wrap where `<Text maxWidth>` wraps (`style.lineBreak: 'phrase'` included), and each wrapped line is revealed on its own. `unit` reveals smaller pieces instead: `'word'`, `'phrase'` (Japanese phrases), or `'grapheme'` (one character at a time); `stagger` then counts pieces across lines. |
 | `TypewriterText` (`@celesta.studio/components`) | Text typed out with a line or block caret, timed as `useTypewriter` times it. The caret goes where the measured layout puts the next character, so proportional fonts, Japanese, `\n`, and `maxWidth` wrapping need no monospaced font. |
-| `useTypewriter(text, options)` | The typed-so-far `text`, its `length`, `done`, and `caretVisible`: steady while typing, blinking while idle. |
+| `useTypewriter(text, options)` | The typed-so-far `text`, its `length`, `done`, and `caretVisible`: steady while typing, blinking while idle. `pauses` (`{ ',': 4, '.': 10 }`) waits that many extra frames after a character; `<TypewriterText>` takes it too. `frames` lists the frame each character appears on. |
+| `typewriterFrames(text, options)` | The same list of frames as a plain function, for placing something on each character, such as a key click: `typewriterFrames(text, { from, framesPerChar, pauses })`. |
 | `useCountUp(to, options)` | A number counting to `to`, with `from`, `delay`, `durationInFrames`, `easing`, and `decimals`. |
 | `Counter`, `StatCard` (`@celesta.studio/components`) | A `<Text>` drawing a counted number formatted, and a card with a label, the number, and a note. They count with `useCountUp`'s default timing and print with `locale` (`'en-US'` by default, never the machine's), `decimals` (always shown), `prefix`/`suffix`, or a `formatter`. With `anchorX={1}` the last digit and the unit stay in place as digits are added. |
 
@@ -19,6 +20,15 @@ Titles that reveal themselves, a camera that travels, and lines that draw on. Li
   {'36 DAYS\nOF CELESTA'}
 </TextReveal>
 ```
+
+```tsx title="One character at a time"
+<TextReveal x={160} y={300} lineHeight={120} unit="grapheme" stagger={1} durationInFrames={14}
+  style={{ fontFamily: 'Noto Sans JP', fontWeight: 700, fontSize: 96 }}>
+  {'一文字ずつ、\n順番に出します。'}
+</TextReveal>
+```
+
+With a `unit`, every piece is placed by measuring its line, and is drawn as text of its own, so kerning and ligatures between pieces are lost. A line without spaces, such as Japanese, is a single `'word'`: use `'grapheme'` or `'phrase'` for it.
 
 For a quick monospaced caret, use `length × advance` as an estimate. For actual glyph positions, use useTextMetrics() in the desktop runtime; see Text & fonts.
 
@@ -32,6 +42,8 @@ For a quick monospaced caret, use `length × advance` as an estimate. For actual
   <TimelineWorld />
 </Camera>
 ```
+
+For a move through several stops, with a hold or a cut between them, compute the props with `keyframes` and spread them: `<Camera {...keyframes(frame, keys)}>`; see [Animation](/en/docs/animation/).
 
 To blur a fast camera move, wrap the camera in a `MotionBlur` and compute its props from the frame the blur passes in, so they change between its moments; see [Animation](/en/docs/animation/).
 

@@ -16,6 +16,36 @@ const opacity = interpolate(frame, [0, 30], [0, 1], {
 
 `Easings` は easings.net の曲線に対応します。`linear` と、`Sine`、`Quad`、`Cubic`、`Quart`、`Quint`、`Expo`、`Circ`、`Back`、`Elastic`、`Bounce` の `easeIn` / `easeOut` / `easeInOut`（例：`Easings.easeOutBack`）が使えます。
 
+名前付きの曲線では合わないときは、数値から曲線を作れます。
+
+```tsx
+const pop = Easings.back(2.2).easeOut;              // easeOutBack より大きく行き過ぎる
+const material = Easings.cubicBezier(0.4, 0, 0.2, 1); // CSS の cubic-bezier() と同じ4つの数値
+const tick = Easings.steps(6);                      // 6段の階段
+const wobble = Easings.elastic({ amplitude: 1.5, period: 0.4 }).easeOut;
+```
+
+`Easings.back(overshoot)` と `Easings.elastic({ amplitude, period })` は `{ easeIn, easeOut, easeInOut }` を返します。`Easings.cubicBezier` の `x1` と `x2` は 0〜1 の範囲で指定します。`y1` と `y2` は範囲外でもよく、その場合は曲線が行き過ぎます。返ってきた関数は、`interpolate` の `easing`、`progress`、コンポーネントの `easing` プロパティなど、イージングを渡せる場所ならどこでも使えます。JSON プロジェクトのキーフレームで使えるのは名前付きの曲線だけです。
+
+## キーフレームで動かす
+
+`interpolate` は、すべての区間に同じイージングを使います。区間ごとにイージングを変えたいときや、複数の数値をまとめて動かしたいときは、`@celesta.studio/react` の `keyframes` を使います。各キーには `frame` と `value`（数値、または数値だけのオブジェクト）を指定し、必要ならそのキーへ向かう動きの `easing` を指定します。
+
+```tsx title="ホールドとカットのあるカメラの動き"
+const cam = keyframes(frame, [
+  { frame: 0,   value: { x: 960, y: 540, zoom: 1 } },
+  { frame: 100, value: { x: 880, y: 520, zoom: 1.12 }, easing: Easings.easeInOutCubic },
+  { frame: 120, value: { x: 880, y: 520, zoom: 1.12 } },  // 同じ値：ホールド
+  { frame: 120, value: { x: 300, y: 400, zoom: 1 } },     // 同じフレーム：カット
+]);
+
+<Camera {...cam}>
+  <World />
+</Camera>
+```
+
+最初のキーより前は最初のキーの値、最後のキーより後は最後のキーの値になります。同じフレームにキーを2つ置くとカットになり、そのフレームから2つ目のキーの値になります。`easing` には関数か、JSON のキーフレームと同じ書き方の曲線名（`'ease-out-back'`）を指定します。キーは `frame` の順に並べ、`value` のフィールドはすべてのキーで揃えます。`<Audio>` の音量のようにキーフレームそのものを受け取るプロパティには、`frameKeyframes` を使います。[メディア](/ja/docs/media/)を参照してください。
+
 ## 色を補間する
 
 `@celesta.studio/react` から `interpolateColor` もインポートします。`interpolate` と同じ入力範囲と `easing` を取り、フレームを `#RRGGBB` または `#RRGGBBAA` の色に対応付けて `#RRGGBBAA` を返します。`Rect` の塗り、テキストの塗り、グラデーションの色、影などに使えます。

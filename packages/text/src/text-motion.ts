@@ -4,7 +4,7 @@ import * as React from 'react';
 import type { ReactNode } from 'react';
 
 import { Easings, Group, Text, progress, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
-import type { CommonProps, TextStyle } from '@celesta.studio/react';
+import type { CommonProps, TextMetrics, TextStyle } from '@celesta.studio/react';
 import {
   CompositionRuntimeContext,
   ThemeContext,
@@ -18,6 +18,14 @@ import {
   withTextRuns,
 } from '@celesta.studio/react/internal';
 import type { FlatText, MeasureTextRequest } from '@celesta.studio/react/internal';
+
+import { graphemes } from './emphasis';
+import { phrases } from './phrases';
+
+/** What `<TextReveal>` reveals on its own. */
+export type TextRevealUnit = 'line' | 'word' | 'phrase' | 'grapheme';
+
+const TEXT_REVEAL_UNITS: readonly string[] = ['line', 'word', 'phrase', 'grapheme'];
 
 export interface TextRevealProps extends CommonProps {
   /**
@@ -46,11 +54,31 @@ export interface TextRevealProps extends CommonProps {
   baseline?: number;
   /** Horizontal pivot of every line: 0 left, 0.5 center, 1 right. Defaults to 0. */
   align?: number;
-  /** Frame the first line starts moving. Defaults to 0. */
+  /**
+   * What is revealed on its own, one after another:
+   *
+   * - `'line'` (default): each line.
+   * - `'word'`: each run of characters between spaces, punctuation kept
+   *   with its word. Text without spaces, such as Japanese, is one word per
+   *   line.
+   * - `'phrase'`: each Japanese phrase (文節), as `phrases()` splits a line.
+   * - `'grapheme'`: each character as a reader sees it (an emoji or a
+   *   letter with its accents is one).
+   *
+   * Units finer than a line are placed by measuring each line, so they need
+   * the editor, the exporter, or the browser preview runtime. Each unit is
+   * drawn as text of its own: kerning and ligatures across units are lost,
+   * and scripts whose letters join (Arabic) should stay with `'line'` or
+   * `'word'`. Right-to-left text is placed correctly in the editor and the
+   * exporter; the browser preview, which has no glyph positions, places
+   * units as if the line read left to right.
+   */
+  unit?: TextRevealUnit;
+  /** Frame the first line (or unit) starts moving. Defaults to 0. */
   from?: number;
-  /** Frames between one line and the next. Defaults to 4. */
+  /** Frames between one line (or unit) and the next, counted in reading order across lines. Defaults to 4. */
   stagger?: number;
-  /** Frames each line takes to arrive. Defaults to 20. */
+  /** Frames each line (or unit) takes to arrive. Defaults to 20. */
   durationInFrames?: number;
   easing?: (t: number) => number;
   /** `'in'` (default) rises into place; `'out'` sinks away. */
@@ -77,6 +105,7 @@ export function TextReveal({
   lineHeight,
   baseline = 0.8,
   align = 0,
+  unit = 'line',
   from = 0,
   stagger = 4,
   durationInFrames = 20,
@@ -84,10 +113,24 @@ export function TextReveal({
   direction = 'in',
   ...groupProps
 }: TextRevealProps): React.ReactElement {
+  if (!TEXT_REVEAL_UNITS.includes(unit)) {
+    throw new Error(`<TextReveal> unit must be 'line', 'word', 'phrase', or 'grapheme', got ${JSON.stringify(unit)}`);
+  }
   const theme = React.useContext(ThemeContext);
   style = themedTextStyle(style, {}, theme, '<TextReveal>');
-  const flat = flattenTextContent(themeTextContent(children, theme), '<TextReveal> children');
-  withTextRuns(style ?? {}, flat, '<TextReveal>');
+  const spans = flattenTextContent(themeTextContent(children, theme), '<TextReveal> children');
+  withTextRuns(style ?? {}, spans, '<TextReveal>');
+  // Runs given in `style` count code points of the whole text, as `<Span>`
+  // runs do: move them into the text so each line and unit gets its part.
+  const flat: FlatText = {
+    ...spans,
+    colorRuns: style?.colorRuns?.length ? style.colorRuns : spans.colorRuns,
+    fontRuns: style?.fontRuns?.length ? style.fontRuns : spans.fontRuns,
+  };
+  if (style) {
+    const { colorRuns: _colorRuns, fontRuns: _fontRuns, ...rest } = style;
+    style = rest;
+  }
   const frame = useCurrentFrame();
   const { width } = useVideoConfig();
   const height = lineHeight ?? style?.lineHeight ?? style?.fontSize ?? 48;
@@ -96,13 +139,21 @@ export function TextReveal({
   }
   // Each line is its own single-line Text, so the multi-line spacing is ours.
   const { lineHeight: _lineHeight, ...lineStyle } = style ?? {};
+  const ranges = useLineRanges(flat, style ?? {}, maxWidth);
+  // Line widths are not needed, so the mask spans far past any line's width.
+  const maskWidth = width * 4;
+  if (unit !== 'line') {
+    // A component of its own: it measures every line, which the lines alone never need.
+    return React.createElement(RevealUnits, {
+      groupProps, flat, ranges, style: style ?? {}, lineStyle, unit, height, baseline, align, maskWidth,
+      frame, from, stagger, durationInFrames, easing, direction,
+    });
+  }
   // Each line keeps the runs inside it, rebased to its first code point.
-  const lines = useLineRanges(flat, style ?? {}, maxWidth).map(([start, end]) => {
+  const lines = ranges.map(([start, end]) => {
     const line = sliceTextRuns(flat, start, end);
     return { text: line.text, style: withTextRuns(lineStyle, line, '<TextReveal>') };
   });
-  // Line widths are not needed, so the mask spans far past any line's width.
-  const maskWidth = width * 4;
   return React.createElement(
     Group,
     groupProps,
@@ -122,6 +173,168 @@ export function TextReveal({
       );
     }),
   );
+}
+
+interface RevealUnitsProps {
+  groupProps: CommonProps;
+  flat: FlatText;
+  /** Code-point range of each line in `flat`. */
+  ranges: [number, number][];
+  style: TextStyle;
+  /** `style` without its `lineHeight`: what each piece is drawn with. */
+  lineStyle: TextStyle;
+  unit: Exclude<TextRevealUnit, 'line'>;
+  height: number;
+  baseline: number;
+  align: number;
+  maskWidth: number;
+  frame: number;
+  from: number;
+  stagger: number;
+  durationInFrames: number;
+  easing: (t: number) => number;
+  direction: 'in' | 'out';
+}
+
+/**
+ * `<TextReveal>` for a unit finer than a line: every unit is a sliding
+ * `Text` of its own behind its line's mask, placed where the measured line
+ * puts it.
+ */
+function RevealUnits({
+  groupProps, flat, ranges, style, lineStyle, unit, height, baseline, align, maskWidth,
+  frame, from, stagger, durationInFrames, easing, direction,
+}: RevealUnitsProps): React.ReactElement {
+  const runtime = React.useContext(CompositionRuntimeContext);
+  const fonts = useMeasurementFonts();
+  // What moves a glyph: not color, and not the alignment or leading of a
+  // paragraph, since each line is measured alone.
+  const { colorRuns, visibleCharacters, fill, stroke, align: _align, lineHeight: _lineHeight, ...layoutStyle } =
+    withInheritedText(style, runtime ?? {});
+  // Splitting (BudouX, the grapheme segmenter) depends on the text alone, not on the frame.
+  const unitsKey = JSON.stringify([flat.text, ranges, unit]);
+  const lineUnits = React.useMemo(() => {
+    const characters = Array.from(flat.text);
+    return ranges.map(([start, end]) => unitRanges(characters.slice(start, end), unit));
+  }, [unitsKey]);
+  const lines = ranges.map(([start, end], lineIndex) => {
+    const line = sliceTextRuns(flat, start, end);
+    return {
+      start,
+      units: lineUnits[lineIndex],
+      // The line as it is measured: its font runs, without its colors.
+      request: { text: line.text, style: withTextRuns(layoutStyle, { ...line, colorRuns: [] }, '<TextReveal>'), fonts },
+    };
+  });
+  const key = JSON.stringify(lines.map((line) => ({ request: line.request, units: line.units })));
+  const placed = React.useMemo(() => {
+    const measure = synchronousMeasurer('<TextReveal unit>');
+    const parsed = JSON.parse(key) as { request: MeasureTextRequest; units: [number, number][] }[];
+    return parsed.map(({ request, units }) => {
+      if (units.length === 0) return { width: 0, xs: [] as number[] };
+      const metrics = measure(request);
+      const glyphs = glyphsOf(metrics);
+      const lineCharacters = Array.from(request.text);
+      const xs = units.map(([unitStart, unitEnd]) => {
+        // The unit's left edge as drawn: the leftmost of its glyphs, which
+        // for right-to-left text is its last character, not its first.
+        // Inside a cluster of several characters (a ligature), the unit
+        // takes its share of the cluster's advance, as `textCaret` does.
+        const own = (glyphs ?? []).filter((glyph) => glyph.end > unitStart && glyph.start < unitEnd);
+        if (own.length > 0) return Math.min(...own.map((glyph) => leftEdge(glyph, unitStart, unitEnd)));
+        if (unitStart === 0) return 0;
+        // No glyph positions (the browser): the width of the text before
+        // the unit, which is right for left-to-right text only.
+        const before = sliceTextRuns({ text: request.text, colorRuns: [], fontRuns: request.style.fontRuns ?? [] }, 0, unitStart);
+        return measure({
+          ...request,
+          text: lineCharacters.slice(0, unitStart).join(''),
+          style: { ...request.style, fontRuns: before.fontRuns.length > 0 ? before.fontRuns : undefined },
+        }).width;
+      });
+      return { width: metrics.width, xs };
+    });
+  }, [key]);
+
+  let index = 0;
+  // The units of a line share its mask: one clip a line, however many units.
+  const layers = lines.map((line, lineIndex) => line.units.length === 0 ? null : React.createElement(
+    Group,
+    { key: lineIndex, y: lineIndex * height, clip: { x: -maskWidth / 2, width: maskWidth, height } },
+    line.units.map(([unitStart, unitEnd], unitIndex) => {
+      const p = progress(frame, from + index * stagger, durationInFrames, easing);
+      const shown = direction === 'in' ? p : 1 - p;
+      const piece = sliceTextRuns(flat, line.start + unitStart, line.start + unitEnd);
+      index += 1;
+      return React.createElement(Text, {
+        key: unitIndex,
+        x: placed[lineIndex].xs[unitIndex] - align * placed[lineIndex].width,
+        y: height * baseline + height * (1 - shown),
+        anchorY: 'baseline',
+        style: withTextRuns(lineStyle, piece, '<TextReveal>'),
+        children: piece.text,
+      });
+    }),
+  ));
+  return React.createElement(Group, groupProps, layers);
+}
+
+/**
+ * Where the part of `glyph` that covers code points `[start, end)` begins
+ * on the left: the whole cluster for one character, its share of the
+ * advance for a cluster of several.
+ */
+function leftEdge(glyph: TextMetrics['glyphs'][number], start: number, end: number): number {
+  const span = Math.max(1, glyph.end - glyph.start);
+  const from = (Math.max(start, glyph.start) - glyph.start) / span;
+  const to = (Math.min(end, glyph.end) - glyph.start) / span;
+  return glyph.x + glyph.width * (glyph.rtl ? 1 - to : from);
+}
+
+/** The shaped clusters, or null where the measurer has none (the browser). */
+function glyphsOf(metrics: TextMetrics): TextMetrics['glyphs'] | null {
+  try {
+    return metrics.glyphs;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The code-point range of each unit in a line, in reading order. Whitespace
+ * belongs to no unit: it keeps its width in the line but is never drawn.
+ */
+function unitRanges(characters: readonly string[], unit: Exclude<TextRevealUnit, 'line'>): [number, number][] {
+  const blank = (character: string): boolean => /^\s+$/u.test(character);
+  // Trims whitespace from both ends of a range; null when nothing is left.
+  const trimmed = (start: number, end: number): [number, number] | null => {
+    while (start < end && blank(characters[start])) start += 1;
+    while (end > start && blank(characters[end - 1])) end -= 1;
+    return start < end ? [start, end] : null;
+  };
+  const ranges: [number, number][] = [];
+  if (unit === 'word') {
+    let start = -1;
+    characters.forEach((character, index) => {
+      if (blank(character)) {
+        if (start >= 0) ranges.push([start, index]);
+        start = -1;
+      } else if (start < 0) {
+        start = index;
+      }
+    });
+    if (start >= 0) ranges.push([start, characters.length]);
+    return ranges;
+  }
+  const text = characters.join('');
+  let offset = 0;
+  for (const part of unit === 'phrase' ? phrases(text) : graphemes(text)) {
+    const length = Array.from(part).length;
+    const range = trimmed(offset, offset + length);
+    if (range) ranges.push(range);
+    offset += length;
+  }
+  return ranges;
 }
 
 /**
@@ -175,6 +388,12 @@ export interface TypewriterOptions {
    * Defaults to one second. The caret stays on while typing.
    */
   blinkFrames?: number;
+  /**
+   * Extra frames to wait after a character before typing the next one, by
+   * character: `{ '、': 4, '。': 10 }`. Each name is one character (one code
+   * point). The caret stays steady during a pause.
+   */
+  pauses?: Readonly<Record<string, number>>;
 }
 
 export interface Typewriter {
@@ -186,6 +405,96 @@ export interface Typewriter {
   done: boolean;
   /** Whether to draw a caret on this frame. */
   caretVisible: boolean;
+  /**
+   * The first whole frame each character of the whole text is shown on, one
+   * entry per code point, on the same clock as `useCurrentFrame()` (so
+   * `from` is included). Characters typed on the same frame share it.
+   */
+  frames: number[];
+}
+
+type TypingOptions = Pick<TypewriterOptions, 'from' | 'framesPerChar' | 'pauses'>;
+
+/**
+ * Checks the typing options and returns, for each character, the pause
+ * frames of the characters before it.
+ */
+function pausesBefore(characters: readonly string[], options: TypingOptions, caller: string): number[] {
+  const { from = 0, framesPerChar = 1, pauses = {} } = options;
+  // An infinite `from` is allowed: typing that never starts, or has always been done.
+  if (typeof from !== 'number' || Number.isNaN(from)) {
+    throw new Error(`${caller} requires a from that is a number`);
+  }
+  if (!Number.isFinite(framesPerChar) || framesPerChar <= 0) {
+    throw new Error(`${caller} requires a positive framesPerChar`);
+  }
+  for (const [character, frames] of Object.entries(pauses)) {
+    if (Array.from(character).length !== 1) {
+      throw new Error(`${caller} requires each name in pauses to be one character, got "${character}"`);
+    }
+    if (!Number.isFinite(frames) || frames < 0) {
+      throw new Error(`${caller} requires pauses of at least 0 frames, got ${frames} for "${character}"`);
+    }
+  }
+  let total = 0;
+  return characters.map((character) => {
+    const before = total;
+    if (Object.prototype.hasOwnProperty.call(pauses, character)) total += pauses[character];
+    return before;
+  });
+}
+
+/**
+ * Whether character `index` is shown on `frame`. The one test everything
+ * about typing is derived from, so the typed count and the reported frames
+ * cannot disagree by a rounding error.
+ */
+function isTyped(index: number, frame: number, from: number, framesPerChar: number, paused: number): boolean {
+  return Math.floor((frame - from - paused) / framesPerChar) >= index;
+}
+
+/** How many of `characters` are typed on `frame` (which may be fractional). */
+export function typedCount(characters: readonly string[], frame: number, options: TypingOptions = {}): number {
+  const { from = 0, framesPerChar = 1 } = options;
+  const paused = pausesBefore(characters, options, 'useTypewriter()');
+  return countTyped(characters.length, frame, from, framesPerChar, paused);
+}
+
+function countTyped(length: number, frame: number, from: number, framesPerChar: number, paused: readonly number[]): number {
+  let typed = 0;
+  while (typed < length && isTyped(typed, frame, from, framesPerChar, paused[typed])) typed += 1;
+  return typed;
+}
+
+function typingFrames(length: number, from: number, framesPerChar: number, paused: readonly number[]): number[] {
+  return Array.from({ length }, (_, index) => {
+    let frame = Math.ceil(from + paused[index] + index * framesPerChar);
+    // Past 2^53 (or with an infinite `from`) there is no frame before or
+    // after to step to, and the estimate is as exact as a number gets.
+    if (!Number.isSafeInteger(frame)) return frame;
+    // Rounding can leave the estimate one frame off; never more.
+    for (let step = 0; step < 2 && isTyped(index, frame - 1, from, framesPerChar, paused[index]); step += 1) frame -= 1;
+    for (let step = 0; step < 2 && !isTyped(index, frame, from, framesPerChar, paused[index]); step += 1) frame += 1;
+    return frame;
+  });
+}
+
+/**
+ * The first whole frame each character of `text` is typed on, as
+ * `useTypewriter(text, options).frames` reports it: one entry per code
+ * point. A plain function, for where hooks cannot run and for placing
+ * something on each character, such as a key click:
+ *
+ * ```tsx
+ * const clicks = typewriterFrames('npm run build', { from: 10, framesPerChar: 2 });
+ * clicks.map((at, i) => <Sequence key={i} from={at}><Audio src="./key.wav" /></Sequence>);
+ * ```
+ */
+export function typewriterFrames(text: string, options: TypingOptions = {}): number[] {
+  const { from = 0, framesPerChar = 1 } = options;
+  const characters = Array.from(text);
+  const paused = pausesBefore(characters, options, 'typewriterFrames()');
+  return typingFrames(characters.length, from, framesPerChar, paused);
 }
 
 /**
@@ -207,16 +516,14 @@ export function useTypewriter(content: ReactNode, options: TypewriterOptions = {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const { from = 0, framesPerChar = 1, blinkFrames = fps } = options;
-  if (!Number.isFinite(framesPerChar) || framesPerChar <= 0) {
-    throw new Error('useTypewriter() requires a positive framesPerChar');
-  }
   if (!Number.isFinite(blinkFrames) || blinkFrames <= 0) {
     throw new Error('useTypewriter() requires a positive blinkFrames');
   }
   // Span colors are checked as they flatten, so names must be looked up first.
   const theme = React.useContext(ThemeContext);
   const characters = Array.from(flattenTextContent(themeTextContent(content, theme), 'useTypewriter() text').text);
-  const typed = Math.min(characters.length, Math.max(0, Math.floor((frame - from) / framesPerChar) + 1));
+  const paused = pausesBefore(characters, options, 'useTypewriter()');
+  const typed = countTyped(characters.length, frame, from, framesPerChar, paused);
   const typing = frame >= from && typed < characters.length;
   const phase = (((frame - from) % blinkFrames) + blinkFrames) % blinkFrames;
   return {
@@ -224,6 +531,7 @@ export function useTypewriter(content: ReactNode, options: TypewriterOptions = {
     length: typed,
     done: typed === characters.length,
     caretVisible: typing || phase < blinkFrames / 2,
+    frames: typingFrames(characters.length, from, framesPerChar, paused),
   };
 }
 

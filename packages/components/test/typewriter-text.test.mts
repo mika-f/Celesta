@@ -253,6 +253,16 @@ test('without glyph positions (the browser), the caret is measured where the nat
   }
 });
 
+test('pauses reach the typing: the text waits after a paused character', () => {
+  install();
+  const at = render(typewriter({ framesPerChar: 2, pauses: { ',': 10 } }, 'a,b'));
+  // `a` on 0, `,` on 2, then ten frames more before `b` on 14.
+  assert.equal(at(2).text?.style.visibleCharacters, 2);
+  assert.equal(at(13).text?.style.visibleCharacters, 2);
+  assert.equal(at(14).text?.style.visibleCharacters, 3);
+  assert.throws(() => render(typewriter({ pauses: { ab: 1 } }, 'a'))(0), /one character/);
+});
+
 test('TypewriterText rejects invalid sizes and shapes', () => {
   install();
   assert.throws(() => render(typewriter({ maxWidth: 0 }, 'a'))(0), /positive `maxWidth`/);

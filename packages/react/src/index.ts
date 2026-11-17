@@ -119,6 +119,7 @@ export type { Chapter, ChapterInput, ChapterSource, ListChaptersOptions } from '
 export { Easings, interpolate, interpolateColor, progress, spring } from './animation';
 export type {
   ColorExtrapolate,
+  EasingFamily,
   Extrapolate,
   InterpolateColorOptions,
   InterpolateOptions,
@@ -126,8 +127,8 @@ export type {
   SpringOptions,
 } from './animation';
 
-export { frameKeyframes } from './keyframes';
-export type { FrameKeyframe, FrameKeyframesOptions } from './keyframes';
+export { frameKeyframes, keyframes } from './keyframes';
+export type { FrameKeyframe, FrameKeyframesOptions, KeyframeValue, ValueKeyframe } from './keyframes';
 
 export { measureText, textCaret, useTextMetrics } from './text-measure';
 export type { GlyphMetrics, MeasureTextOptions, TextMetrics } from './text-measure';

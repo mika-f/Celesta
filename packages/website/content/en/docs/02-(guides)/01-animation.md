@@ -16,6 +16,36 @@ Pass the result to `<Text opacity={opacity} … />`. Input ranges must be strict
 
 `Easings` covers the familiar easings.net curves: `linear`, and the `easeIn`/`easeOut`/`easeInOut` variants of `Sine`, `Quad`, `Cubic`, `Quart`, `Quint`, `Expo`, `Circ`, `Back`, `Elastic`, and `Bounce` (for example `Easings.easeOutBack`).
 
+When a named curve is not quite right, build one from numbers:
+
+```tsx
+const pop = Easings.back(2.2).easeOut;              // a stronger overshoot than easeOutBack
+const material = Easings.cubicBezier(0.4, 0, 0.2, 1); // the same four numbers as CSS cubic-bezier()
+const tick = Easings.steps(6);                      // six equal steps
+const wobble = Easings.elastic({ amplitude: 1.5, period: 0.4 }).easeOut;
+```
+
+`Easings.back(overshoot)` and `Easings.elastic({ amplitude, period })` return `{ easeIn, easeOut, easeInOut }`. `Easings.cubicBezier` needs `x1` and `x2` between 0 and 1; `y1` and `y2` may go outside, which makes the curve overshoot. Pass the result anywhere an easing goes: `interpolate`'s `easing`, `progress`, or a component's `easing` prop. Keyframes in a JSON project take the named curves only.
+
+## Move through keyframes
+
+`interpolate` uses one easing for every segment. When each leg of a move needs its own curve, or several numbers move together, use `keyframes` from `@celesta.studio/react`. Each key has a `frame`, a `value` (a number, or an object of numbers), and optionally the `easing` of the move that arrives at it:
+
+```tsx title="A camera move with a hold and a cut"
+const cam = keyframes(frame, [
+  { frame: 0,   value: { x: 960, y: 540, zoom: 1 } },
+  { frame: 100, value: { x: 880, y: 520, zoom: 1.12 }, easing: Easings.easeInOutCubic },
+  { frame: 120, value: { x: 880, y: 520, zoom: 1.12 } },  // the same value: a hold
+  { frame: 120, value: { x: 300, y: 400, zoom: 1 } },     // the same frame: a cut
+]);
+
+<Camera {...cam}>
+  <World />
+</Camera>
+```
+
+Before the first key the value is the first key's, and after the last key the last key's. Two keys on one frame cut: that frame already shows the second key's value. `easing` is a function, or the name of a curve as JSON keyframes spell it (`'ease-out-back'`). Keys must be in order of `frame`, and every `value` must have the same fields. For the volume of an `<Audio>`, which takes keyframes itself, use `frameKeyframes` instead; see [Media](/en/docs/media/).
+
 ## Interpolate between colors
 
 Import `interpolateColor` from `@celesta.studio/react` too. It takes the same input range and `easing` as `interpolate`, but maps the frame onto `#RRGGBB` or `#RRGGBBAA` colors and returns `#RRGGBBAA`. Use it wherever a color goes: a `Rect` fill, a text style’s fill, a gradient stop, or a shadow.
