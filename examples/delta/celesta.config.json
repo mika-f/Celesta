@@ -3,6 +3,7 @@
     "dependencies": {
       "code": "0.10.0-alpha.3",
       "lottie": "0.10.0-alpha.3"
-    }
+    },
+    "paths": ["./plugins"]
   }
 }
