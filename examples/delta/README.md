@@ -5,7 +5,8 @@ Celesta のリリースごとに「前のバージョンから何が変わった
 各機能をリリースノートの 1 ページのように見せます。見出し、何ができるか、それを使う差分、マージされた PR、そしてその場で動くデモです。
 
 - `film-0.10.0.tsx` — v0.9.0 → v0.10.0 の 84 秒「PATCH」（エントリ）。Celesta の File → Open… で開きます。
-  サンプルプラグインの `flag` と `turntable` を使うので、Plugins タブの Add Folder… で `examples/plugins/dist` を足して許可してください（下の「書き出し」）。
+  サンプルプラグインの `flag` と `turntable` を使います。`examples/delta` で `pnpm run plugins` を一度実行すると `plugins/` にビルドされ、
+  `celesta.config.json` の `plugins.paths` がそのフォルダーを宣言しているので、プロジェクトを信頼して Plugins タブで 2 つを許可すれば開けます（下の「書き出し」）。
 - `film-0.9.0.tsx` — v0.8.0 → main の 91 秒「ON AIR」（エントリ）。
 - `shorts-0.9.0.tsx` — 同じ 91 秒を 1080×1920 に組み直したショート版（エントリ）。
 - `film-0.8.0.tsx` — v0.7.0 → v0.8.0 の 96 秒「PROOF」（エントリ）。
@@ -69,14 +70,16 @@ REGISTRY の最初はブレイク（キックは 1 拍目だけ、パッド）�
 
 ## 書き出し（v0.10.0）
 
-サンプルプラグインを一度ビルドしてから（Rust のプログラムを含みます）、`--plugin-dir` で渡します。
+サンプルプラグインを一度 `examples/delta/plugins/` にビルドしてから（Rust のプログラムを含みます）、`--plugin-dir` で渡します。
+デスクトップアプリは `celesta.config.json` の `plugins.paths` からこのフォルダーを見つけますが、`celesta-exporter` はプロジェクトのフォルダーを探さないので、`--plugin-dir` が要ります。
+プラグインの `celesta` の範囲はビルドしたリポジトリのバージョン（`>=0.10.0, <0.11.0`）なので、0.10.0 のプレリリースのアプリでは読み飛ばされます。
 
 ```sh
 pnpm install && pnpm run build:runtime                  # リポジトリのルートで一度
-node scripts/plugins/build.mts examples/plugins/flag examples/plugins/turntable
-python3 examples/delta/make-score-0.10.0.py
 cd examples/delta
-Celesta-export --react --loudness streaming --plugin-dir ../plugins/dist ./film-0.10.0.tsx delta-0.10.0.mp4 \
+pnpm run plugins                                        # flag と turntable を plugins/ に
+python3 make-score-0.10.0.py
+Celesta-export --react --loudness streaming --plugin-dir plugins ./film-0.10.0.tsx delta-0.10.0.mp4 \
   --subtitles 'delta-0.10.0.{lang}.srt' --subtitles 'delta-0.10.0.{lang}.vtt'
 ```
 

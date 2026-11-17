@@ -3,9 +3,9 @@
   "private": true,
   "scripts": {
     "score": "python3 make-score-0.10.0.py",
-    "plugins": "node ../../scripts/plugins/build.mts ../plugins/flag ../plugins/turntable",
-    "export": "celesta-exporter --json --react --overwrite --loudness streaming --plugin-dir ../plugins/dist ./film-0.10.0.tsx delta-0.10.0.mp4 --subtitles 'delta-0.10.0.{lang}.srt' --subtitles 'delta-0.10.0.{lang}.vtt'",
-    "poster": "celesta-exporter --json --react --overwrite --plugin-dir ../plugins/dist --composition poster ./film-0.10.0.tsx --frame 0 --quality 85 poster-0.10.0.jpg",
+    "plugins": "node ../../scripts/plugins/build.mts ../plugins/flag ../plugins/turntable --out plugins",
+    "export": "celesta-exporter --json --react --overwrite --loudness streaming --plugin-dir plugins ./film-0.10.0.tsx delta-0.10.0.mp4 --subtitles 'delta-0.10.0.{lang}.srt' --subtitles 'delta-0.10.0.{lang}.vtt'",
+    "poster": "celesta-exporter --json --react --overwrite --plugin-dir plugins --composition poster ./film-0.10.0.tsx --frame 0 --quality 85 poster-0.10.0.jpg",
     "score:0.9.0": "python3 make-score-0.9.0.py",
     "export:0.9.0": "celesta-exporter --json --react --overwrite --loudness streaming film-0.9.0.tsx delta-0.9.0.mp4 --subtitles 'delta-0.9.0.{lang}.srt' --subtitles 'delta-0.9.0.{lang}.vtt'",
     "poster:0.9.0": "celesta-exporter --json --react --overwrite --composition poster film-0.9.0.tsx --frame 0 --quality 85 poster-0.9.0.jpg",
