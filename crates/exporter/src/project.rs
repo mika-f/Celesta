@@ -100,6 +100,16 @@ pub(crate) fn absolutize_fonts(fonts: &mut [ResolvedAsset], asset_root: &Path) {
     }
 }
 
+/// The folder `path` is in, which its relative asset paths resolve from:
+/// `.` for a bare file name, whose `parent()` is the empty path (which
+/// `fs::canonicalize` refuses, leaving the root relative).
+pub(crate) fn folder_of(path: &Path) -> &Path {
+    match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    }
+}
+
 pub(crate) fn absolutize_asset(asset: &mut ResolvedAsset, asset_root: &Path) {
     if let AssetLocation::File { path } = &mut asset.location {
         let candidate = Path::new(path.as_str());

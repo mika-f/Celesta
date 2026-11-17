@@ -109,7 +109,7 @@ impl Exporter {
     ) -> Result<(), ExportError> {
         let project_path = project_path.as_ref();
         let project = Project::load(project_path).map_err(ExportError::Project)?;
-        let asset_root = project_path.parent().unwrap_or_else(|| Path::new("."));
+        let asset_root = crate::project::folder_of(project_path);
         self.export_project_with_progress(&project, asset_root, output_path, progress)
     }
 

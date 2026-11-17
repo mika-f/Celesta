@@ -177,7 +177,7 @@ impl ExportJob {
 
 /// Where a project's relative asset paths resolve from.
 fn asset_root(project_path: &Path) -> &Path {
-    project_path.parent().unwrap_or_else(|| Path::new("."))
+    crate::project::folder_of(project_path)
 }
 
 #[cfg(test)]

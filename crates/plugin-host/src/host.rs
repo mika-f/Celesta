@@ -273,6 +273,18 @@ impl PluginHost {
         plugin: &str,
         assets: &BTreeMap<String, PathBuf>,
     ) -> Result<Opened, PluginError> {
+        // A plugin runs in its own folder, where a relative path names
+        // another file: sent as Celesta would open it, against its own
+        // working directory.
+        let assets: BTreeMap<&String, PathBuf> = assets
+            .iter()
+            .map(|(name, path)| {
+                (
+                    name,
+                    std::path::absolute(path).unwrap_or_else(|_| path.clone()),
+                )
+            })
+            .collect();
         // A path that is not UTF-8 cannot be sent as JSON.
         let assets = serde_json::to_value(assets).map_err(|error| PluginError::Failed {
             plugin: plugin.to_owned(),
@@ -883,6 +895,40 @@ mod failure_tests {
         let error = host.open("p", &BTreeMap::new()).unwrap_err();
         assert!(matches!(error, PluginError::Unavailable { .. }), "{error}");
         assert_eq!(starts(directory.path()), 2);
+    }
+
+    /// A plugin runs in its own folder, so a relative asset path is sent as
+    /// the absolute path Celesta would open: against its working directory.
+    #[test]
+    fn a_relative_asset_path_is_sent_to_the_plugin_absolute() {
+        use celesta_plugin::protocol::read_message;
+        use std::time::Instant;
+
+        let directory = tempfile::tempdir().unwrap();
+        answers(directory.path(), "answers", &[hello("p"), opened(meshes())]);
+        let entry = plugin(directory.path(), "cat answers\nexec cat > requests");
+        let mut host = PluginHost::new([entry]);
+        let assets = BTreeMap::from([("image".to_owned(), PathBuf::from("art/flag.png"))]);
+        host.open("p", &assets).unwrap();
+
+        // The requests reach the file a little after their answers were read.
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let image = loop {
+            let bytes = std::fs::read(directory.path().join("requests")).unwrap_or_default();
+            let mut reader = &bytes[..];
+            let mut image = None;
+            while let Ok(Some(request)) = read_message(&mut reader) {
+                if request.kind() == "open" {
+                    image = Some(request.header["assets"]["image"].clone());
+                }
+            }
+            if image.is_some() || Instant::now() > deadline {
+                break image;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        let expected = std::env::current_dir().unwrap().join("art/flag.png");
+        assert_eq!(image, Some(json!(expected)));
     }
 
     #[test]

@@ -1628,6 +1628,151 @@ export default function Root() {
     assert!(!running, "the plugin's process was stopped");
 }
 
+/// Writes plugin `probe` into `directory`: a component, `<Probe>`, whose
+/// layer is the plugin's content with asset `image` at `./probe.png`, and a
+/// program that answers `hello`, `open`, and two `frame`s with an empty mesh
+/// model, and copies every request it is sent to `requests`.
+#[cfg(unix)]
+fn write_probe_plugin(directory: &Path) {
+    use celesta_plugin::protocol::{Message, encode_content_frame, encode_opened, write_message};
+    use celesta_plugin::{MeshFrame, MeshModel, ModelId, Opened};
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::create_dir_all(directory.join("bin")).unwrap();
+    std::fs::write(
+        directory.join(celesta_plugin_host::MANIFEST),
+        serde_json::json!({
+            "id": "probe",
+            "version": "1.0.0",
+            "protocol": 1,
+            "celesta": concat!("=", env!("CARGO_PKG_VERSION")),
+            "module": "index.ts",
+            "executable": { celesta_plugin_host::platform().0: "bin/p" },
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        directory.join("index.ts"),
+        r#"
+import * as React from 'react';
+import { PluginLayer } from '@celesta.studio/react';
+
+export function Probe(): React.ReactElement {
+  return React.createElement(PluginLayer, { plugin: 'probe', assets: { image: './probe.png' } });
+}
+"#,
+    )
+    .unwrap();
+    let mut answers = Vec::new();
+    let hello = serde_json::json!({
+        "type": "hello", "protocol": 1, "plugin": "probe",
+        "version": "1.0.0", "roles": ["content"],
+    });
+    write_message(&mut answers, &Message::new(hello)).unwrap();
+    let opened = Opened {
+        model: ModelId(1),
+        content: MeshModel {
+            canvas: [2.0, 2.0],
+            textures: Vec::new(),
+            meshes: Vec::new(),
+        }
+        .into(),
+        notices: Vec::new(),
+    };
+    write_message(&mut answers, &encode_opened(&opened)).unwrap();
+    for _ in 0..2 {
+        let frame = MeshFrame { meshes: Vec::new() }.into();
+        write_message(&mut answers, &encode_content_frame(&frame)).unwrap();
+    }
+    std::fs::write(directory.join("answers"), answers).unwrap();
+    let program = directory.join("bin/p");
+    std::fs::write(&program, "#!/bin/sh\ncat answers\nexec cat > requests\n").unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// An entry given as a bare file name, from its own folder, still sends a
+/// content plugin its assets as absolute paths: the plugin runs in its own
+/// folder, where the entry's relative path names nothing.
+#[cfg(unix)]
+#[test]
+fn a_bare_entry_name_sends_a_plugin_absolute_asset_paths() {
+    use celesta_codec_test::{PLUGIN_PATH_ENV, TestCodecPlugin, isolated_home_env};
+    use celesta_plugin::protocol::read_message;
+    use std::process::Command;
+
+    let runtime_path = workspace_root().join("packages/cli/dist/cli.js");
+    if !runtime_path.exists() {
+        eprintln!("skipping the bare entry name test: build packages/cli first");
+        return;
+    }
+    let directory = tempfile::tempdir_in(workspace_root().join("packages/cli")).unwrap();
+    let plugin = directory.path().join("plugins/probe");
+    write_probe_plugin(&plugin);
+    std::fs::write(directory.path().join("probe.png"), b"").unwrap();
+    std::fs::write(
+        directory.path().join("film.tsx"),
+        r#"
+import { Composition } from '@celesta.studio/react';
+import { Probe } from '@celesta-plugin/probe';
+export default function Root() {
+  return <Composition width={64} height={64} fps={2} durationInFrames={2}>
+    <Probe />
+  </Composition>;
+}
+"#,
+    )
+    .unwrap();
+
+    let codec = TestCodecPlugin::new();
+    let home = tempfile::tempdir().unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_celesta-exporter"))
+        .current_dir(directory.path())
+        .env_remove(PLUGIN_PATH_ENV)
+        .envs(isolated_home_env(home.path()))
+        .arg("--plugin-dir")
+        .arg(codec.folder())
+        .arg("--plugin-dir")
+        .arg(directory.path().join("plugins"))
+        .arg("--react")
+        .arg("film.tsx")
+        .arg("film.mp4")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    if !result.status.success() && stderr.contains("adapter") {
+        skip_without_gpu(&stderr);
+        return;
+    }
+    assert!(result.status.success(), "{stderr}");
+
+    // The requests reach the file a little after their answers were read.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let opens = loop {
+        let requests = std::fs::read(plugin.join("requests")).unwrap_or_default();
+        let mut reader = requests.as_slice();
+        let mut opens = Vec::new();
+        while let Ok(Some(message)) = read_message(&mut reader) {
+            if message.kind() == "open" {
+                opens.push(message.header["assets"]["image"].clone());
+            }
+        }
+        if !opens.is_empty() || std::time::Instant::now() > deadline {
+            break opens;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    let [image] = &opens[..] else {
+        panic!("one open: {opens:?}");
+    };
+    let image = Path::new(image.as_str().expect("a path"));
+    assert!(image.is_absolute(), "{}", image.display());
+    assert_eq!(
+        std::fs::canonicalize(image).unwrap(),
+        std::fs::canonicalize(directory.path().join("probe.png")).unwrap()
+    );
+}
+
 /// The muxer writes a staged file; once it is published, the report names
 /// the published path, and no staged file is left beside it.
 #[test]
