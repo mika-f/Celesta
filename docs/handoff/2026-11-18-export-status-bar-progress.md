@@ -13,7 +13,7 @@ at a glance how far along the export is or how long it will take.
   You can keep editing while an export runs, and the status bar is always
   visible.
 - Next to it: percent, frame count, render speed, and time left, e.g.
-  `[██████░░░░]  42%  252/600  31 fps  0:11 left`.
+  `[██████░░░░]  42%  252/600  31.5 fps  0:11 left`.
 - Stages without a frame count (starting, mixing audio, muxing) show an
   indeterminate bar and the stage name, so the export never looks stuck.
 
@@ -43,21 +43,22 @@ The user picked A.
 
 - Layout, right side of the status bar, mono font as today:
   - Starting: indeterminate bar, `Starting export…`
-  - Rendering: bar at `frame / total`, then `42%  252/600  31 fps  0:11 left`
+  - Rendering: bar at `done / total`, then `42%  252/600  31.5 fps  0:11 left`
   - Mixing audio: indeterminate bar, `Mixing audio…`
   - Muxing: indeterminate bar, `Muxing…`
   - Cancelling: the stage text becomes `Cancelling…` (the bar stays as it was)
 - The bar is gpui-kit's `Progress` (`.value(percent)`, `.loading(true)` for
   indeterminate), at a fixed width so the text next to it does not move.
 - Speed and time left (builder's call, below): average rate since the first
-  rendered frame. `fps = (frame - first_frame) / (now - first_frame_at)`.
-  `left = (total - frame) / fps`. They show once rendering has run for at
+  `Rendering` event, as the CLI dashboard measures it. Events mark frame
+  starts, so `done = frame - 1`; `fps = done / (now - first_event_at)`,
+  `left = (total - done) / fps`. They show once rendering has run for at
   least one second, so the first frames do not give wild numbers. Time left
   reads `m:ss`, or `h:mm:ss` from one hour.
 - "Time left" covers rendering only. Mixing and muxing have no measure of
   their own; they show as their own stages afterwards.
-- The status bar redraws on each progress event, so time left updates as
-  frames arrive.
+- The view requests an animation frame on every render while an export
+  runs (`render.rs`), so time left updates continuously.
 
 ## Left to the builder (calls made)
 
@@ -72,3 +73,32 @@ The user picked A.
 
 - `packages/website/content/{en,ja}/docs/02-(guides)/09-export.md`: "the
   status bar shows progress" becomes the bar, frames, speed, and time left.
+
+## Implementation
+
+- `crates/editor/src/export_status.rs`: `ExportStatus` keeps the stage
+  (`Starting`, `Rendering { frame, total }`, `MixingAudio`, `Muxing`) and
+  when the first `Rendering` event with a nonzero total arrived.
+  `update(&ExportProgress, Instant)` ignores warnings, notes, the plan,
+  React compositions, and the written file. `line(now, cancelling)` returns a
+  `StatusLine { percent: Option<f32>, text }`; `None` means an indeterminate
+  bar. The percent in the text is floored, so it never reads 100% while the
+  last frame renders.
+- `EditorView::export_status` replaces `export_progress`; `start_export` sets
+  `ExportStatus::new()` (the old `Rendering { 0, 0 }` placeholder is gone),
+  `poll_export_events` feeds every progress event to it, and a finished or
+  stopped export clears it.
+- `status_bar` (`render.rs`) draws gpui-kit's `Progress` (`xsmall`, fixed
+  width `metrics::export_progress_width()` = 8 rem) and the mono text.
+- `helpers::export_progress_label` is removed; its tests moved to
+  `export_status` (the `Output` plan case stays in `tests.rs`).
+- User guide: `packages/website/content/{en,ja}/docs/02-(guides)/09-export.md`.
+  `skills/celesta/` does not cover the editor's status bar.
+
+## Checks
+
+- `cargo test -p celesta-editor -p celesta-editor-theme`: 976 + 11 passed,
+  including 10 new `export_status` tests (starting, the 1 s settle,
+  31.5 fps / `0:11 left`, hours, mixing/muxing, cancelling, ignored events).
+- `cargo clippy -p celesta-editor -p celesta-editor-theme --all-targets`:
+  no warnings.
