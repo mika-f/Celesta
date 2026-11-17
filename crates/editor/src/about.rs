@@ -5,21 +5,27 @@
 //! the front. It is the app's only window that is not an editor, so it
 //! closes with the last editor window (see [`close_when_left_alone`]).
 //!
-//! The version copies itself when pressed. Pressed [`PRESSES_TO_PLAY`] times
+//! Under the version are the system, the GPU, and Node.js: what a bug report
+//! needs. The version copies itself and those rows when pressed. Pressed [`PRESSES_TO_PLAY`] times
 //! in a row, it plays the strip: a playhead crosses it and the clips light as
 //! it passes. With reduced motion the clips light without moving.
 
 use crate::actions::{AboutCelesta, CloseWindow};
+use crate::view::EditorView;
 use celesta_editor_theme::{self as theme, metrics};
 use celesta_project::TrackKind;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::link::Link;
-use gpui_kit::component::{ActiveTheme as _, IconName, Root, Sizable as _, TitleBar, v_flex};
+use gpui_kit::component::{
+    ActiveTheme as _, IconName, Placement, Root, Sizable as _, TitleBar, h_flex, v_flex,
+};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    App, Bounds, ClipboardItem, Context, FocusHandle, FontWeight, Global, Task, Window,
-    WindowBounds, WindowHandle, WindowOptions, div, px, relative, size,
+    App, Bounds, ClipboardItem, Context, FocusHandle, FontWeight, Global, SharedString, Task,
+    Window, WindowBounds, WindowHandle, WindowOptions, div, px, relative, size,
 };
+use std::path::Path;
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -141,6 +147,127 @@ fn lift(clip: &Clip, playhead: f32) -> f32 {
     }
 }
 
+/// What the machine says about itself, read off the main thread.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct System {
+    /// The system's name and version, such as "macOS 15.5".
+    os: String,
+    /// The version of the Node.js that runs React compositions, or `None`
+    /// when it did not answer.
+    node: Option<String>,
+}
+
+impl System {
+    /// Asks the system and `node`. Both run a program, so this blocks.
+    fn read(node: &Path) -> Self {
+        Self {
+            os: os_name(),
+            node: answer(Command::new(node).arg("--version"))
+                .map(|version| version.trim_start_matches('v').to_owned()),
+        }
+    }
+}
+
+/// The first line a program prints, or `None` when it fails or prints none.
+fn answer(command: &mut Command) -> Option<String> {
+    let output = celesta_plugin_host::without_console_window(command)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()
+        .filter(|output| output.status.success())?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let line = text.lines().map(str::trim).find(|line| !line.is_empty())?;
+    Some(line.to_owned())
+}
+
+/// The system's name with its version, or the name alone when the system
+/// does not tell.
+fn os_name() -> String {
+    #[cfg(target_os = "macos")]
+    let name = answer(Command::new("sw_vers").arg("-productVersion"))
+        .map_or_else(|| "macOS".to_owned(), |version| format!("macOS {version}"));
+    // `ver` prints "Microsoft Windows [Version 10.0.26100.4349]".
+    #[cfg(target_os = "windows")]
+    let name = answer(Command::new("cmd").args(["/C", "ver"])).map_or_else(
+        || "Windows".to_owned(),
+        |line| line.replace("Microsoft ", "").replace(['[', ']'], ""),
+    );
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let name = std::fs::read_to_string("/etc/os-release")
+        .ok()
+        .and_then(|release| pretty_name(&release))
+        .unwrap_or_else(|| "Linux".to_owned());
+    name
+}
+
+/// `PRETTY_NAME` of an `os-release` file, without its quotes.
+#[cfg_attr(any(target_os = "macos", target_os = "windows"), cfg(test))]
+fn pretty_name(release: &str) -> Option<String> {
+    let name = release
+        .lines()
+        .find_map(|line| line.strip_prefix("PRETTY_NAME="))?
+        .trim()
+        .trim_matches('"');
+    (!name.is_empty()).then(|| name.to_owned())
+}
+
+/// The rows under the version, as label and value: the system, the GPU the
+/// preview renders with, and Node.js. A row still being read shows `…`.
+fn detail_rows(system: Option<&System>, gpu: Option<&str>) -> Vec<(&'static str, String)> {
+    let mut rows = vec![(
+        "OS",
+        system.map_or_else(
+            || "…".to_owned(),
+            |system| format!("{} ({})", system.os, std::env::consts::ARCH),
+        ),
+    )];
+    if let Some(gpu) = gpu {
+        rows.push(("GPU", gpu.to_owned()));
+    }
+    rows.push((
+        "Node.js",
+        match system {
+            None => "…".to_owned(),
+            Some(system) => system
+                .node
+                .clone()
+                .unwrap_or_else(|| "not found".to_owned()),
+        },
+    ));
+    rows
+}
+
+/// What pressing the version copies: the version and the rows, one a line,
+/// to paste into a bug report.
+fn report(rows: &[(&'static str, String)]) -> String {
+    std::iter::once(format!("Celesta: {VERSION}"))
+        .chain(
+            rows.iter()
+                .map(|(label, value)| format!("{label}: {value}")),
+        )
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The GPU an editor window renders its preview with, as its status bar
+/// names it.
+fn editor_gpu(cx: &App) -> Option<SharedString> {
+    cx.windows()
+        .into_iter()
+        .filter_map(|window| window.downcast::<Root>())
+        .find_map(|root| {
+            let editor = root
+                .read(cx)
+                .ok()?
+                .view()
+                .clone()
+                .downcast::<EditorView>()
+                .ok()?;
+            Some(editor.read(cx).gpu_name.clone())
+        })
+}
+
 /// The open About window, if any.
 #[derive(Default)]
 struct AboutWindow(Option<WindowHandle<Root>>);
@@ -149,7 +276,9 @@ impl Global for AboutWindow {}
 
 /// Handles About Celesta wherever the focus is.
 pub(crate) fn init(cx: &mut App) {
-    cx.on_action(|_: &AboutCelesta, cx| show(cx));
+    // Deferred: the action arrives through the focused editor window, which
+    // cannot be read for its GPU until the dispatch is over.
+    cx.on_action(|_: &AboutCelesta, cx| cx.defer(show));
 }
 
 /// Opens the About window, or brings the open one to the front.
@@ -162,8 +291,9 @@ pub(crate) fn show(cx: &mut App) {
     {
         return;
     }
+    let gpu = editor_gpu(cx);
     // physical: platform window sizes.
-    let bounds = Bounds::centered(None, size(px(400.0), px(340.0)), cx);
+    let bounds = Bounds::centered(None, size(px(400.0), px(420.0)), cx);
     let handle = cx
         .open_window(
             WindowOptions {
@@ -173,7 +303,7 @@ pub(crate) fn show(cx: &mut App) {
                 ..TitleBar::window_options()
             },
             |window, cx| {
-                let view = cx.new(|cx| AboutView::new(window, cx));
+                let view = cx.new(|cx| AboutView::new(gpu, window, cx));
                 cx.new(|cx| Root::new(view, window, cx))
             },
         )
@@ -201,30 +331,52 @@ struct AboutView {
     playing_since: Option<Instant>,
     /// Runs while the version shows its check, and ends that.
     copied_note: Option<Task<()>>,
+    gpu: Option<SharedString>,
+    /// `None` until the system and Node.js have answered.
+    system: Option<System>,
 }
 
 impl AboutView {
-    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(gpu: Option<SharedString>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
         focus_handle.focus(window, cx);
+        let (node, _) = celesta_react_bridge::runtime_paths();
+        let read = cx
+            .background_executor()
+            .spawn(async move { System::read(&node) });
+        cx.spawn(async move |this, cx| {
+            let system = read.await;
+            this.update(cx, |this, cx| {
+                this.system = Some(system);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
         Self {
             focus_handle,
             streak: PressStreak::default(),
             playing_since: None,
             copied_note: None,
+            gpu,
+            system: None,
         }
+    }
+
+    fn detail_rows(&self) -> Vec<(&'static str, String)> {
+        detail_rows(self.system.as_ref(), self.gpu.as_deref())
     }
 
     fn close_window_action(&mut self, _: &CloseWindow, window: &mut Window, _: &mut Context<Self>) {
         window.remove_window();
     }
 
-    /// The version was pressed: the first press of a streak copies it, and
-    /// a full streak plays the strip.
+    /// The version was pressed: the first press of a streak copies the
+    /// report, and a full streak plays the strip.
     fn press_version(&mut self, cx: &mut Context<Self>) {
         let presses = self.streak.press(Instant::now());
         if presses == 1 {
-            cx.write_to_clipboard(ClipboardItem::new_string(format!("Celesta {VERSION}")));
+            cx.write_to_clipboard(ClipboardItem::new_string(report(&self.detail_rows())));
             // A note already showing is replaced, so it lasts from this press.
             self.copied_note = Some(cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(COPIED_NOTE).await;
@@ -340,7 +492,10 @@ impl Render for AboutView {
                                 button.icon(IconName::Check)
                             })
                             .label(format!("Version {VERSION}"))
-                            .tooltip("Copy version")
+                            // Beside the version: above it is the name, below
+                            // it the rows the press copies.
+                            .tooltip("Copy details")
+                            .tooltip_placement(Placement::Right)
                             .on_click(cx.listener(|this, _, _, cx| this.press_version(cx))),
                     )
                     .child(
@@ -348,6 +503,25 @@ impl Render for AboutView {
                             .text_base()
                             .text_center()
                             .child("A code-first video editor."),
+                    )
+                    .child(
+                        v_flex()
+                            .debug_selector(|| "about-details".into())
+                            .mt_2()
+                            .gap_0p5()
+                            .text_sm()
+                            .children(self.detail_rows().into_iter().map(|(label, value)| {
+                                h_flex()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .flex_none()
+                                            .w(metrics::scaled(56.))
+                                            .text_color(muted)
+                                            .child(label),
+                                    )
+                                    .child(div().child(value))
+                            })),
                     )
                     .child(
                         div()
@@ -408,6 +582,52 @@ mod tests {
         let peak = lift(&clip, 0.2 + LIFT_SPAN / 2.0);
         assert!((peak - 1.0).abs() < 1e-4, "{peak}");
         assert_eq!(lift(&clip, 0.5), 0.0);
+    }
+
+    #[test]
+    fn the_report_lists_the_version_and_each_row() {
+        let system = System {
+            os: "macOS 15.5".to_owned(),
+            node: Some("24.11.0".to_owned()),
+        };
+        let rows = detail_rows(Some(&system), Some("Apple M4 (Metal)"));
+        assert_eq!(
+            report(&rows),
+            format!(
+                "Celesta: {VERSION}\nOS: macOS 15.5 ({})\nGPU: Apple M4 (Metal)\nNode.js: 24.11.0",
+                std::env::consts::ARCH
+            )
+        );
+    }
+
+    #[test]
+    fn rows_say_what_is_still_read_missing_or_unknown() {
+        let labels = |rows: Vec<(&'static str, String)>| -> Vec<String> {
+            rows.into_iter()
+                .map(|(label, value)| format!("{label}: {value}"))
+                .collect()
+        };
+        assert_eq!(labels(detail_rows(None, None)), ["OS: …", "Node.js: …"]);
+        let system = System {
+            os: "Linux".to_owned(),
+            node: None,
+        };
+        assert_eq!(
+            labels(detail_rows(Some(&system), None))[1],
+            "Node.js: not found"
+        );
+    }
+
+    #[test]
+    fn a_program_that_does_not_run_gives_no_answer() {
+        assert_eq!(answer(&mut Command::new("celesta-no-such-program")), None);
+    }
+
+    #[test]
+    fn the_pretty_name_loses_its_quotes() {
+        let release = "NAME=\"Ubuntu\"\nPRETTY_NAME=\"Ubuntu 24.04.2 LTS\"\nID=ubuntu\n";
+        assert_eq!(pretty_name(release).as_deref(), Some("Ubuntu 24.04.2 LTS"));
+        assert_eq!(pretty_name("NAME=Arch\n"), None);
     }
 
     #[test]
@@ -491,10 +711,16 @@ mod tests {
         cx.run_until_parked();
         let version = cx.debug_bounds("about-version").expect("the version");
         cx.simulate_click(version.center(), Modifiers::none());
-        assert_eq!(
-            cx.read_from_clipboard().and_then(|item| item.text()),
-            Some(format!("Celesta {VERSION}"))
-        );
+        let copied_text = cx
+            .read_from_clipboard()
+            .and_then(|item| item.text())
+            .expect("the report");
+        let lines: Vec<&str> = copied_text.lines().collect();
+        assert_eq!(lines[0], format!("Celesta: {VERSION}"));
+        assert!(lines[1].starts_with("OS: "), "{copied_text}");
+        // No editor window is open, so no GPU is named.
+        assert!(lines[2].starts_with("Node.js: "), "{copied_text}");
+        assert_eq!(lines.len(), 3);
         assert!(cx.debug_bounds("about-playhead").is_none());
         let copied = |cx: &mut VisualTestContext| {
             handle
