@@ -3,6 +3,7 @@ use gpui_kit::actions;
 actions!(
     celesta_editor,
     [
+        AboutCelesta,
         CreateNewProject,
         OpenProject,
         ReloadProject,

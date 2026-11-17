@@ -15,6 +15,7 @@ use gpui_kit::component::{Root, TitleBar};
 use gpui_kit::prelude::*;
 use gpui_kit::{App, Bounds, KeyBinding, Menu, MenuItem, WindowBounds, WindowOptions, px, size};
 
+mod about;
 mod actions;
 mod add_element;
 mod audio;
@@ -79,12 +80,12 @@ mod widgets;
 mod worker;
 
 use actions::{
-    ClearExportRange, CloseWindow, CreateNewProject, ExportProject, FindPlugins, GoToEnd, GoToIn,
-    GoToOut, GoToStart, JumpBackward, JumpForward, NextEditPoint, NextFrame, OpenProject,
-    PausePlayback, PlayForward, PreviousEditPoint, PreviousFrame, Quit, Redo, ReloadPlugins,
-    ReloadProject, SetExportIn, SetExportOut, SetUpTypeScript, SetUpTypeScriptInFolder,
-    ShowProblems, ToggleInteractive, ToggleLoop, TogglePlayback, ToggleSafeAreas, Undo,
-    ZoomTimelineIn, ZoomTimelineOut, ZoomTimelineToFit,
+    AboutCelesta, ClearExportRange, CloseWindow, CreateNewProject, ExportProject, FindPlugins,
+    GoToEnd, GoToIn, GoToOut, GoToStart, JumpBackward, JumpForward, NextEditPoint, NextFrame,
+    OpenProject, PausePlayback, PlayForward, PreviousEditPoint, PreviousFrame, Quit, Redo,
+    ReloadPlugins, ReloadProject, SetExportIn, SetExportOut, SetUpTypeScript,
+    SetUpTypeScriptInFolder, ShowProblems, ToggleInteractive, ToggleLoop, TogglePlayback,
+    ToggleSafeAreas, Undo, ZoomTimelineIn, ZoomTimelineOut, ZoomTimelineToFit,
 };
 use inline_text_view::EditEvent;
 use source::PropertyArgs;
@@ -139,6 +140,8 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new(secondary!("o"), OpenProject, Some("CelestaEditor")),
         KeyBinding::new(secondary!("r"), ReloadProject, Some("CelestaEditor")),
         KeyBinding::new(secondary!("w"), CloseWindow, Some("CelestaEditor")),
+        KeyBinding::new(secondary!("w"), CloseWindow, Some("CelestaAbout")),
+        KeyBinding::new("escape", CloseWindow, Some("CelestaAbout")),
         KeyBinding::new(secondary!("q"), Quit, None),
         KeyBinding::new(secondary!("shift-e"), ExportProject, Some("CelestaEditor")),
         KeyBinding::new("i", SetExportIn, EDITOR_KEYS),
@@ -276,12 +279,15 @@ fn run() -> anyhow::Result<()> {
         cx.bind_keys(plugin_page::view::key_bindings());
         // A text edited on the canvas is written first.
         cx.on_action(|_: &Quit, cx| lifecycle::quit_after_inline_commits(cx));
+        about::init(cx);
         // macOS shows these in the system menu bar; elsewhere the title bar's
         // `AppMenuBar` renders the same list.
         cx.set_menus(app_menus());
         GlobalState::global_mut(cx)
             .set_app_menus(app_menus().into_iter().map(Menu::owned).collect());
         cx.on_window_closed(|cx, _| {
+            // Its own closing comes back here and quits.
+            about::close_when_left_alone(cx);
             if cx.windows().is_empty() {
                 cx.quit();
             }
@@ -366,7 +372,11 @@ fn run() -> anyhow::Result<()> {
 
 fn app_menus() -> Vec<Menu> {
     vec![
-        Menu::new("Celesta").items([MenuItem::action("Quit Celesta", Quit)]),
+        Menu::new("Celesta").items([
+            MenuItem::action("About Celesta", AboutCelesta),
+            MenuItem::separator(),
+            MenuItem::action("Quit Celesta", Quit),
+        ]),
         Menu::new("File").items([
             MenuItem::action("Create New Project…", CreateNewProject),
             MenuItem::action("Open…", OpenProject),
