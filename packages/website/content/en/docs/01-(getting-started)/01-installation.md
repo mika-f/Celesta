@@ -51,6 +51,8 @@ The app includes React examples such as `title.tsx`. See [where to find them](/e
 
 ## Updating Celesta
 
+To see which version you have, choose **Celesta → About Celesta**. Click the version in that window to copy it, for example into a bug report.
+
 Quit Celesta and install the newer release package. For portable Windows builds, extract the new version into its own folder and launch it from there. Keep your projects and media in your Documents directory so they stay separate from app updates.
 
 Working on Celesta itself? See [Build from source](/en/docs/build-from-source/) for the developer setup.
