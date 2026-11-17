@@ -788,7 +788,7 @@ impl Exporter {
         cancellation: &ExportCancellation,
         mut progress: impl FnMut(ExportProgress),
     ) -> Result<(), ExportError> {
-        let asset_root = entry.parent().unwrap_or_else(|| Path::new("."));
+        let asset_root = crate::project::folder_of(entry);
         let asset_root = &fs::canonicalize(asset_root).unwrap_or_else(|_| asset_root.to_owned());
         let project_owned = companion.map(|c| {
             (

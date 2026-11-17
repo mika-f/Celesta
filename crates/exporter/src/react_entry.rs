@@ -3,7 +3,7 @@ use crate::encode::{ExportSession, ExportTiming, report_timing};
 use crate::error::ExportError;
 use crate::exporter::{Exporter, NO_AUDIO_TRACK_LOUDNESS, stage_beside, video_file};
 use crate::loudness::finish_mix;
-use crate::project::build_audio_graph;
+use crate::project::{build_audio_graph, folder_of};
 use crate::range::{resolve_window, shifted_audio_graph};
 use crate::react::{CompanionProject, ReactRuntimeOptions, ReactVideoRequest};
 use crate::render::{
@@ -206,7 +206,7 @@ impl Exporter {
         // path passed relative to the current directory) would produce a
         // still-relative "absolute" path that the audio mixer then joins
         // again.
-        let asset_root = entry.parent().unwrap_or_else(|| Path::new("."));
+        let asset_root = folder_of(entry);
         let asset_root = &fs::canonicalize(asset_root).unwrap_or_else(|_| asset_root.to_owned());
         let project = canonical_project(project);
 
