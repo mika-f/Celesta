@@ -18,12 +18,13 @@ use crate::element_rows::{
     row_label, row_text, scrub_takes_focus, scrub_value, set_at_text, typed_text, written_text,
 };
 use crate::export_control::remember_last;
+use crate::export_status::ExportStatus;
 use crate::export_worker::{
     ExportEvent, ExportRequest, ExportSource, export_options, spawn_export,
 };
 use crate::helpers::{
-    ExportLoudness, export_loudness_label, export_output, export_progress_label, export_range_for,
-    export_suggested_name, lexically_normalized, loop_range_for,
+    ExportLoudness, export_loudness_label, export_output, export_range_for, export_suggested_name,
+    lexically_normalized, loop_range_for,
 };
 use crate::layer_panel::locked_summary;
 use crate::layer_select::{
@@ -314,11 +315,6 @@ fn a_failed_last_survives_the_export_it_goes_on_with() {
 }
 
 #[test]
-fn muxing_label_names_no_container() {
-    assert_eq!(export_progress_label(&ExportProgress::Muxing), "Muxing…");
-}
-
-#[test]
 fn the_finished_export_names_its_loudness() {
     let label = |integrated_lufs, true_peak_dbtp| {
         export_loudness_label(&AudioLoudness {
@@ -358,10 +354,10 @@ fn chosen_components_keep_the_starting_label() {
         video: encoder,
         audio: None,
     };
-    assert_eq!(
-        export_progress_label(&ExportProgress::Output(plan)),
-        "Starting export…"
-    );
+    let mut status = ExportStatus::new();
+    let now = std::time::Instant::now();
+    status.update(&ExportProgress::Output(plan), now);
+    assert_eq!(status.line(now, false).text, "Starting export…");
 }
 
 #[test]

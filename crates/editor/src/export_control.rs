@@ -1,5 +1,6 @@
 use crate::actions::{ClearExportRange, ExportProject, SetExportIn, SetExportOut};
 use crate::export_page::view::{ExportPage, ExportPageEvent};
+use crate::export_status::ExportStatus;
 use crate::export_worker::{ExportRequest, ExportSource};
 use crate::helpers::{ExportLoudness, export_output, export_range_for, export_suggested_name};
 use crate::inline_text_view::EditEvent;
@@ -8,8 +9,7 @@ use crate::problems::{Problems, Source, error_chain};
 use crate::timecode::format_timecode;
 use crate::view::EditorView;
 use celesta_exporter::{
-    ExportCancellation, ExportProgress, OutputChoice, PRESETS_FILE, PresetOutput, update_presets,
-    user_presets_path,
+    ExportCancellation, OutputChoice, PRESETS_FILE, PresetOutput, update_presets, user_presets_path,
 };
 use celesta_media::{ComponentEntry, ComponentKind, MediaRegistry};
 use celesta_plugin_host::{create_private_dir_all, project_root};
@@ -428,14 +428,14 @@ impl EditorView {
             plugins: self.plugins.clone(),
         };
         self.export_path = Some(output);
-        self.export_progress = Some(ExportProgress::Rendering { frame: 0, total: 0 });
+        self.export_status = Some(ExportStatus::new());
         self.export_cancellation = Some(cancellation);
         self.export_cancelling = false;
         self.export_notices.clear();
         self.problems.clear(Source::Export);
         if let Err(error) = self.export_worker.request(request) {
             self.export_path = None;
-            self.export_progress = None;
+            self.export_status = None;
             self.export_cancellation = None;
             self.problems.fail(Source::Export, error);
         }

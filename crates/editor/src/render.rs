@@ -1,15 +1,16 @@
 use crate::export_control::{LeftPanel, left_panel};
-use crate::helpers::export_progress_label;
 use crate::inline_text_view::EditEvent;
 use crate::timeline_drag::{BandDrag, SceneDrag};
 use crate::view::EditorView;
 use celesta_editor_theme::metrics;
+use gpui_kit::component::progress::Progress;
 use gpui_kit::component::resizable::{h_resizable, resizable_panel, v_resizable};
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::status_bar::StatusBar;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyView, Context, CursorStyle, KeyDownEvent, MouseButton, Window, canvas, div, px};
+use std::time::Instant;
 
 impl Render for EditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -341,14 +342,26 @@ impl EditorView {
                 )
             })
             .when_some(
-                self.export_progress.as_ref().map(export_progress_label),
-                |bar, label| {
+                self.export_status
+                    .as_ref()
+                    .map(|status| status.line(Instant::now(), self.export_cancelling)),
+                |bar, line| {
                     bar.right(
                         div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
                             .font_family(mono.clone())
                             .text_sm()
                             .text_color(cx.theme().foreground)
-                            .child(label),
+                            .child(
+                                Progress::new("export-progress")
+                                    .xsmall()
+                                    .w(metrics::export_progress_width())
+                                    .value(line.percent.unwrap_or(0.))
+                                    .loading(line.percent.is_none()),
+                            )
+                            .child(line.text),
                     )
                 },
             )

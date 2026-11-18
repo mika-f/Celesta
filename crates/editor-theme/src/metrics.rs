@@ -26,6 +26,12 @@ pub fn toolbar_row_height() -> Rems {
     rems(2.0)
 }
 
+/// Width of the export's progress bar in the status bar, fixed so the text
+/// beside it does not move it.
+pub fn export_progress_width() -> Rems {
+    rems(8.0)
+}
+
 /// Width of an inspector row's label lane, the same for every row so labels
 /// and values share one edge; wide enough for "Corner radius".
 pub fn inspector_label_width() -> Rems {
