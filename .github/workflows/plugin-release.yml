@@ -132,7 +132,7 @@ jobs:
       # Node.js and pnpm as mise.lock pins them; build.mts runs on Node.js.
       - uses: jdx/mise-action@v5.2.7
         with:
-          version: 2026.11.4
+          version: 2026.11.9
           cache_save: false
 
       # vrm's module: build.mts checks a module's declarations against the
@@ -228,7 +228,7 @@ jobs:
 
       - uses: jdx/mise-action@v5.2.7
         with:
-          version: 2026.11.4
+          version: 2026.11.9
           cache_save: false
 
       - name: Build Celesta packages

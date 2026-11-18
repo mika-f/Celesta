@@ -69,7 +69,7 @@ jobs:
       # Node.js as mise.lock pins it, which runs TypeScript as it is.
       - uses: jdx/mise-action@v5.2.7
         with:
-          version: 2026.11.8
+          version: 2026.11.9
           cache_save: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Check actions.lock
@@ -152,7 +152,7 @@ jobs:
       # changes the lockfile would save its own store on every OS.
       - uses: jdx/mise-action@v5.2.7
         with:
-          version: 2026.11.8
+          version: 2026.11.9
           cache_save: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install JS packages
@@ -324,7 +324,7 @@ jobs:
       # the build.
       - uses: jdx/mise-action@v5.2.7
         with:
-          version: 2026.11.8
+          version: 2026.11.9
           cache_save: ${{ github.ref == 'refs/heads/main' }}
 
       # Off pull requests BASE_SHA is empty, and every plugin is affected.
