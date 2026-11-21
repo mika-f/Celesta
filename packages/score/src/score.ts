@@ -5,14 +5,14 @@
 import { SAMPLE_RATE } from './dsp.js';
 import { parsePitch } from './pitch.js';
 import type { Pitch } from './pitch.js';
-import { DRUMS, EFFECTS, EFFECTS_WITH_DURATION, PATCHES } from './voices.js';
+import { DRUMS, EFFECTS, EFFECTS_WITH_DURATION, EFFECT_LENGTHS, PATCHES } from './voices.js';
 import type { DrumName, EffectName, PatchName } from './voices.js';
 
 export type { DrumName, EffectName, PatchName } from './voices.js';
 export type { Pitch } from './pitch.js';
 
 /** Bumped whenever a voice, the mixer, or the file changes, so cached files are rendered again. */
-export const SYNTH_VERSION = 1;
+export const SYNTH_VERSION = 2;
 
 /** When something happens: exactly one of a frame, a time in seconds, or a beat on the grid set by `tempo()`. */
 export interface TimeOptions {
@@ -156,7 +156,7 @@ export interface ScoreOptions {
   durationInFrames: number;
   /** Changes the noise every hit is made from. Defaults to 0. */
   seed?: number;
-  /** Throw instead of warning when an event starts at or after the end. Defaults to false. */
+  /** Throw instead of warning when a sound starts at or after the end. Defaults to false. */
   strict?: boolean;
 }
 
@@ -167,7 +167,7 @@ export interface ScoreEvent {
   name: PatchName | DrumName | EffectName;
   /** The track of a note. */
   track?: string;
-  /** Seconds: where the sound starts, or for a `reverse` whoosh, where it arrives. */
+  /** Seconds: where the sound starts, or for a `reverse` whoosh and `revswell`, where it arrives. */
   time: number;
   /** `time` in frames. */
   frame: number;
@@ -282,13 +282,18 @@ export function buildScore(options: ScoreOptions, build: (s: ScoreBuilder) => vo
 
   const defaultNoteLength = (unit: 'frame' | 't' | 'beat'): number => (unit === 'beat' ? span(1, 'beat', 'beats') : 0.5);
 
-  const push = (event: Omit<ScoreEvent, 'frame'>): void => {
+  /**
+   * `lead` is how long before `time` the sound starts: the length of a sound
+   * that arrives at its time (a reversed whoosh, revswell), else 0.
+   */
+  const push = (event: Omit<ScoreEvent, 'frame'>, lead = 0): void => {
     if (event.time < -1e-9) {
       fail(`starts at ${seconds(event.time)}, before the composition; events must not start before 0`);
     }
     const time = event.time < 0 ? 0 : event.time;
-    if (Math.round(time * SAMPLE_RATE) >= endSample) {
-      dropped.push(time);
+    // Dropped when nothing of it would sound: it starts at or after the end.
+    if (Math.round((time - lead) * SAMPLE_RATE) >= endSample) {
+      dropped.push(time - lead);
       return;
     }
     // A time given in frames comes back as that frame, not as 31.000000000000004.
@@ -346,6 +351,8 @@ export function buildScore(options: ScoreOptions, build: (s: ScoreBuilder) => vo
   };
 
   const hit = (kind: 'drum' | 'fx', name: DrumName | EffectName, time: number, options: HitOptions, length?: number, reverse = false): void => {
+    const arrives = reverse || name === 'revswell';
+    const lead = arrives ? (length ?? EFFECT_LENGTHS[name as keyof typeof EFFECT_LENGTHS]) : 0;
     push({
       kind,
       name,
@@ -358,7 +365,7 @@ export function buildScore(options: ScoreOptions, build: (s: ScoreBuilder) => vo
       pitch: inRange(options.pitch, 'pitch', -36, 36, 0),
       bright: 0.5,
       reverse,
-    });
+    }, lead);
   };
 
   /** The characters of a pattern as hits: their index on the grid and level. */

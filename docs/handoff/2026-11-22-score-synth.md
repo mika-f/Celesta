@@ -35,8 +35,10 @@ Celesta's frames, beat grid, and `prepare()`.
   (`bpm`, `beatsPerBar`, `offset` in frames), so one object drives
   `useBeat()` and the score. `run`'s `step` follows its start's unit;
   pattern and drum steps are beats (default 0.5).
-- Events before 0 throw. Events whose start rounds to the last sample or
-  later are dropped and counted per call; one warning per call goes to
+- Events before 0 throw. Events whose sound starts at or after the last
+  sample are dropped and counted per call (for the reversed whoosh and
+  `revswell`, the sound starts `dur` before their time, so one timed on the
+  end plays); one warning per call goes to
   `score.warnings` and stderr (`console.warn`, never stdout, which carries
   the bridge protocol), or throws with `strict`. The reversed whoosh and
   `revswell` are anchored at their end; their start may be before 0 and is
@@ -83,10 +85,13 @@ measuring each voice's peak at velocity 1 (about 0.5 for drums and effects,
 - Patches: `marimba`, `vibes` (with tremolo), `glock` are decaying sine
   partials with a noise knock; `ep` is two-operator phase modulation with a
   14:1 tine; `keys` is stretched harmonics with a hammer; `pluck` is
-  Karplus–Strong; `bass` is a sine and a filtered saw; `pad` is three
+  Karplus–Strong tuned with a first-order allpass for the fractional part
+  of the period (within 0.2 cents from A2 to E6, tested to 5); `bass` is a sine and a filtered saw; `pad` is three
   detuned PolyBLEP saws through two one-pole lowpasses with a slow attack.
 - Drums are pitch-swept sines and filtered noise (state-variable filters).
-- Effects as listed in the user guide.
+- Effects as listed in the user guide. `sparkle`, `whoosh`, `revswell`, and
+  `roll` are exactly `dur` long (`EFFECT_LENGTHS` by default); `roll` and
+  `sparkle` fade their last tails out inside it.
 
 ## Files
 
@@ -114,7 +119,9 @@ measuring each voice's peak at velocity 1 (about 0.5 for drums and effects,
 
 ## Checks
 
-- `pnpm --dir packages/score test`: type check and 21 tests (math accuracy,
+- `pnpm --dir packages/score test`: type check and 24 tests (with pluck's
+  pitch at five notes, end-anchored sounds at the end, and roll and sparkle
+  ending within `dur`) (math accuracy,
   repeat determinism, the pinned hash, the WAV header and length, sample
   placement from frames, seconds, and beats, agreement with `beatAt()`,
   scene starts, patterns, runs, the reversed whoosh's end, trimming, the

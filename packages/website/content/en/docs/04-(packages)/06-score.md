@@ -79,7 +79,7 @@ Lengths take at most one of `frames`, `dur` (seconds), or `beats`. A note withou
 | `s.pattern(track, 'x.X.o.xx', { …time, step, repeat, pitch, beats, vel })` | One character per `step` beats (half a beat by default): `x` a note, `X` an accent, `o` a ghost, `.` or `-` a rest; spaces and `\|` are ignored. `pitch` may be a list, taken in turn. |
 | `s.drums({ kick: 'x...', hat: '.x.x' }, { …time, step, repeat, vel })` | Drum lines in the same characters; each line repeats on its own. |
 | `s.drum(name, time or { …time, vel, pitch, pan, gain, reverb })` | One drum hit. |
-| `s.fx(name, time or { …time, dur, vel, pitch, pan, gain, reverb, reverse })` | One effect. `pitch` moves it in semitones. `dur` sets the length of `sparkle`, `whoosh`, `revswell`, and `roll`. |
+| `s.fx(name, time or { …time, dur, vel, pitch, pan, gain, reverb, reverse })` | One effect. `pitch` moves it in semitones. `dur` sets the whole length of `sparkle`, `whoosh`, `revswell`, and `roll` (0.6, 0.6, 1.2, and 1 s by default); they end within it. |
 | `s.ticks(times, { sound, vary, vel, pitch, pan, gain, reverb })` | One effect (`tick` by default) per time. `vary` lets each tick's pitch wander by up to that many semitones, the same way every run. |
 | `s.master({ gain, fadeIn, fadeOut, reverb })` | The whole mix's level, fades in seconds, and the room's level. |
 
@@ -97,7 +97,7 @@ A sound starts on its time, except a `whoosh` with `reverse: true` and `revswell
 
 - An unknown patch, drum, or effect, a character a pattern does not know, a `beat` before `s.tempo()`, a note on a track without `s.program()`, and a value out of range throw, naming the call and, for a misspelled name, the nearest one: `s.fx('wosh'): unknown effect "wosh"; did you mean 'whoosh'?`.
 - An event before 0 throws.
-- An event that starts at or after the composition's end is dropped, with one warning per call in `score.warnings` and on stderr, for example when a `repeat` runs past the end. Pass `strict: true` to `defineScore()` to throw instead. Sound still ringing at the end is cut there.
+- A sound that would start at or after the composition's end is dropped, with one warning per call in `score.warnings` and on stderr, for example when a `repeat` runs past the end. A reversed `whoosh` or a `revswell` starts `dur` before its time, so one timed on the end, or a little after it, still plays the part before the end. Pass `strict: true` to `defineScore()` to throw instead. Sound still ringing at the end is cut there.
 
 ## The file
 

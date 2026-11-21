@@ -82,7 +82,7 @@ describe('determinism', () => {
   it('renders the bytes this version is pinned to', () => {
     // A change here means every cached score changes: bump SYNTH_VERSION.
     const wav = score({ durationInFrames: 750 }, everything).toWav();
-    expect(createHash('sha256').update(wav).digest('hex')).toBe('07f77288e861ece31d1e0431a7475f9f005b53eebe22c8168417f7128cde4708');
+    expect(createHash('sha256').update(wav).digest('hex')).toBe('7e8fa83d19d49744e9fe1ef3914d7ea4869078ca5493b7d798ff1fa2bdae0451');
   });
 
   it('changes the noise only with the seed', () => {
@@ -185,6 +185,35 @@ describe('timing', () => {
     expect(firstSoundingFrame(pcm(s.toWav()))).toBe(0);
   });
 
+  it('keeps a sound that arrives at the end, and drops one that would start after it', () => {
+    const s = score({ strict: true }, b => {
+      b.fx('whoosh', { frame: 60, reverse: true, dur: 0.5, reverb: 0 });
+      b.fx('revswell', { frame: 60, reverb: 0 });
+    });
+    expect(s.events.map(e => e.name)).toEqual(['whoosh', 'revswell']);
+    const samples = pcm(s.toWav());
+    expect(firstSoundingFrame(samples)).toBeLessThan(1.5 * RATE);
+    expect(lastSoundingFrame(samples)).toBeGreaterThan(1.99 * RATE);
+
+    const late = score({}, b => b.fx('whoosh', { frame: 80, reverse: true, dur: 0.5 }));
+    expect(late.events).toEqual([]);
+    expect(late.warnings).toEqual(["s.fx('whoosh'): an event starts at or after the end (2 s), first at 2.167 s; dropped"]);
+    // Arriving after the end but starting before it: the part before the end plays.
+    const partly = score({}, b => b.fx('whoosh', { frame: 66, reverse: true, dur: 0.5 }));
+    expect(partly.events).toHaveLength(1);
+  });
+
+  it('stops roll and sparkle at the end of their dur', () => {
+    for (const name of ['roll', 'sparkle'] as const) {
+      for (const dur of [0.1, 0.4]) {
+        const wav = score({}, b => b.fx(name, { t: 1, dur, reverb: 0 })).toWav();
+        const last = lastSoundingFrame(pcm(wav));
+        expect(last, `${name} ${dur}`).toBeLessThan((1 + dur) * RATE);
+        expect(last, `${name} ${dur}`).toBeGreaterThan(1 * RATE);
+      }
+    }
+  });
+
   it('fades the whole mix out at the end', () => {
     const wav = score({}, s => {
       s.master({ fadeOut: 0.5 });
@@ -193,6 +222,46 @@ describe('timing', () => {
     const samples = pcm(wav);
     expect(samples[samples.length - 1]).toBe(0);
     expect(samples[samples.length - 2]).toBe(0);
+  });
+});
+
+/** The fundamental of a mono signal in Hz, from its autocorrelation near `expected`. */
+function fundamental(samples: Float64Array, expected: number): number {
+  const lagOf = (hz: number) => RATE / hz;
+  const corr = (lag: number) => {
+    let sum = 0;
+    for (let i = 0; i + lag < samples.length; i += 1) sum += samples[i] * samples[i + lag];
+    return sum;
+  };
+  let best = 0;
+  let bestValue = -Infinity;
+  for (let lag = Math.floor(lagOf(expected * 1.06)); lag <= Math.ceil(lagOf(expected / 1.06)); lag += 1) {
+    const value = corr(lag);
+    if (value > bestValue) {
+      bestValue = value;
+      best = lag;
+    }
+  }
+  const [a, b, c] = [corr(best - 1), bestValue, corr(best + 1)];
+  return RATE / (best + (0.5 * (a - c)) / (a - 2 * b + c));
+}
+
+describe('tuning', () => {
+  it('plays pluck at the pitch of its note', () => {
+    for (const note of ['A2', 'A3', 'A4', 'A5', 'E6']) {
+      const midi = parsePitch(note, 'test');
+      const hz = 440 * 2 ** ((midi - 69) / 12);
+      const wav = score({}, b => {
+        b.program('p', 'pluck', { reverb: 0 });
+        b.note('p', note, { t: 0, dur: 1 });
+      }).toWav();
+      const left = pcm(wav);
+      const mono = new Float64Array(9600);
+      for (let i = 0; i < mono.length; i += 1) mono[i] = left[2 * (2400 + i)];
+      const measured = fundamental(mono, hz);
+      // Within 5 cents.
+      expect(Math.abs(1200 * Math.log2(measured / hz)), note).toBeLessThan(5);
+    }
   });
 });
 

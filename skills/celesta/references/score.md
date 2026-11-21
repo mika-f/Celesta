@@ -92,7 +92,7 @@ fractions allowed), `{ t }` (seconds), `{ beat }` (beats on the grid from
 | `s.pattern(track, 'x.X.o.xx', { …time, step, repeat, pitch, beats, vel })` | `x` note, `X` accent, `o` ghost, `.`/`-` rest; spaces and `\|` ignored. `pitch` may be a list taken in turn. |
 | `s.drums({ kick: 'x...', hat: '.x.x' }, { …time, step, repeat, vel })` | Each line repeats on its own. |
 | `s.drum(name, time \| { …time, vel, pitch, pan, gain, reverb })` | |
-| `s.fx(name, time \| { …time, dur, vel, pitch, pan, gain, reverb, reverse })` | `dur` only for `sparkle`, `whoosh`, `revswell`, `roll`; `reverse` only for `whoosh`. |
+| `s.fx(name, time \| { …time, dur, vel, pitch, pan, gain, reverb, reverse })` | `dur` (the whole length, which the sound ends within) only for `sparkle`, `whoosh`, `revswell`, `roll`; `reverse` only for `whoosh`. |
 | `s.ticks(times, { sound, vary, vel, pitch, pan, gain, reverb })` | One effect per time; `vary` is a seeded pitch wander in semitones. |
 | `s.master({ gain, fadeIn, fadeOut, reverb })` | Fades in seconds. Default gain 0.8. |
 
@@ -118,8 +118,9 @@ swell before 0 is left out.
   'whoosh'?`), a character a pattern does not know, `beat` before
   `s.tempo()`, a note on a track without `s.program()`, two time keys, a
   value out of range, and any event before 0.
-- An event starting at or after the composition's end is dropped with one
-  warning per call (`score.warnings`, stderr:
+- A sound starting at or after the composition's end is dropped with one
+  warning per call (a reversed whoosh or `revswell` starts `dur` before its
+  time, so one timed on the end still plays) (`score.warnings`, stderr:
   `celesta score: s.drums(kick): 6 events start at or after the end (2 s), first at 2 s; dropped`).
   Fix the count (`repeat`) rather than ignoring it. `strict: true` on
   `defineScore()` makes it an error. Sound still ringing at the end is cut.

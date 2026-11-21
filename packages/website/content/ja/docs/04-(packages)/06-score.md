@@ -79,7 +79,7 @@ export default function Film() {
 | `s.pattern(track, 'x.X.o.xx', { …時刻, step, repeat, pitch, beats, vel })` | 1 文字が `step` 拍（既定は半拍）です。`x` は音符、`X` はアクセント、`o` はゴースト、`.` と `-` は休符で、スペースと `\|` は無視します。`pitch` をリストにすると順に使います。 |
 | `s.drums({ kick: 'x...', hat: '.x.x' }, { …時刻, step, repeat, vel })` | 同じ文字で書くドラムの行。行ごとに繰り返します。 |
 | `s.drum(name, 時刻または { …時刻, vel, pitch, pan, gain, reverb })` | ドラムを 1 打。 |
-| `s.fx(name, 時刻または { …時刻, dur, vel, pitch, pan, gain, reverb, reverse })` | 効果音 1 つ。`pitch` は半音単位で動かします。`dur` は `sparkle`・`whoosh`・`revswell`・`roll` の長さを決めます。 |
+| `s.fx(name, 時刻または { …時刻, dur, vel, pitch, pan, gain, reverb, reverse })` | 効果音 1 つ。`pitch` は半音単位で動かします。`dur` は `sparkle`・`whoosh`・`revswell`・`roll` の全体の長さを決め（既定は 0.6・0.6・1.2・1 秒）、音はその中で終わります。 |
 | `s.ticks(times, { sound, vary, vel, pitch, pan, gain, reverb })` | 時刻ごとに効果音（既定は `tick`）を 1 つ。`vary` を渡すと、tick ごとの音高がその半音数まで揺れます。揺れ方は毎回同じです。 |
 | `s.master({ gain, fadeIn, fadeOut, reverb })` | ミックス全体の音量、秒単位のフェード、残響の量。 |
 
@@ -97,7 +97,7 @@ export default function Film() {
 
 - 知らない音色・ドラム・効果音の名前、パターンに使えない文字、`s.tempo()` より前の `beat`、`s.program()` していないトラックの音符、範囲外の値はエラーになります。メッセージには呼び出しと、綴りを間違えた名前なら近い名前が出ます（`s.fx('wosh'): unknown effect "wosh"; did you mean 'whoosh'?`）。
 - 0 より前のイベントはエラーになります。
-- コンポジションの終わりと同時か後に始まるイベントは捨てられ、呼び出しごとに 1 つの警告が `score.warnings` と標準エラーに出ます。`repeat` が終わりを越えたときなどです。`defineScore()` に `strict: true` を渡すとエラーにします。終わりの時点でまだ鳴っている音はそこで切れます。
+- コンポジションの終わりと同時か後に鳴り始める音は捨てられ、呼び出しごとに 1 つの警告が `score.warnings` と標準エラーに出ます。`repeat` が終わりを越えたときなどです。逆向きの `whoosh` と `revswell` は指定した時刻の `dur` 前から鳴り始めるので、終わりちょうど、または少し後に合わせても、終わりより前の部分は鳴ります。`defineScore()` に `strict: true` を渡すとエラーにします。終わりの時点でまだ鳴っている音はそこで切れます。
 
 ## ファイル
 

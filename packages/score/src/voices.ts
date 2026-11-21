@@ -134,23 +134,34 @@ function keys(input: PatchInput): Float64Array {
 function pluck(input: PatchInput): Float64Array {
   const { freq, hold, bright, rnd } = input;
   const out = buffer(heldLength(hold, 0.12, 4));
-  const period = Math.max(2, Math.round(SR / freq));
-  const line = new Float64Array(period + 1);
+  // Karplus–Strong, tuned exactly: the loop is a delay of N samples, the
+  // two-point average (half a sample), and a first-order allpass that adds
+  // the remaining fraction, between 0.1 and 1.1 samples.
+  const period = SR / freq;
+  const n = Math.max(2, Math.floor(period - 0.6));
+  const fraction = period - 0.5 - n;
+  const c = (1 - fraction) / (1 + fraction);
+  // The ring holds the loop's last n + 1 outputs; it starts as the pluck's noise.
+  const ring = new Float64Array(n + 1);
   const excite = new OnePole(1500 + 9000 * bright);
-  for (let i = 0; i < line.length; i += 1) line[i] = excite.process(noise(rnd));
+  for (let i = 0; i < ring.length; i += 1) ring[i] = excite.process(noise(rnd));
   let mean = 0;
-  for (let i = 0; i < line.length; i += 1) mean += line[i];
-  mean /= line.length;
-  for (let i = 0; i < line.length; i += 1) line[i] -= mean;
+  for (let i = 0; i < ring.length; i += 1) mean += ring[i];
+  mean /= ring.length;
+  for (let i = 0; i < ring.length; i += 1) ring[i] -= mean;
   const loss = 0.4985 + 0.0013 * bright;
-  let read = 0;
+  let at = 0;
+  let inPrev = 0;
+  let outPrev = 0;
   for (let i = 0; i < out.length; i += 1) {
-    const a = line[read];
-    const b = line[(read + 1) % line.length];
-    const y = (a + b) * loss;
-    out[i] = 0.5 * a;
-    line[read] = y;
-    read = (read + 1) % line.length;
+    // ring[at] is y[i - n - 1] and the next slot y[i - n].
+    const averaged = (ring[at] + ring[at + 1 === ring.length ? 0 : at + 1]) * loss;
+    const y = c * averaged + inPrev - c * outPrev;
+    inPrev = averaged;
+    outPrev = y;
+    ring[at] = y;
+    at = at + 1 === ring.length ? 0 : at + 1;
+    out[i] = 0.5 * y;
   }
   shape(out, hold, 0.12, 4);
   return out;
@@ -430,17 +441,25 @@ function chime({ ratio }: HitInput): Rendered {
   return start(finish(out, 2));
 }
 
+/** Fades the last `seconds` of a buffer out, so an effect ends at its `dur`. */
+function fadeEnd(out: Float64Array, seconds: number): Float64Array {
+  const n = Math.min(out.length, Math.round(seconds * SR));
+  for (let i = 0; i < n; i += 1) out[out.length - 1 - i] *= i / n;
+  return out;
+}
+
 function sparkle({ ratio, dur, rnd }: HitInput): Rendered {
-  const length = dur ?? 0.6;
-  const out = buffer(length + 0.2);
+  const length = dur ?? EFFECT_LENGTHS.sparkle;
+  // Exactly `dur` long: the blips fall in its first 85% and the end fades.
+  const out = buffer(length);
   const count = Math.max(4, Math.round(length * 18));
   for (let n = 0; n < count; n += 1) {
-    const at = Math.round(rnd() * length * SR);
+    const at = Math.round(rnd() * length * 0.85 * SR);
     const freq = (3000 + 5000 * rnd()) * ratio;
     const level = 0.12 + 0.18 * rnd();
     addPartials(out, freq, [[1, 1, 0.03], [2.1, 0.3, 0.012]], level, at);
   }
-  return start(finish(out, 2));
+  return start(fadeEnd(finish(out, 2), Math.min(0.05, length / 4)));
 }
 
 /** Noise through a band that sweeps up while the level swells, then falls. */
@@ -460,16 +479,16 @@ function whooshBody(length: number, ratio: number, rnd: () => number, rising: bo
 }
 
 function whoosh({ ratio, dur, rnd }: HitInput): Rendered {
-  return start(finish(whooshBody(dur ?? 0.6, ratio, rnd, false), 1));
+  return start(finish(whooshBody(dur ?? EFFECT_LENGTHS.whoosh, ratio, rnd, false), 1));
 }
 
 function whooshInto({ ratio, dur, rnd }: HitInput): Rendered {
-  const out = finish(whooshBody(dur ?? 0.6, ratio, rnd, true), 1);
+  const out = finish(whooshBody(dur ?? EFFECT_LENGTHS.whoosh, ratio, rnd, true), 1);
   return { data: out, anchor: out.length };
 }
 
 function revswell({ ratio, dur }: HitInput): Rendered {
-  const length = dur ?? 1.2;
+  const length = dur ?? EFFECT_LENGTHS.revswell;
   // A bell, rendered forwards and then reversed: it swells into its time.
   const forward = buffer(length);
   bell(forward, 880 * ratio, 0.22);
@@ -482,8 +501,9 @@ function revswell({ ratio, dur }: HitInput): Rendered {
 }
 
 function roll({ ratio, dur, rnd }: HitInput): Rendered {
-  const length = dur ?? 1;
-  const out = buffer(length + 0.3);
+  const length = dur ?? EFFECT_LENGTHS.roll;
+  // Exactly `dur` long: the last hits' tails fade out at its end.
+  const out = buffer(length);
   const hits = Math.max(2, Math.round(length * 22));
   for (let n = 0; n < hits; n += 1) {
     const level = 0.25 + 0.75 * (n / (hits - 1));
@@ -491,7 +511,7 @@ function roll({ ratio, dur, rnd }: HitInput): Rendered {
     const at = Math.round(((n * length) / hits) * SR);
     for (let i = 0; i < hit.length && at + i < out.length; i += 1) out[at + i] += 0.7 * level * hit[i];
   }
-  return start(finish(out, 2));
+  return start(fadeEnd(finish(out, 2), Math.min(0.04, length / 4)));
 }
 
 function boing({ ratio }: HitInput): Rendered {
@@ -537,5 +557,8 @@ export type EffectName = keyof typeof EFFECTS;
 /** The reversed whoosh, `fx('whoosh', { reverse: true })`: it swells into its time. */
 export const WHOOSH_INTO = whooshInto;
 
+/** Effects whose `dur` sets their whole length, and that length when `dur` is not given, in seconds. */
+export const EFFECT_LENGTHS = { sparkle: 0.6, whoosh: 0.6, revswell: 1.2, roll: 1 } as const;
+
 /** Effects whose `dur` sets their length. */
-export const EFFECTS_WITH_DURATION: ReadonlySet<EffectName> = new Set<EffectName>(['sparkle', 'whoosh', 'revswell', 'roll']);
+export const EFFECTS_WITH_DURATION: ReadonlySet<EffectName> = new Set(Object.keys(EFFECT_LENGTHS) as EffectName[]);
