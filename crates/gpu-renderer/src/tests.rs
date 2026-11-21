@@ -2,8 +2,8 @@ use crate::error::GpuRenderError;
 use crate::hit::{HitRegion, hit_test};
 use crate::layer::{PreparedContent, PreparedItem, PreparedLayer};
 use crate::path::{
-    MAX_PATH_TILE_EDGES, ShadedPath, bin_tiles, count_pieces_into_rows, path_entry_limit,
-    sort_pieces_in_place,
+    MAX_PATH_TILE_EDGES, ShadedPath, TileBounds, bin_tiles, count_pieces_into_rows,
+    path_entry_limit, sort_pieces_in_place,
 };
 use crate::plan::GpuStep;
 use crate::readback::ReadbackLayout;
@@ -1746,6 +1746,100 @@ fn tile_bins_preserve_full_outline_winding() {
             }
         }
     }
+}
+
+#[test]
+fn tile_bounds_hold_every_pixel_with_winding() {
+    let winding = |edges: &[[f32; 4]], x: f64, y: f64| -> i32 {
+        edges
+            .iter()
+            .map(|edge| {
+                let [ax, ay, bx, by] = edge.map(f64::from);
+                if (y < ay) == (y < by) || ax + (y - ay) * (bx - ax) / (by - ay) > x {
+                    0
+                } else if by > ay {
+                    1
+                } else {
+                    -1
+                }
+            })
+            .sum()
+    };
+    let mut drawn = 0;
+    for seed in 0..32 {
+        let points: Vec<_> = (0..16)
+            .map(|i| ((i * 17 + seed * 7) % 65, (i * 11 + seed * 13) % 33))
+            .collect();
+        let edges: Vec<_> = points
+            .iter()
+            .zip(points.iter().cycle().skip(1))
+            .map(|(&(ax, ay), &(bx, by))| LineSegment {
+                x0: ax as f32 + 0.3,
+                y0: ay as f32 * 0.9 + 0.2,
+                x1: bx as f32 + 0.3,
+                y1: by as f32 * 0.9 + 0.2,
+            })
+            .collect();
+        let bins = bin_tiles(&edges, 72, 32);
+        for tile in &bins.tiles {
+            let [left, top, right, bottom] = TileBounds::of(tile, &bins.edges, 9).0;
+            drawn += ((right - left) * (bottom - top)) as u32;
+            let origin = ((tile.index % 9 * 8) as f64, (tile.index / 9 * 8) as f64);
+            for y in 0..32 {
+                let sample_y = origin.1 + (f64::from(y) + 0.5) / 4.0;
+                for x in 0..8 {
+                    let sample_x = origin.0 + f64::from(x) + 0.5;
+                    let inside = (left..right).contains(&(x as f32))
+                        && (top..bottom).contains(&((y / 4) as f32));
+                    let tiled = tile.backdrop
+                        + winding(&bins.edges[tile.edges.clone()], sample_x, sample_y);
+                    assert!(
+                        inside || tiled == 0,
+                        "seed {seed}, tile {}, ({sample_x}, {sample_y})",
+                        tile.index
+                    );
+                }
+            }
+        }
+    }
+    // The bounds leave out some of the tiles.
+    assert!(drawn < 32 * 36 * 64, "{drawn}");
+}
+
+#[test]
+fn tile_bounds_fit_a_thin_band() {
+    // A 1 px band across the middle of one tile, at x 2.5..5.5.
+    let edges = [
+        LineSegment {
+            x0: 2.5,
+            y0: 3.0,
+            x1: 2.5,
+            y1: 4.0,
+        },
+        LineSegment {
+            x0: 2.5,
+            y0: 4.0,
+            x1: 5.5,
+            y1: 4.0,
+        },
+        LineSegment {
+            x0: 5.5,
+            y0: 4.0,
+            x1: 5.5,
+            y1: 3.0,
+        },
+        LineSegment {
+            x0: 5.5,
+            y0: 3.0,
+            x1: 2.5,
+            y1: 3.0,
+        },
+    ];
+    let bins = bin_tiles(&edges, 8, 8);
+    let [tile] = &bins.tiles[..] else {
+        panic!("one tile");
+    };
+    assert_eq!(TileBounds::of(tile, &bins.edges, 1).0, [2.0, 3.0, 6.0, 4.0]);
 }
 
 #[test]

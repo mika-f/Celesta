@@ -109,13 +109,14 @@ pub(crate) struct ShadedPath {
     /// - the inverse transform's a, b, c, d (region pixels to layer
     ///   coordinates, for gradients)
     /// - the inverse transform's tx, ty; the number of tile columns; how many
-    ///   entries each tile drawn has, one per outline
+    ///   entries each tile drawn has, one per outline and its bounds
     /// - which of a tile's entries is the fill's, then the stroke's (-1
     ///   without one); the index of the first tile's; unused
     ///
     /// then the tiles drawn, each outline's entry for each: the tile's index
     /// in the region (row by row), the index and count of the edges the
-    /// outline has there, and its backdrop (see `bin_tiles`). The edges, x0,
+    /// outline has there, and its backdrop (see `bin_tiles`); then the part
+    /// of the tile its quad covers (see `TileBounds`). The edges, x0,
     /// y0, x1, y1 in region pixels, follow. Indices are whole numbers in f32,
     /// exact below 2^24 entries, which the storage buffer binding limit keeps
     /// them under.
@@ -203,6 +204,9 @@ impl PathEntries {
                 stride += 1;
             }
         }
+        // Then the tile's bounds.
+        let bounds_slot = stride;
+        stride += 1;
         // Every tile either outline covers, in order.
         let mut tiles: Vec<u32> = outlines
             .iter()
@@ -227,6 +231,9 @@ impl PathEntries {
         ]);
         entries.push([slots[0], slots[1], first_tile as f32, 0.0]);
         entries.resize(first_tile + tiles.len() * stride, [0.0; 4]);
+        for position in 0..tiles.len() {
+            entries[first_tile + position * stride + bounds_slot] = TileBounds::EMPTY.0;
+        }
         for (slot, bins) in outlines.iter().flatten().enumerate() {
             let edges = entries.len();
             let mut own = bins.tiles.iter().peekable();
@@ -240,6 +247,10 @@ impl PathEntries {
                         tile.edges.len() as f32,
                         tile.backdrop as f32,
                     ];
+                    let bounds = &mut entries[first_tile + position * stride + bounds_slot];
+                    *bounds = TileBounds(*bounds)
+                        .union(TileBounds::of(tile, &bins.edges, columns))
+                        .0;
                 }
             }
             entries.extend_from_slice(&bins.edges);
@@ -274,12 +285,14 @@ impl PathEntries {
         out.copy_from_slice(&self.entries);
         let shift = |index: f32| (index as usize + base) as f32;
         out[2][2] = shift(out[2][2]);
-        let tiles = &mut out[3..3 + self.tiles as usize * self.stride];
+        let tiles = out[3..3 + self.tiles as usize * self.stride].chunks_exact_mut(self.stride);
         // A tile an outline covers has edges or a backdrop; only those
-        // point at edges.
-        for entry in tiles {
-            if entry[2] != 0.0 || entry[3] != 0.0 {
-                entry[1] = shift(entry[1]);
+        // point at edges. The last entry of each tile is its bounds.
+        for tile in tiles {
+            for entry in tile.iter_mut().take(self.stride - 1) {
+                if entry[2] != 0.0 || entry[3] != 0.0 {
+                    entry[1] = shift(entry[1]);
+                }
             }
         }
     }
@@ -346,6 +359,78 @@ pub(crate) fn sort_pieces_in_place(
         row.sort_unstable_by_key(|(tile, _)| *tile);
     }
     pieces
+}
+
+/// The part of a tile its quad covers, in pixels from the tile's top-left
+/// corner: left, top, right, bottom. No pixel outside it has coverage, so
+/// leaving it out changes no pixel: without a backdrop, a row no edge spans
+/// keeps the winding 0, as does every pixel left of the leftmost edge (a
+/// tile only has the parts of edges right of its left side), and every
+/// pixel right of the rightmost edge when the edges' windings cancel on
+/// every scanline. Thin strokes cross most of their tiles in a few rows or
+/// columns.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct TileBounds(pub(crate) [f32; 4]);
+
+impl TileBounds {
+    pub(crate) const EMPTY: Self =
+        Self([PATH_TILE_COLUMNS as f32, PATH_TILE_ROWS as f32, 0.0, 0.0]);
+    pub(crate) const FULL: Self = Self([0.0, 0.0, PATH_TILE_COLUMNS as f32, PATH_TILE_ROWS as f32]);
+
+    /// The bounds of one outline's `tile`, whose edges are in `edges`, in a
+    /// region `columns` tiles wide.
+    pub(crate) fn of(tile: &CoveredTile, edges: &[[f32; 4]], columns: u32) -> Self {
+        if tile.backdrop != 0 {
+            return Self::FULL;
+        }
+        let left = (tile.index % columns * PATH_TILE_COLUMNS) as f32;
+        let top = (tile.index / columns * PATH_TILE_ROWS) as f32;
+        let edges = &edges[tile.edges.clone()];
+        let (mut x0, mut x1) = (f32::INFINITY, f32::NEG_INFINITY);
+        let (mut y0, mut y1) = (f32::INFINITY, f32::NEG_INFINITY);
+        // Where the winding right of every edge changes: each edge counts on
+        // [top, bottom), as `scanline_coverage` counts it.
+        let mut changes = [(0.0, 0); 2 * MAX_PATH_TILE_EDGES];
+        for (index, edge) in edges.iter().enumerate() {
+            let [ax, ay, bx, by] = *edge;
+            x0 = x0.min(ax.min(bx));
+            x1 = x1.max(ax.max(bx));
+            y0 = y0.min(ay.min(by));
+            y1 = y1.max(ay.max(by));
+            let direction = if by > ay { 1 } else { -1 };
+            changes[2 * index] = (ay.min(by), direction);
+            changes[2 * index + 1] = (ay.max(by), -direction);
+        }
+        if edges.is_empty() {
+            return Self::EMPTY;
+        }
+        let changes = &mut changes[..2 * edges.len()];
+        changes.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+        let mut winding = 0;
+        let mut cancels = true;
+        for group in changes.chunk_by(|a, b| a.0 == b.0) {
+            winding += group.iter().map(|(_, change)| change).sum::<i32>();
+            cancels &= winding == 0;
+        }
+        let (columns, rows) = (PATH_TILE_COLUMNS as f32, PATH_TILE_ROWS as f32);
+        let right = if cancels { (x1 - left).ceil() } else { columns };
+        Self([
+            (x0 - left).floor().clamp(0.0, columns),
+            (y0 - top).floor().clamp(0.0, rows),
+            right.clamp(0.0, columns),
+            (y1 - top).ceil().clamp(0.0, rows),
+        ])
+    }
+
+    fn union(self, other: Self) -> Self {
+        let [a, b] = [self.0, other.0];
+        Self([
+            a[0].min(b[0]),
+            a[1].min(b[1]),
+            a[2].max(b[2]),
+            a[3].max(b[3]),
+        ])
+    }
 }
 
 /// An outline's edges sorted into the tiles of its region that it covers

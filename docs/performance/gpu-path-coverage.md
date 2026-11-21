@@ -28,7 +28,12 @@ remains the reference the GPU output is compared with.
    crosses that side, and a backdrop, the winding just left of its top-left
    corner. Only tiles with edges or a nonzero backdrop are stored and drawn,
    so the empty inside of a thin ring costs nothing.
-3. The vertex shader places one quad per stored tile. The fragment shader
+3. The vertex shader places one quad per stored tile, cut to the part of
+   the tile that can have coverage (`TileBounds`, stored after the tile's
+   outline entries): the rows and columns its edges reach, the whole tile
+   with a nonzero backdrop, and right of the rightmost edge only when the
+   edges' windings do not cancel. A 1 px stroke crossing a tile shades a
+   few of its 64 pixels instead of all of them. The fragment shader
    measures the nonzero coverage of the fill and of the stroke on four
    scanlines per pixel row (the scanlines tiny-skia samples), each span
    measured exactly. It paints the stroke over the fill (solid colors or
@@ -86,6 +91,25 @@ tests cover top-edge epsilon vertices, an exact integer hole on transparent
 backgrounds, dense zigzag fallback, and storage-budget fallback.
 
 ## Measurements
+
+### Tile bounds: llvmpipe batch, November 2026
+
+Fitting each tile's quad to `TileBounds` instead of the full 8x8 tile.
+Ubuntu 22.04, 2 vCPUs, Mesa lavapipe (llvmpipe, a CPU Vulkan driver), release
+builds of `celesta-bench` at 1280x720, before = `main` at `424b8b1`. These
+are not real-GPU measurements; llvmpipe's fragment cost is closer to
+proportional to the pixels shaded than a discrete GPU's.
+
+| Workload | Before | After |
+| --- | ---: | ---: |
+| `rings`, wall time | 163–167 ms/frame | 124–125 ms/frame |
+| `rings`, instructions (Cachegrind, 6 frames + 2 warmup) | 15.63 G | 12.53 G (-19.9%) |
+| `nebula`, wall time | 516–518 ms/frame | 481–503 ms/frame |
+
+The last frame of `rings`, `nebula`, `masks`, `shapes` and `text` is
+pixel-identical before and after. Changing the tile size instead (4x4, 8x4,
+16x4, 16x8) was slower than this or only matched it with four times as many
+tile entries.
 
 ### Review follow-up: RTX 4070 batch at b98a642
 
