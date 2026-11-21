@@ -229,12 +229,7 @@ mod tests {
     use celesta_react_bridge::{ReceivedProps, SourcePos};
 
     fn chapter(id: &str, from: u64, duration_in_frames: u64) -> ReactChapter {
-        ReactChapter {
-            id: id.to_owned(),
-            name: id.to_owned(),
-            from,
-            duration_in_frames,
-        }
+        ReactChapter::new(id.to_owned(), id.to_owned(), from, duration_in_frames)
     }
 
     fn window(from: f64, to: f64, source: bool, remapped: bool) -> TimingWindow {

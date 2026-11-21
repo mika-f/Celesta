@@ -12,7 +12,8 @@ use celesta_composition::{Rational, Time};
 use celesta_exporter::report::{self, HintStyle};
 use celesta_exporter::{ExportError, ReactRuntimeOptions};
 use celesta_react_bridge::{
-    FrameEvaluation, ReactBridge, ReactBridgeError, RuntimeStop, SpawnOptions, resolve_props_file,
+    FrameEvaluation, ReactBridge, ReactBridgeError, ReactChapter, RuntimeStop, SpawnOptions,
+    describe_rough, resolve_props_file, rough_chapters,
 };
 use rmcp::model::{CallToolResult, ContentBlock};
 use schemars::JsonSchema;
@@ -253,6 +254,44 @@ pub fn inspect(args: InspectArgs, stop: &Stop, media: &SharedMedia) -> CallToolR
     }
 }
 
+/// The composition's chapters: on one line when they are names and spans
+/// only, else one line each, with a rough chapter tagged and a `desc` after
+/// a colon.
+fn write_chapters(text: &mut String, chapters: &[ReactChapter]) {
+    if chapters.is_empty() {
+        return;
+    }
+    let span = |chapter: &ReactChapter| {
+        format!(
+            "{} [{}, {}){}",
+            chapter.name,
+            chapter.from,
+            chapter.end(),
+            if chapter.is_rough() { " rough" } else { "" }
+        )
+    };
+    if chapters
+        .iter()
+        .all(|chapter| !chapter.is_rough() && chapter.desc.is_none())
+    {
+        let spans: Vec<String> = chapters.iter().map(span).collect();
+        let _ = writeln!(text, "chapters: {}", spans.join(", "));
+        return;
+    }
+    let rough = chapters.iter().filter(|chapter| chapter.is_rough()).count();
+    let _ = writeln!(text, "chapters ({rough} of {} rough):", chapters.len());
+    for chapter in chapters {
+        match &chapter.desc {
+            Some(desc) => {
+                let _ = writeln!(text, "  {}: {desc}", span(chapter));
+            }
+            None => {
+                let _ = writeln!(text, "  {}", span(chapter));
+            }
+        }
+    }
+}
+
 struct Inspection {
     frame_rate: Rational,
     total: u64,
@@ -261,6 +300,7 @@ struct Inspection {
     composition: Value,
     composition_id: String,
     compositions: Vec<celesta_react_bridge::ReactCompositionInfo>,
+    chapters: Vec<ReactChapter>,
     frames: Vec<Value>,
     loop_check: Option<Value>,
     warnings: Vec<String>,
@@ -300,15 +340,15 @@ impl Inspection {
                 metadata.project_property_order.join(", ")
             );
         }
-        if !metadata.chapters.is_empty() {
-            let chapters: Vec<String> = metadata
-                .chapters
-                .iter()
-                .map(|chapter| format!("{} [{}, {})", chapter.name, chapter.from, chapter.end()))
-                .collect();
-            let _ = writeln!(text, "chapters: {}", chapters.join(", "));
-        }
+        write_chapters(&mut text, &metadata.chapters);
         let mut warnings = Vec::new();
+        let rough = rough_chapters(&metadata.chapters, 0, metadata.duration_in_frames);
+        if !rough.is_empty() {
+            warnings.push(format!(
+                "{}; export warns about them (rough_scenes) and `final` refuses them",
+                describe_rough(&rough)
+            ));
+        }
         if !metadata.width.is_multiple_of(2) || !metadata.height.is_multiple_of(2) {
             warnings.push(format!(
                 "width/height {}×{} must be even for video export",
@@ -322,6 +362,7 @@ impl Inspection {
             text,
             composition_id: metadata.composition_id.clone(),
             compositions: metadata.compositions.clone(),
+            chapters: metadata.chapters.clone(),
             composition: json!({
                 "width": metadata.width,
                 "height": metadata.height,
@@ -529,6 +570,7 @@ impl Inspection {
             "composition": self.composition,
             "compositionId": self.composition_id,
             "compositions": self.compositions,
+            "chapters": self.chapters,
             "warnings": warnings,
             "missingFiles": self.missing,
         });
@@ -619,10 +661,38 @@ fn message(error: &ReactBridgeError) -> String {
 mod tests {
     use super::{
         DEFAULT_TIMEOUT, Halt, InspectArgs, MAX_INSPECT_FRAMES, SharedMedia, Stop, inspect, select,
+        write_chapters,
     };
+    use celesta_react_bridge::{ChapterStatus, ReactChapter};
     use rmcp::model::CallToolResult;
     use serde_json::{Value, json};
     use std::time::Duration;
+
+    #[test]
+    fn chapters_list_rough_ones_and_their_desc_one_per_line() {
+        let mut text = String::new();
+        let plain = [
+            ReactChapter::new("a", "Intro", 0, 30),
+            ReactChapter::new("b", "Outro", 30, 30),
+        ];
+        write_chapters(&mut text, &plain);
+        assert_eq!(text, "chapters: Intro [0, 30), Outro [30, 60)\n");
+
+        let mut text = String::new();
+        let rough = [
+            ReactChapter {
+                desc: Some("A card slides in.".to_owned()),
+                status: ChapterStatus::Rough,
+                ..ReactChapter::new("card", "The card", 0, 60)
+            },
+            ReactChapter::new("b", "Outro", 60, 30),
+        ];
+        write_chapters(&mut text, &rough);
+        assert_eq!(
+            text,
+            "chapters (1 of 2 rough):\n  The card [0, 60) rough: A card slides in.\n  Outro [60, 90)\n"
+        );
+    }
 
     fn args(value: Value) -> InspectArgs {
         serde_json::from_value(value).expect("inspect arguments")

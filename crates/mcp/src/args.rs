@@ -174,6 +174,12 @@ pub struct ExportVideoArgs {
     /// to trim.
     #[serde(rename = "loop")]
     looping: Option<bool>,
+    /// Refuse to export a React entry's rough scenes (`status: 'rough'` in
+    /// its `<Composition chapters>`, drawn as placeholder cards), failing
+    /// with the code `rough_scenes`. Without it they export, with a
+    /// `rough_scenes` entry in `codedWarnings`.
+    #[serde(rename = "final")]
+    final_cut: Option<bool>,
     /// Bring the whole mix to this integrated loudness before encoding:
     /// LUFS from -70 to -5, `"streaming"` (-14, as YouTube and Spotify play)
     /// or `"broadcast"` (-23, EBU R128). The result's video output reports
@@ -644,6 +650,7 @@ impl ExportVideoArgs {
             subtitles,
             looping: self.looping.unwrap_or(false),
             loudness,
+            final_cut: self.final_cut.unwrap_or(false),
             presets: PresetLookup::for_source(&source.path, preset_file),
             ..ExportOptions::default()
         };

@@ -793,18 +793,8 @@ fn gate_fixture() -> (LayerSourceReport, ElementTargets) {
 
 fn chapters() -> Vec<ReactChapter> {
     vec![
-        ReactChapter {
-            id: "intro".to_owned(),
-            name: "Intro".to_owned(),
-            from: 0,
-            duration_in_frames: 30,
-        },
-        ReactChapter {
-            id: "price".to_owned(),
-            name: "Price".to_owned(),
-            from: 30,
-            duration_in_frames: 30,
-        },
+        ReactChapter::new("intro".to_owned(), "Intro".to_owned(), 0, 30),
+        ReactChapter::new("price".to_owned(), "Price".to_owned(), 30, 30),
     ]
 }
 

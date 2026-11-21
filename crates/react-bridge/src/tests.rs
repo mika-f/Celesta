@@ -8,10 +8,10 @@ use crate::properties::{
 };
 use crate::protocol::{Answer, PropertyInputsMessage, ReadyMessage, Request, Response};
 use crate::types::{
-    ComponentPropertyField, ComponentSchemaField, ElementKind, FrameSpan, LayerSource,
-    LayerSourceReport, LegacyImport, PrimitivePropertyField, PrimitiveSize, PropOverride,
-    ReactAudioClipDescriptor, ReactChapter, ReceivedProps, ReceivedValue, SourcePos, TimingWindow,
-    chapter_at,
+    ChapterStatus, ComponentPropertyField, ComponentSchemaField, ElementKind, FrameSpan,
+    LayerSource, LayerSourceReport, LegacyImport, PrimitivePropertyField, PrimitiveSize,
+    PropOverride, ReactAudioClipDescriptor, ReactChapter, ReceivedProps, ReceivedValue, SourcePos,
+    TimingWindow, chapter_at, rough_chapters,
 };
 use celesta_composition::{
     Animatable, AssetLocation, AudioDuck, LayerFilter, ShaderParam, ShaderParamType, ShaderSource,
@@ -398,7 +398,9 @@ fn reads_chapters_from_the_ready_config() {
             "durationInFrames": 90,
             "chapters": [
                 {"id": "intro", "name": "Intro", "from": 0, "durationInFrames": 30},
-                {"id": "mark", "name": "mark", "from": 30, "durationInFrames": 0}
+                {"id": "mark", "name": "mark", "from": 30, "durationInFrames": 0},
+                {"id": "card", "name": "The card", "from": 30, "durationInFrames": 60,
+                 "desc": "A card slides onto the blueprint.", "status": "rough"}
             ]
         }
     })
@@ -406,9 +408,17 @@ fn reads_chapters_from_the_ready_config() {
     let ReadyMessage::Ready { config, .. } = serde_json::from_str(&json).unwrap() else {
         panic!("expected a Ready message");
     };
-    assert_eq!(config.chapters.len(), 2);
+    assert_eq!(config.chapters.len(), 3);
     assert_eq!(config.chapters[0].name, "Intro");
     assert_eq!(config.chapters[1].end(), 30);
+    // Chapters without a status are final; a rough cut's keep theirs.
+    assert!(!config.chapters[0].is_rough());
+    assert_eq!(config.chapters[0].desc, None);
+    assert!(config.chapters[2].is_rough());
+    assert_eq!(
+        config.chapters[2].desc.as_deref(),
+        Some("A card slides onto the blueprint.")
+    );
 
     // Older runtimes and compositions without chapters send none.
     let json = r#"{"config":{"width":1,"height":1,"frameRate":{"numerator":30,"denominator":1},"durationInFrames":1}}"#;
@@ -420,11 +430,8 @@ fn reads_chapters_from_the_ready_config() {
 
 #[test]
 fn chapter_at_prefers_the_later_overlapping_chapter_and_skips_gaps_and_marks() {
-    let chapter = |id: &str, from, duration_in_frames| ReactChapter {
-        id: id.to_owned(),
-        name: id.to_owned(),
-        from,
-        duration_in_frames,
+    let chapter = |id: &str, from, duration_in_frames| {
+        ReactChapter::new(id.to_owned(), id.to_owned(), from, duration_in_frames)
     };
     let chapters = [
         chapter("a", 0, 30),
@@ -441,6 +448,37 @@ fn chapter_at_prefers_the_later_overlapping_chapter_and_skips_gaps_and_marks() {
     assert_eq!(current(50), Some("c"));
     assert_eq!(current(60), None);
     assert_eq!(chapter_at(&[], 0), None);
+}
+
+#[test]
+fn rough_chapters_are_those_an_export_span_draws() {
+    let rough = |id: &str, from, duration_in_frames| ReactChapter {
+        status: ChapterStatus::Rough,
+        ..ReactChapter::new(id, id, from, duration_in_frames)
+    };
+    let chapters = [
+        rough("a", 0, 30),
+        ReactChapter::new("b", "b", 30, 30),
+        rough("c", 60, 30),
+        rough("mark", 90, 0),
+    ];
+    let ids = |start, count| -> Vec<&str> {
+        rough_chapters(&chapters, start, count)
+            .into_iter()
+            .map(|chapter| chapter.id.as_str())
+            .collect()
+    };
+    assert_eq!(ids(0, 90), ["a", "c"]);
+    assert_eq!(ids(0, 91), ["a", "c", "mark"]);
+    // The span ends before `c` starts, and starts after `a` ends.
+    assert_eq!(ids(0, 60), ["a"]);
+    assert_eq!(ids(30, 30), Vec::<&str>::new());
+    assert_eq!(ids(59, 2), ["c"]);
+    // The JSON leaves out a final chapter's status and a missing desc.
+    assert_eq!(
+        serde_json::to_value(&chapters[1]).unwrap(),
+        serde_json::json!({"id": "b", "name": "b", "from": 30, "durationInFrames": 30})
+    );
 }
 
 #[test]

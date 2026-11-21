@@ -1956,12 +1956,12 @@ mod tests {
     }
 
     fn chapter(name: &str, from: u64, duration_in_frames: u64) -> ReactChapter {
-        ReactChapter {
-            id: name.to_lowercase(),
-            name: name.to_owned(),
+        ReactChapter::new(
+            name.to_lowercase(),
+            name.to_owned(),
             from,
             duration_in_frames,
-        }
+        )
     }
 
     fn instance(chain: Vec<SourcePos>, ranges: Vec<(u64, u64)>) -> InstanceOccurrences {

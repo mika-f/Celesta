@@ -424,12 +424,7 @@ fn instance_of(
 }
 
 fn scene(id: &str, from: u64, duration_in_frames: u64) -> ReactChapter {
-    ReactChapter {
-        id: id.to_owned(),
-        name: id.to_owned(),
-        from,
-        duration_in_frames,
-    }
+    ReactChapter::new(id.to_owned(), id.to_owned(), from, duration_in_frames)
 }
 
 /// The `<Rect>` of [`INTRO_DELAYED`] selected in `intro.tsx`, its window

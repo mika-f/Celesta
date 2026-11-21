@@ -217,3 +217,26 @@ test('an entry that reads no clock gets no warning', () => {
     assert.deepEqual((reportOf(json.stdout) as InspectReport & { warnings: string[] }).warnings, []);
   });
 });
+
+test('rough scenes are listed with their desc and warned about', () => {
+  withEntry('celesta-inspect-rough-', ({ write, inspect }) => {
+    write(`
+      import { Composition, Scenes, defineScenes } from '@celesta.studio/react';
+      const SCENES = defineScenes([
+        { id: 'open', name: 'Open', durationInFrames: 30, desc: 'The title fades in.', Scene: () => null },
+        { id: 'card', name: 'The card', durationInFrames: 30, status: 'rough', desc: 'A card slides in.' },
+      ]);
+      export default function Root() {
+        return <Composition width={1920} height={1080} fps={30} durationInFrames={SCENES.durationInFrames} chapters={SCENES}><Scenes scenes={SCENES} /></Composition>;
+      }
+    `);
+    const result = inspect('--frames', '45');
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /chapters \(1 of 2 rough\):\n {2}Open \[0, 30\): The title fades in\.\n {2}The card \[30, 60\) rough: A card slides in\.\n/);
+    assert.match(result.stdout, /text "The card"/);
+    assert.match(
+      result.stdout,
+      /warning: 1 scene is still rough and draws a placeholder card: The card \[30, 60\); export warns about them \(rough_scenes\)/,
+    );
+  });
+});

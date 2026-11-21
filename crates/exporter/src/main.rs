@@ -92,12 +92,17 @@ peak and the gain. AAC and Opus move the peaks by up to about half a dB.
 
 --json prints one line of JSON on stdout when the export ends, and nothing
 else: status, the composition's size, fps and frame count, every written
-file with its frame numbers, warnings, and on failure an error code and
-message. It suits scripts and AI agents. --json-progress adds a JSON line
+file with its frame numbers, warnings (with codedWarnings for those that
+have a stable code), and on failure an error code and message. It suits scripts and AI agents. --json-progress adds a JSON line
 for each progress event before the result, and --stdin-cancel cancels the
 export when stdin reads a `cancel` line or closes; @celesta.studio/exporter uses
 both. --info prints the composition's size, frame rate and length (and a
 React entry's compositions) without rendering.
+
+A React video whose span holds a rough cut's scene (a <Composition
+chapters> entry with status: 'rough', drawn as a placeholder card) exports
+with a warning coded rough_scenes; --final refuses it instead, with the
+error code rough_scenes.
 
 --inspect evaluates a React entry's frames without rendering pixels, with
 the same text shaping and media probing as an export. It reads one JSON
@@ -130,7 +135,7 @@ struct Cli {
         conflicts_with_all = [
             "output", "project", "overwrite", "from", "to", "frames", "every",
             "contact_sheet", "columns", "tile_width", "quality", "render_quality", "driver",
-            "no_ui", "json", "debug_guides", "subtitles", "looping", "loudness", "true_peak",
+            "no_ui", "json", "debug_guides", "subtitles", "looping", "final_cut", "loudness", "true_peak",
             "peak_handling", "info", "stdin_cancel",
         ]
     )]
@@ -142,7 +147,7 @@ struct Cli {
         conflicts_with_all = [
             "output", "overwrite", "from", "to", "frames", "every", "contact_sheet",
             "columns", "tile_width", "quality", "render_quality", "driver", "debug_guides",
-            "subtitles", "looping", "loudness", "true_peak", "peak_handling",
+            "subtitles", "looping", "final_cut", "loudness", "true_peak", "peak_handling",
         ]
     )]
     info: bool,
@@ -272,6 +277,10 @@ struct Cli {
     /// its start.
     #[arg(long = "loop")]
     looping: bool,
+    /// Refuse to export rough scenes (`status: 'rough'` in the entry's
+    /// `<Composition chapters>`) instead of warning about them.
+    #[arg(long = "final", requires = "react")]
+    final_cut: bool,
     /// Bring the mix to this integrated loudness: LUFS (-70 to -5),
     /// streaming (-14) or broadcast (-23).
     #[arg(
@@ -1031,6 +1040,7 @@ fn described_job(cli: &Cli, kind: &OutputKind, range: Option<ExportRange>) -> Ex
             subtitles: cli.subtitles.clone(),
             looping: cli.looping,
             loudness: cli.loudness(),
+            final_cut: cli.final_cut,
             plugins: None,
             presets: match kind {
                 OutputKind::Video(_) => {

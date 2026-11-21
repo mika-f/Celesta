@@ -1,4 +1,6 @@
-use crate::control::{AudioLoudness, CompositionInfo, ExportCancellation, ExportProgress};
+use crate::control::{
+    AudioLoudness, CodedWarning, CompositionInfo, ExportCancellation, ExportProgress,
+};
 use crate::encode::{ExportSession, ExportTiming, report_timing};
 use crate::error::ExportError;
 use crate::exporter::{Exporter, NO_AUDIO_TRACK_LOUDNESS, stage_beside, video_file};
@@ -13,7 +15,10 @@ use crate::subtitles;
 use celesta_composition::Time;
 use celesta_media::{AudioMixError, MediaBackend, mix_audio_graph_unclipped_cancellable};
 use celesta_project::Project;
-use celesta_react_bridge::{ReactBridge, ReactCompositionMetadata, ReactSubtitleDescriptor};
+use celesta_react_bridge::{
+    ReactBridge, ReactChapter, ReactCompositionMetadata, ReactSubtitleDescriptor, describe_rough,
+    rough_chapters,
+};
 use celesta_remote::StagedFile;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -236,6 +241,13 @@ impl Exporter {
         }
 
         let (start_frame, frame_count, window_start) = self.react_window(&metadata)?;
+        check_rough_scenes(
+            &metadata.chapters,
+            start_frame,
+            frame_count,
+            self.options.final_cut,
+            progress,
+        )?;
 
         // Every frame's response reports the `<Audio>` clips its tree
         // declares (see ReactAudioClipDescriptor), which accumulate into the
@@ -498,6 +510,35 @@ pub(crate) fn report_nondeterminism(
     }
 }
 
+/// The stable code of the warning about rough scenes in an export's span,
+/// and of the error `--final` gives for them.
+pub const ROUGH_SCENES: &str = "rough_scenes";
+
+/// Warns, with the [`ROUGH_SCENES`] code, about the rough chapters in the
+/// frames `[start, start + count)`, or, for a final export, refuses them.
+/// Their placeholder cards would be in the video.
+pub(crate) fn check_rough_scenes(
+    chapters: &[ReactChapter],
+    start: u64,
+    count: u64,
+    final_cut: bool,
+    progress: &mut impl FnMut(ExportProgress),
+) -> Result<(), ExportError> {
+    let rough = rough_chapters(chapters, start, count);
+    if rough.is_empty() {
+        return Ok(());
+    }
+    let message = describe_rough(&rough);
+    if final_cut {
+        return Err(ExportError::RoughScenes(message));
+    }
+    progress(ExportProgress::CodedWarning(CodedWarning {
+        code: ROUGH_SCENES,
+        message,
+    }));
+    Ok(())
+}
+
 /// Reports the entry's compositions and the selected one's size and length.
 fn report_composition(
     metadata: &ReactCompositionMetadata,
@@ -515,5 +556,49 @@ fn report_composition(
     }));
     for legacy in &metadata.legacy_imports {
         progress(ExportProgress::Warning(legacy.to_string()));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use celesta_react_bridge::ChapterStatus;
+
+    fn chapters() -> Vec<ReactChapter> {
+        vec![
+            ReactChapter::new("open", "Cold open", 0, 60),
+            ReactChapter {
+                status: ChapterStatus::Rough,
+                ..ReactChapter::new("card", "The card", 60, 30)
+            },
+        ]
+    }
+
+    #[test]
+    fn rough_scenes_in_the_span_warn_with_their_code() {
+        let mut events = Vec::new();
+        check_rough_scenes(&chapters(), 0, 90, false, &mut |event| events.push(event)).unwrap();
+        assert_eq!(
+            events,
+            [ExportProgress::CodedWarning(CodedWarning {
+                code: "rough_scenes",
+                message: "1 scene is still rough and draws a placeholder card: The card [60, 90)"
+                    .to_owned(),
+            })]
+        );
+        // A span that leaves the rough scene out says nothing.
+        events.clear();
+        check_rough_scenes(&chapters(), 0, 60, false, &mut |event| events.push(event)).unwrap();
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn a_final_export_refuses_rough_scenes() {
+        let mut events = Vec::new();
+        let error = check_rough_scenes(&chapters(), 30, 60, true, &mut |event| events.push(event))
+            .unwrap_err();
+        assert!(matches!(error, ExportError::RoughScenes(_)), "{error}");
+        assert!(events.is_empty());
+        assert!(check_rough_scenes(&chapters(), 0, 60, true, &mut |_| {}).is_ok());
     }
 }

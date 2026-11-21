@@ -445,6 +445,16 @@ async function inspectEntry(options) {
 
   const warnings = [];
   if (config.width % 2 || config.height % 2) warnings.push(`width/height ${config.width}×${config.height} must be even for video export`);
+  const chapters = config.chapters ?? [];
+  const rough = chapters.filter((chapter) => chapter.status === 'rough');
+  const place = (chapter) => `${chapter.name} [${chapter.from}, ${chapter.from + chapter.durationInFrames})`;
+  const span = (chapter) => `${place(chapter)}${chapter.status === 'rough' ? ' rough' : ''}`;
+  if (rough.length) {
+    const lead = rough.length === 1
+      ? '1 scene is still rough and draws a placeholder card'
+      : `${rough.length} scenes are still rough and draw placeholder cards`;
+    warnings.push(`${lead}: ${rough.map(place).join(', ')}; export warns about them (rough_scenes) and --final refuses them`);
+  }
 
   if (options.json) {
     const results = [];
@@ -463,6 +473,12 @@ async function inspectEntry(options) {
     const schemas = Object.keys(ready.componentSchemas ?? {});
     if (schemas.length) console.log(`registered components with schemas: ${schemas.join(', ')}`);
     if (ready.propertySchema) console.log(`project properties: ${Object.keys(ready.propertySchema).join(', ')}`);
+    if (chapters.some((chapter) => chapter.status === 'rough' || chapter.desc)) {
+      console.log(`chapters (${rough.length} of ${chapters.length} rough):`);
+      for (const chapter of chapters) console.log(`  ${span(chapter)}${chapter.desc ? `: ${chapter.desc}` : ''}`);
+    } else if (chapters.length) {
+      console.log(`chapters: ${chapters.map(span).join(', ')}`);
+    }
 
     const missing = new Set();
     const checkFile = (src) => {

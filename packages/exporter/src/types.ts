@@ -96,6 +96,13 @@ export interface VideoOptions extends SourceOptions, RunOptions, RenderOptions {
   truePeak?: number;
   /** `limit` (default) holds peaks at `truePeak`; `lower` stops the gain short of the target. */
   peakHandling?: PeakHandling;
+  /**
+   * Refuse a React entry's rough scenes (`status: 'rough'` in its
+   * `<Composition chapters>`) with the error code `rough_scenes`
+   * (`--final`), instead of exporting their placeholder cards with a
+   * `rough_scenes` entry in `codedWarnings`.
+   */
+  final?: boolean;
 }
 
 export interface StillsOptions extends SourceOptions, RunOptions, RenderOptions {
@@ -229,7 +236,16 @@ export interface ExportReport {
   compositions?: ReactComposition[];
   outputs?: ExportOutput[];
   warnings?: string[];
+  /** The warnings with a stable code, each also in `warnings`. */
+  codedWarnings?: CodedWarning[];
   stats?: { elapsedSeconds: number; renderFps?: number };
+}
+
+/** A warning with a stable code to branch on. */
+export interface CodedWarning {
+  /** Such as `rough_scenes`: the span has rough scenes, drawn as placeholder cards. */
+  code: string;
+  message: string;
 }
 
 /** A finished export. */
@@ -243,6 +259,8 @@ export interface ExportResult {
   compositions?: ReactComposition[];
   outputs: ExportOutput[];
   warnings: string[];
+  /** The warnings with a stable code, each also in `warnings`. */
+  codedWarnings: CodedWarning[];
   stats: { elapsedSeconds: number; renderFps?: number };
 }
 
@@ -264,7 +282,7 @@ export type ProgressEvent =
   | { event: 'rendering'; frame: number; total: number }
   | { event: 'mixingAudio' }
   | { event: 'muxing' }
-  | { event: 'warning'; message: string }
+  | { event: 'warning'; code?: string; message: string }
   /**
    * The components the export resolved, sent before rendering starts. A
    * still export sends it too, with its image muxer and encoder and

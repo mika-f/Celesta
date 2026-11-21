@@ -61,12 +61,7 @@ fn outro_call() -> SourcePos {
 }
 
 fn chapter(id: &str, name: &str, from: u64, duration_in_frames: u64) -> ReactChapter {
-    ReactChapter {
-        id: id.to_owned(),
-        name: name.to_owned(),
-        from,
-        duration_in_frames,
-    }
+    ReactChapter::new(id.to_owned(), name.to_owned(), from, duration_in_frames)
 }
 
 /// Intro, Price and Outro, 30 frames each; the playhead is at 40, in Price.

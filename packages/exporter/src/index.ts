@@ -69,6 +69,7 @@ function result(report: ExportReport): ExportResult {
     composition: report.composition!,
     outputs: report.outputs ?? [],
     warnings: report.warnings ?? [],
+    codedWarnings: report.codedWarnings ?? [],
     stats: report.stats ?? { elapsedSeconds: 0 },
   };
 }

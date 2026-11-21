@@ -727,13 +727,90 @@ pub struct ReactChapter {
     /// First frame, in the composition's frames.
     pub from: u64,
     pub duration_in_frames: u64,
+    /// One sentence on what happens in the chapter, when the source gave one
+    /// (a `defineScenes` entry's `desc`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub desc: Option<String>,
+    /// Whether the chapter is built: a rough cut's scenes are `Rough` until
+    /// they are. Older runtimes send none, which is `Final`.
+    #[serde(default, skip_serializing_if = "ChapterStatus::is_final")]
+    pub status: ChapterStatus,
+}
+
+/// Where a chapter stands: `Rough` while only its name, length and `desc`
+/// are agreed and `<Scenes>` draws a placeholder card for it, `Final` once
+/// it is built.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChapterStatus {
+    Rough,
+    #[default]
+    Final,
+}
+
+impl ChapterStatus {
+    fn is_final(&self) -> bool {
+        *self == Self::Final
+    }
 }
 
 impl ReactChapter {
+    /// A final chapter without a `desc`.
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        from: u64,
+        duration_in_frames: u64,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            from,
+            duration_in_frames,
+            desc: None,
+            status: ChapterStatus::Final,
+        }
+    }
+
     /// The frame after the chapter's last.
     pub fn end(&self) -> u64 {
         self.from + self.duration_in_frames
     }
+
+    /// Whether the chapter is a rough cut's placeholder.
+    pub fn is_rough(&self) -> bool {
+        self.status == ChapterStatus::Rough
+    }
+}
+
+/// One sentence on rough chapters, for a warning: how many, which, and
+/// what they draw. `rough` is not empty.
+pub fn describe_rough(rough: &[&ReactChapter]) -> String {
+    let names: Vec<String> = rough
+        .iter()
+        .map(|chapter| format!("{} [{}, {})", chapter.name, chapter.from, chapter.end()))
+        .collect();
+    let lead = match rough.len() {
+        1 => "1 scene is still rough and draws a placeholder card".to_owned(),
+        count => format!("{count} scenes are still rough and draw placeholder cards"),
+    };
+    format!("{lead}: {}", names.join(", "))
+}
+
+/// The rough chapters among `chapters` that overlap the frames
+/// `[start, start + count)`, in order: what an export of that span would
+/// draw as placeholder cards. A rough mark of length 0 counts where it sits.
+pub fn rough_chapters(chapters: &[ReactChapter], start: u64, count: u64) -> Vec<&ReactChapter> {
+    let end = start.saturating_add(count);
+    chapters
+        .iter()
+        .filter(|chapter| {
+            chapter.is_rough()
+                && chapter.from < end
+                && (chapter.end() > start
+                    || (chapter.duration_in_frames == 0 && chapter.from >= start))
+        })
+        .collect()
 }
 
 /// The chapter showing at `frame`: the latest-starting one whose span holds

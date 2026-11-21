@@ -79,6 +79,11 @@ test('a loudness target passes LUFS or a preset, with its peak options', () => {
   assert.deepEqual(flags({ loudness: 'broadcast' }), ['--loudness=broadcast']);
 });
 
+test('final refuses rough scenes with --final', () => {
+  assert.ok(videoArgs({ source: 'film.tsx', output: 'film.mp4', final: true }).includes('--final'));
+  assert.ok(!videoArgs({ source: 'film.tsx', output: 'film.mp4' }).includes('--final'));
+});
+
 test('a .json source is a project unless react says otherwise', () => {
   assert.deepEqual(compositionArgs({ source: 'demo.celesta.json' }), ['--json', '--stdin-cancel', '--info', '--', 'demo.celesta.json']);
   assert.ok(compositionArgs({ source: 'entry.json', react: true }).includes('--react'));

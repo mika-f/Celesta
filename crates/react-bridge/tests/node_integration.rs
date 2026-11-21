@@ -890,11 +890,8 @@ fn reports_composition_chapters_in_order_when_node_is_available() {
 
     let entry = package_root.join("examples/with-chapters.tsx");
     let bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
-    let chapter = |id: &str, name: &str, from, duration_in_frames| ReactChapter {
-        id: id.to_owned(),
-        name: name.to_owned(),
-        from,
-        duration_in_frames,
+    let chapter = |id: &str, name: &str, from, duration_in_frames| {
+        ReactChapter::new(id.to_owned(), name.to_owned(), from, duration_in_frames)
     };
     let chapters = &bridge.metadata().chapters;
     assert_eq!(
@@ -918,6 +915,58 @@ fn reports_composition_chapters_in_order_when_node_is_available() {
     // An entry that declares none still previews, with no chapters.
     let title = Bridge::spawn(&node, &cli_script, package_root.join("examples/title.tsx")).unwrap();
     assert!(title.metadata().chapters.is_empty());
+}
+
+#[test]
+fn reports_rough_scenes_and_their_desc_when_node_is_available() {
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+
+    let entry = package_root.join("examples/rough-cut.tsx");
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
+    let chapters = bridge.metadata().chapters.clone();
+    let summary: Vec<(&str, bool, Option<&str>)> = chapters
+        .iter()
+        .map(|chapter| {
+            (
+                chapter.id.as_str(),
+                chapter.is_rough(),
+                chapter.desc.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            (
+                "title",
+                false,
+                Some("The film's name on the blueprint ground.")
+            ),
+            (
+                "card",
+                true,
+                Some("A card slides onto the blueprint and its corners snap to the grid.")
+            ),
+            (
+                "pour",
+                true,
+                Some("A ladle tips and fills the card with color.")
+            ),
+            ("logo", true, None),
+        ]
+    );
+    let rough: Vec<&str> = celesta_react_bridge::rough_chapters(&chapters, 0, 60)
+        .iter()
+        .map(|chapter| chapter.id.as_str())
+        .collect();
+    assert!(rough.is_empty(), "{rough:?}");
+    // The rough scene draws its placeholder card: its name among the layers.
+    let scene = bridge.scene_at(Time::new(90, 30)).unwrap();
+    let text = format!("{:?}", scene.layers);
+    assert!(text.contains("The card"), "{text}");
+    assert!(text.contains("Scene 2 of 4"), "{text}");
 }
 
 #[test]
