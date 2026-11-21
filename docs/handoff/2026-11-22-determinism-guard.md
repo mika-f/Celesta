@@ -112,9 +112,18 @@ Run on macOS (Apple silicon), Node 26.13, with the runtime built by
   (two runtimes, opposite orders, identical frames; the four APIs reported)
   and `an_entry_that_reads_no_clock_reports_nothing_when_node_is_available`.
 - `cargo test -p celesta-exporter --test integration`:
-  `native_inspection_reports_nondeterministic_calls_once` and
+  `native_inspection_reports_nondeterministic_calls_once` passes.
   `json_reports_warn_about_math_random_and_the_clock_in_stills_and_video`
-  (identical pixels for the same still twice).
+  passes its stills half (the warning in `--json`, identical pixels for the
+  same still twice); its video half could not run locally: the
+  `celesta-codec-test` program copied into a temporary plugin folder did not
+  answer `hello` within 30 s while several other sessions were building, and
+  the existing `an_export_through_the_programs_ring_is_byte_identical_to_the_pipe`
+  failed the same way at the same time. Left to CI.
+- `cargo clippy -p celesta-react-bridge -p celesta-exporter -p celesta-mcp
+  -p celesta-editor --all-targets -- -D warnings`, `cargo fmt --all --
+  --check`, `git diff --check`; `pnpm --dir packages/web exec vitest run`
+  and the whole `packages/cli` suite still pass.
 
 Entries that never call these APIs evaluate the same scenes as before. No
 example or template calls them while rendering; `packages/cli/examples/homepage-demo.tsx`

@@ -1609,7 +1609,12 @@ export default () => <Composition width={16} height={16} fps={4} durationInFrame
     let expected =
         "nondeterministic_render: the entry calls Math.random() and Date.now() while rendering;";
     let warnings = |result: &std::process::Output| -> Vec<String> {
-        assert!(result.status.success(), "{}", stderr(result));
+        assert!(
+            result.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&result.stdout),
+            stderr(result)
+        );
         json(result)["warnings"]
             .as_array()
             .unwrap()
