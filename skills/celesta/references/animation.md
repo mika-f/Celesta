@@ -54,6 +54,7 @@ what they produce constant across frames.
 - [MotionBlur and Trail](#motionblur-and-trail)
 - [Series and computeSeries](#series-and-computeseries)
 - [Scenes and useScene](#scenes-and-usescene)
+- [Scene errors and SceneBoundary](#scene-errors-and-sceneboundary)
 - [Chapters in the preview](#chapters-in-the-preview)
 - [Rough cut](#rough-cut)
 - [FrameChrome](#framechrome)
@@ -419,7 +420,8 @@ Both:
 
 Scenes back to back, by length. Children must be `<Series.Sequence
 durationInFrames offset?>`; each is a `<Sequence>` (local frames restart at 0).
-A negative `offset` overlaps the previous item. `computeSeries(items)` returns
+A negative `offset` overlaps the previous item; `name?` labels the item's
+error card ([Scene errors](#scene-errors-and-sceneboundary)). `computeSeries(items)` returns
 `{ sequences: [{ from, durationInFrames }], durationInFrames }` without
 rendering: use it for the `<Composition>` length and for anything outside the
 series that needs a scene's start (a HUD, a wipe on the cut).
@@ -448,9 +450,10 @@ like `Series` (`offset` overlaps or gaps; `durationInFrames` may be 0, which
 keeps the entry in the list but never plays it; ids must be unique) and
 returns `{ scenes, durationInFrames }`, each scene with its `index`, `name`
 (defaults to `id`) and `from`. Extra fields stay on the entries.
-`<Scenes scenes={list} />` plays each `Scene` in a `<Sequence>`; an entry
-with `status: 'rough'` or without a `Scene` plays a placeholder card instead
-(see [Rough cut](#rough-cut)).
+`<Scenes scenes={list} />` plays each `Scene` in a `<Sequence>`, isolated
+by a `<SceneBoundary>` ([Scene errors](#scene-errors-and-sceneboundary)); an
+entry with `status: 'rough'` or without a `Scene` plays a placeholder card
+instead (see [Rough cut](#rough-cut)).
 
 `useScene(list)` (or `sceneAt(list, frame)`) returns `null` before the first
 scene and from the list's end on, else `{ scene, index, id, name, from,
@@ -487,6 +490,36 @@ function Hud() {
   <Hud />
 </Composition>
 ```
+
+## Scene errors and SceneBoundary
+
+`<Scenes>`, `<Series>`, and `<TransitionSeries>` wrap each scene in a
+`<SceneBoundary>` (a React error boundary). A scene that throws while it
+renders:
+
+- in the editor preview (`useIsPreview()`), draws an error card instead
+  (`Scene failed to render`, its name, `id: …`, the message) while the other
+  scenes play; Problems lists the error with its stack (in the entry's
+  source files) and component stack. The scene is silent on those frames.
+- everywhere else (video, PNG frames, contact sheets, `inspect.mjs`, MCP
+  tools) fails the frame with `scene "id" (Name) threw while rendering: …`.
+  No video ever contains the card, so a passing export or inspection means
+  no scene threw on the frames it covered.
+
+Every frame renders the scene again (frames arrive out of order), so a
+scene that throws on some frames draws on the others; nothing is carried
+between frames. The card's label is the `defineScenes` `name`, or the
+`name` (else `id`) of a `<Series.Sequence>`/`<TransitionSeries.Sequence>`;
+with neither, `Series item N`/`Scene N`. Wrap any other part in
+`<SceneBoundary id="chart" name?="Sales chart">…</SceneBoundary>` to
+isolate it the same way. Only render-time throws are caught: an error
+outside every scene (a HUD beside `<Scenes>`) or an invalid prop value the
+walker finds after rendering still fails the frame, in the preview too.
+`SceneRenderError` (`sceneId`, `sceneName`, `cause`) is the error thrown
+outside the preview. Example: `packages/cli/examples/with-scene-error.tsx`.
+
+Do not rely on the card while checking a film: inspect or render the
+frames, which fail on a broken scene.
 
 ## Chapters in the preview
 
@@ -620,7 +653,9 @@ Scenes back to back with transitions between them; the overlaps and the
 total length are computed for you. Children are `<TransitionSeries.Sequence
 durationInFrames>` scenes with an optional `<TransitionSeries.Transition
 type durationInFrames from? easing?>` between two of them. Prefer it to a
-`Series` with negative `offset`s plus hand-matched `Transition`s.
+`Series` with negative `offset`s plus hand-matched `Transition`s. A scene's
+`name?` labels its error card, which the transitions move like the scene
+([Scene errors](#scene-errors-and-sceneboundary)).
 
 | `type` | What happens over `durationInFrames` | Options (function of the same name) |
 | --- | --- | --- |

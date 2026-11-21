@@ -21,6 +21,7 @@ import { type PropOverride, PropOverridesContext, clearPropOverrides, setPropOve
 import { type StaticsFrame, StaticSubtrees } from './static';
 import { resolveComponent } from './registry';
 import { type HostNode, type RootContainer, createRoot } from './reconciler';
+import { type SceneErrorReport, type SceneErrorSink, SceneErrorSinkContext } from './scene-boundary';
 import { type LayerSourceReport, type SourcePos, layerSourceReport, occurrenceKeys } from './source-chain';
 import { checkCue } from './subtitles';
 import { evaluateDeterministically } from './determinism';
@@ -273,9 +274,25 @@ export interface MountedComposition {
     time: Time,
     project: ProjectFrame | null,
     options?: RenderAtOptions,
-  ): { scene: Scene; audio: AudioClipDescriptor[]; subtitles: SubtitleDescriptor[]; statics?: StaticsFrame };
-  /** Sweeps every frame without constructing visual layers; hooks and font measurements still run. */
-  collectAudio(): AudioClipDescriptor[];
+  ): {
+    scene: Scene;
+    audio: AudioClipDescriptor[];
+    subtitles: SubtitleDescriptor[];
+    statics?: StaticsFrame;
+    /**
+     * The scenes that threw while rendering and drew their error card
+     * instead (see `<SceneBoundary>`); only with `preview`, since
+     * elsewhere such a scene fails the frame. Absent when none did.
+     */
+    sceneErrors?: SceneErrorReport[];
+  };
+  /**
+   * Sweeps every frame without constructing visual layers; hooks and font
+   * measurements still run. With `preview`, frames are evaluated as the
+   * editor preview's are: a scene that throws contributes no audio on those
+   * frames instead of failing the sweep.
+   */
+  collectAudio(options?: { preview?: boolean }): AudioClipDescriptor[];
   /**
    * The subtitles `frames` frames from frame `from` show, each once: the
    * frames are walked as `renderAt` walks them, so the reports match a
@@ -1604,6 +1621,8 @@ interface RuntimeTreeValues {
   runtime: NonNullable<React.ContextType<typeof CompositionRuntimeContext>>;
   fonts: React.ContextType<typeof TextMetricsFontsContext>;
   requestRerender: React.ContextType<typeof RerenderRequestContext>;
+  /** Where this pass's `<SceneBoundary>`s report; null where none should catch. */
+  sceneErrors?: SceneErrorSink | null;
 }
 
 /**
@@ -1612,13 +1631,14 @@ interface RuntimeTreeValues {
  * component the resolver renders sees what it would in the composition.
  */
 function runtimeTree(values: RuntimeTreeValues, child: React.ReactNode): React.ReactElement {
-  const { layers, tracks, runtime, fonts, requestRerender } = values;
+  const { layers, tracks, runtime, fonts, requestRerender, sceneErrors = null } = values;
   return React.createElement(ProjectLayersContext.Provider, { value: layers },
     React.createElement(ProjectTrackLayersContext.Provider, { value: tracks },
       React.createElement(RootRuntimeContext.Provider, { value: runtime },
         React.createElement(CompositionRuntimeContext.Provider, { value: runtime },
           React.createElement(TextMetricsFontsContext.Provider, { value: fonts },
-            React.createElement(RerenderRequestContext.Provider, { value: requestRerender }, child))))));
+            React.createElement(RerenderRequestContext.Provider, { value: requestRerender },
+              React.createElement(SceneErrorSinkContext.Provider, { value: sceneErrors }, child)))))));
 }
 
 /** Includes text supplied by a project timeline and its nested groups. */
@@ -1660,6 +1680,11 @@ export function mount(defaultExport: EntryComponent, compositionId?: string): Mo
   let committedPositions = '';
   let overridesValue: object | null = null;
   let entryKey = 0;
+  // What the `<SceneBoundary>`s of the last pass caught, in commit order.
+  // Each pass gets a new sink, which also makes every boundary render its
+  // children again.
+  let sceneErrors: SceneErrorReport[] = [];
+  let mounting = true;
 
   const renderTree = (
     time: Time,
@@ -1680,8 +1705,16 @@ export function mount(defaultExport: EntryComponent, compositionId?: string): Mo
       lang: config.lang,
       openEnd,
     };
+    const caught: SceneErrorReport[] = [];
+    sceneErrors = caught;
+    const sink: SceneErrorSink = {
+      // Mounting's passes only discover the compositions and their fonts: a
+      // scene that throws there fails the frames it is in, not the mount.
+      catches: preview || mounting,
+      report: (report) => { caught.push(report); },
+    };
     const element = runtimeTree(
-      { layers: project?.layers ?? null, tracks: project?.tracks ?? null, runtime: runtimeValue, fonts, requestRerender },
+      { layers: project?.layers ?? null, tracks: project?.tracks ?? null, runtime: runtimeValue, fonts, requestRerender, sceneErrors: sink },
       React.createElement(CompositionSelectionContext.Provider, { value: selection },
         React.createElement(PropOverridesContext.Provider, { value: overridesValue },
           React.createElement(defaultExport, { key: entryKey }))),
@@ -1720,6 +1753,7 @@ export function mount(defaultExport: EntryComponent, compositionId?: string): Mo
   collectFonts(compositionInstance, initialFonts);
   fonts = initialFonts;
   const staticSubtrees = new StaticSubtrees();
+  mounting = false;
 
   /**
    * Makes the next render create elements with `propOverrides`. A component
@@ -1827,6 +1861,7 @@ export function mount(defaultExport: EntryComponent, compositionId?: string): Mo
       : undefined;
     return {
       ...(staticsFrame ? { statics: staticsFrame } : {}),
+      ...(sceneErrors.length > 0 ? { sceneErrors } : {}),
       scene: {
         width: config.width,
         height: config.height,
@@ -1874,11 +1909,12 @@ export function mount(defaultExport: EntryComponent, compositionId?: string): Mo
     compositions,
     get fonts() { return fonts; },
     renderAt: (time, project, options) => renderFrame(time, project, options),
-    collectAudio() {
+    collectAudio(options) {
       const audio: AudioClipDescriptor[] = [];
+      const preview = options?.preview === true;
       for (let frame = 0; frame < config.durationInFrames; frame++) {
         const time = { value: frame * config.frameRate.denominator, timescale: config.frameRate.numerator };
-        for (const clip of renderFrame(time, null, { audioOnly: true }).audio) audio.push(clip);
+        for (const clip of renderFrame(time, null, { audioOnly: true, preview }).audio) audio.push(clip);
       }
       return audio;
     },

@@ -673,6 +673,59 @@ fn frame_response_without_audio_defaults_to_empty() {
 }
 
 #[test]
+fn reads_the_scene_errors_of_a_preview_frame() {
+    let json = serde_json::json!({
+        "scene": {
+            "width": 640,
+            "height": 360,
+            "frameRate": {"numerator": 30, "denominator": 1},
+            "time": {"value": 0, "timescale": 1},
+            "layers": []
+        },
+        "audio": [],
+        "sceneErrors": [
+            {
+                "id": "stats",
+                "name": "Stats",
+                "message": "boom",
+                "stack": "TypeError: boom\n    at Broken (/films/a.tsx:40:47)",
+                "componentStack": "    at Broken (/films/a.tsx:38:17)"
+            },
+            { "id": "outro", "name": "outro", "message": "no stack" }
+        ]
+    })
+    .to_string();
+    let Response::Ok { scene_errors, .. } = serde_json::from_str(&json).unwrap() else {
+        panic!("expected an Ok response");
+    };
+    assert_eq!(scene_errors.len(), 2);
+    assert_eq!(scene_errors[0].label(), "scene \"stats\" (Stats)");
+    assert_eq!(
+        scene_errors[0].detail(),
+        "boom\n    at Broken (/films/a.tsx:40:47)\n\nComponents:\n    at Broken (/films/a.tsx:38:17)"
+    );
+    assert_eq!(scene_errors[1].label(), "scene \"outro\"");
+    assert_eq!(scene_errors[1].stack, None);
+    assert_eq!(scene_errors[1].detail(), "no stack");
+
+    // Frames without any, and runtimes older than scene errors, leave it out.
+    let json = serde_json::json!({
+        "scene": {
+            "width": 640,
+            "height": 360,
+            "frameRate": {"numerator": 30, "denominator": 1},
+            "time": {"value": 0, "timescale": 1},
+            "layers": []
+        }
+    })
+    .to_string();
+    let Response::Ok { scene_errors, .. } = serde_json::from_str(&json).unwrap() else {
+        panic!("expected an Ok response");
+    };
+    assert!(scene_errors.is_empty());
+}
+
+#[test]
 fn deserializes_component_resolutions_from_a_response() {
     let json = serde_json::json!({
         "components": [

@@ -12,6 +12,7 @@ import type {
   Layer,
   ProjectPropertyField,
   Scene,
+  SceneErrorReport,
   TextMetrics,
   Time,
 } from '@celesta.studio/react';
@@ -145,7 +146,8 @@ export type Request =
   | LayerSourceRequest
   | CollectSubtitlesRequest
   | CollectOccurrencesRequest
-  | { collectAudio: true };
+  /** With `preview`, frames are evaluated as the editor preview's (see `MountedComposition.collectAudio`). */
+  | { collectAudio: true; preview?: boolean };
 
 /** The first message: what the entry declares. */
 export interface ReadyMessage {
@@ -209,6 +211,12 @@ export interface FrameMessage {
   scene: Scene;
   audio: AudioClipDescriptor[];
   subtitles?: SubtitleDescriptor[];
+  /**
+   * The scenes that threw while rendering and drew their error card in this
+   * preview frame; only answers to `preview` requests carry it, as anywhere
+   * else such a scene fails the frame.
+   */
+  sceneErrors?: SceneErrorReport[];
   seq?: number;
   statics?: { key: number; layers: Layer[] }[];
   droppedStatics?: number[];
@@ -266,6 +274,8 @@ async function main(): Promise<void> {
   }
 
   lengthPrefixed = options.includes(LENGTH_PREFIXED);
+  // Maps the bundled entry's stack frames back to its source files.
+  process.setSourceMapsEnabled(true);
 
   const entryPath = path.resolve(entry);
   // Local-file helpers used during `prepare()` (loadLipSync, loadPsdPreset)
@@ -387,7 +397,7 @@ async function main(): Promise<void> {
     try {
       if ('collectAudio' in request) {
         if (request.collectAudio !== true) throw new Error('collectAudio must be true');
-        answer({ collectedAudio: mounted.collectAudio() });
+        answer({ collectedAudio: mounted.collectAudio({ preview: request.preview === true }) });
       } else if ('collectSubtitles' in request) {
         const { from, frames } = request.collectSubtitles;
         if (!Number.isInteger(from) || !Number.isInteger(frames)) {
@@ -417,7 +427,7 @@ async function main(): Promise<void> {
         const openEnd = request.openEnd === true;
         // Compact frames leave out what Rust reads back by default, which
         // shrinks a NEBULA frame (1,500 particles) from 554 KiB to 458 KiB.
-        const { scene, audio, subtitles, statics } = mounted.renderAt(request.time, request.project ?? null, {
+        const { scene, audio, subtitles, statics, sceneErrors } = mounted.renderAt(request.time, request.project ?? null, {
           openEnd,
           compact: request.compactTransforms === true,
           statics: request.statics,
@@ -431,6 +441,7 @@ async function main(): Promise<void> {
           scene,
           audio,
           ...(subtitles.length > 0 ? { subtitles } : {}),
+          ...(sceneErrors ? { sceneErrors } : {}),
           ...(statics
             ? {
               seq: statics.seq,
@@ -618,11 +629,13 @@ function describeError(error: unknown): string {
  * that does; undefined for any other error.
  */
 function misplacedImportError(error: unknown): Error | undefined {
-  const match = error instanceof SyntaxError
-    ? /^Named export '([^']+)' not found\. The requested module '([^']+)'/.exec(error.message)
-    : null;
-  if (!match) return undefined;
-  const [, name, requested] = match;
+  // Node words the error itself, unless source maps are enabled (as `main`
+  // enables them), when V8's own message comes through.
+  const message = error instanceof SyntaxError ? error.message : '';
+  const node = /^Named export '([^']+)' not found\. The requested module '([^']+)'/.exec(message);
+  const v8 = /^The requested module '([^']+)' does not provide an export named '([^']+)'/.exec(message);
+  const [name, requested] = node ? [node[1], node[2]] : v8 ? [v8[2], v8[1]] : [];
+  if (name === undefined || requested === undefined) return undefined;
   const { dependencies } = require('../package.json') as { dependencies: Record<string, string> };
   let from: string | undefined;
   let provider: string | undefined;
@@ -673,6 +686,14 @@ async function loadEntry(entryPath: string, sourceLocations: boolean): Promise<L
     // `jsxDEV(type, props, key, isStatic, { fileName, lineNumber, columnNumber })`
     // for every JSX element in the entry's own files.
     ...(sourceLocations ? { jsxDev: true } : {}),
+    // Error stacks name the entry's own files and lines, not the temporary
+    // bundle (see `process.setSourceMapsEnabled` in `main`): a scene's error
+    // in Problems points at its source. The sources are on disk already.
+    sourcemap: 'inline',
+    sourcesContent: false,
+    // Its sources are relative to the working directory, not to the
+    // temporary directory the bundle is imported from.
+    sourceRoot: pathToFileURL(`${path.dirname(entryPath)}${path.sep}`).href,
     loader,
     absWorkingDir: path.dirname(entryPath),
     logLevel: 'silent',

@@ -153,6 +153,24 @@ const SCENES = defineScenes([
 ```tsx file=examples/custom-transition.tsx title="マスクで定義したブラインドと、中心をずらしたアイリス"
 ```
 
+## シーンでエラーが起きたとき
+
+`<Scenes>`、`<Series>`、`<TransitionSeries>` が再生する各シーンは分離されています。Celesta のプレビューで、存在しないデータのフィールドを読むなどしてシーンが描画中に例外を投げると、そのシーンだけがエラーカードを描きます。カードにはシーンの名前と id、エラーメッセージが表示されます。ほかのシーンはそのまま再生され、**Problems** にはエラーがスタック（自分のソースファイルを指します）と、シーンから例外の箇所までのコンポーネントとともに表示されます。そのフレームではシーンの音も鳴りません。シーンはフレームごとに描き直されるので、一部のフレームだけで例外を投げるシーンはほかのフレームでは普通に描かれ、コードを直せばカードはすぐに消えます。
+
+カードが動画に入ることはありません。書き出しはシーンが壊れた最初のフレームで `scene "stats" (Stats) threw while rendering: …` として失敗します。PNG フレーム、コンタクトシート（失敗したタイル）、`inspect.mjs`、MCP ツールも同じです。
+
+カードには `defineScenes` のエントリーの `name`、または `<Series.Sequence>` や `<TransitionSeries.Sequence>` の `name`（なければ `id`）が表示されます。どちらもなければ `Series item 2` や `Scene 2` のように位置で示します。動画のほかの部分を分離するには `<SceneBoundary id name?>` で囲みます。
+
+```tsx
+<Sequence from={90} durationInFrames={120}>
+  <SceneBoundary id="chart" name="売上グラフ">
+    <Chart data={data} />
+  </SceneBoundary>
+</Sequence>
+```
+
+捕まえるのはコンポーネントの描画中に投げられたエラーだけです。`<Scenes>` の横に描く HUD など、どのシーンにも属さない場所のエラーは引き続きそのフレームを失敗させます（プレビューはそのフレームをエラーとして表示し、ほかのフレームは再生します）。描画の後で Celesta が見つける不正な prop の値も同じです。`packages/cli` の `examples/with-scene-error.tsx` に、途中で壊れるシーンの例があります。
+
 ## 順番に入場させる
 
 `progress(frame, start, durationInFrames, easing?)` は「区間のどこまで進んだか」を 0〜1 に制限した値で返し、多くの入場効果の基礎になります。`<Stagger each={n}>` は前の子から `n` フレーム遅れて次の子を開始するので、フレーム 0 向けの入場効果がリストを順に流れます。

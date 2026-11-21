@@ -561,6 +561,72 @@ fn debug_guides_render_in_component_preview_or_when_asked_when_node_is_available
 }
 
 #[test]
+fn a_throwing_scene_draws_its_card_only_in_the_preview_when_node_is_available() {
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+    let entry = package_root.join("examples/with-scene-error.tsx");
+    let mut bridge = Bridge::spawn(&node, &cli_script, &entry).unwrap();
+    let texts = |layers: &[Layer]| -> Vec<String> {
+        all_layers(layers)
+            .into_iter()
+            .filter_map(|layer| match &layer.content {
+                LayerContent::Text { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+
+    // Exports and inspection fail on the scene's broken frames, naming it,
+    // and keep evaluating the frames around them.
+    let error = bridge.evaluate_at(Time::new(120, 30), None).unwrap_err();
+    assert!(
+        matches!(&error, ReactBridgeError::Render(message)
+            if message == "scene \"stats\" (Stats) threw while rendering: Cannot read properties of undefined (reading 'label')"),
+        "{error}"
+    );
+    let outro = bridge.evaluate_at(Time::new(170, 30), None).unwrap();
+    assert_eq!(texts(&outro.scene.layers), ["Outro 20"]);
+    assert!(outro.scene_errors.is_empty());
+
+    // The preview draws the card in its place and says why.
+    bridge.set_preview(true);
+    let failed = bridge
+        .evaluate_with_overrides(Time::new(120, 30), &[])
+        .unwrap();
+    let card = texts(&failed.scene.layers);
+    assert_eq!(card[0], "Scene failed to render");
+    assert!(card.contains(&"Stats".to_owned()), "{card:?}");
+    assert!(card.contains(&"id: stats".to_owned()), "{card:?}");
+    let [scene_error] = failed.scene_errors.as_slice() else {
+        panic!("one scene error, got {:?}", failed.scene_errors);
+    };
+    assert_eq!(
+        (scene_error.id.as_str(), scene_error.name.as_str()),
+        ("stats", "Stats")
+    );
+    assert_eq!(
+        scene_error.message,
+        "Cannot read properties of undefined (reading 'label')"
+    );
+    // The stack names the entry's own source, not the temporary bundle.
+    let stack = scene_error.stack.as_deref().unwrap();
+    let source = format!("{}:40:", entry.display());
+    assert!(stack.contains(&source), "{stack}");
+
+    // Frames before the broken ones still draw, in any order.
+    let good = bridge.evaluate_at(Time::new(70, 30), None).unwrap();
+    assert_eq!(texts(&good.scene.layers), ["Views: 1200 10"]);
+    assert!(good.scene_errors.is_empty());
+
+    // The preview's audio sweep runs past the broken scene; an export's fails.
+    let entry_dir = entry.parent().unwrap();
+    bridge.collect_audio_graph(48_000, 1.0, entry_dir).unwrap();
+    bridge.set_preview(false);
+    assert!(bridge.collect_audio_graph(48_000, 1.0, entry_dir).is_err());
+}
+
+#[test]
 fn evaluates_a_psd_character_with_one_selected_mouth_layer_when_node_is_available() {
     let Some((node, cli_script, package_root)) = live_react_runtime() else {
         return;

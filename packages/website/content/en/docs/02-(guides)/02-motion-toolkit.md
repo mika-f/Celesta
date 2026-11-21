@@ -153,6 +153,24 @@ Transitions move and cut across the series’ size: how far a slide pushes, wher
 ```tsx file=examples/custom-transition.tsx title="Blinds defined with a mask, then an off-centre iris"
 ```
 
+## When a scene throws
+
+Each scene that `<Scenes>`, `<Series>`, and `<TransitionSeries>` play is isolated. When a scene throws while it renders in the Celesta preview, for example because it reads a field of data that isn't there, only that scene draws an error card: the scene's name and id, and the error's message. The other scenes keep playing, and **Problems** lists the error with its stack, which points at your source file, and the components between the scene and the throw. The scene is also silent on those frames. Every frame renders the scene again, so a scene that throws on some frames draws normally on the others, and the card goes away as soon as the code is fixed.
+
+The card never reaches a video. An export fails on the scene's first broken frame with `scene "stats" (Stats) threw while rendering: …`, and so do PNG frames, contact sheets (a failed tile), `inspect.mjs`, and the MCP tools.
+
+The card shows the `name` of a `defineScenes` entry, or the `name` (else the `id`) of a `<Series.Sequence>` or `<TransitionSeries.Sequence>`; with neither, their place, such as `Series item 2` or `Scene 2`. To isolate another part of the video, wrap it in `<SceneBoundary id name?>`:
+
+```tsx
+<Sequence from={90} durationInFrames={120}>
+  <SceneBoundary id="chart" name="Sales chart">
+    <Chart data={data} />
+  </SceneBoundary>
+</Sequence>
+```
+
+Only errors thrown while a component renders are caught. An error outside every scene, such as in a HUD drawn beside `<Scenes>`, still fails its frames, which the preview shows as an error while the other frames play, and so does an invalid prop value, which Celesta finds after rendering. `examples/with-scene-error.tsx` in `packages/cli` has a scene that breaks halfway through.
+
 ## Cascades and entrances
 
 `progress(frame, start, durationInFrames, easing?)` is a clamped 0–1 value for “how far through this span are we”: the building block of most entrances. `<Stagger each={n}>` starts each child `n` frames after the previous one, so an entrance written for frame 0 cascades down a list:

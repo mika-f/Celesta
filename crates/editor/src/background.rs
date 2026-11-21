@@ -3,13 +3,29 @@ use crate::export_worker::ExportEvent;
 use crate::helpers::export_loudness_label;
 use crate::layer_select::{InstanceDue, pending_instance_fate, source_lookup, take_pending_for};
 use crate::preview::{AudioPreview, PreviewResult};
-use crate::problems::{Source, error_chain};
+use crate::problems::{Problem, Source, error_chain};
 use crate::react_audio::ReactAudioResult;
 use crate::refresh::LookupFate;
 use crate::view::EditorView;
 use celesta_exporter::ExportProgress;
+use celesta_react_bridge::SceneError;
 use std::collections::HashMap;
 use std::time::Instant;
+
+/// A scene that drew its error card, as Problems lists it.
+fn scene_problem(error: &SceneError) -> Problem {
+    Problem::new(
+        format!("{} failed to render", capitalized(&error.label())),
+        error.detail(),
+    )
+}
+
+fn capitalized(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
+}
 
 impl EditorView {
     pub(crate) fn poll_background_work(&mut self) {
@@ -51,6 +67,8 @@ impl EditorView {
             }
         }
         self.problems.set_preview_warnings(result.warnings);
+        self.problems
+            .set_scene_errors(result.scene_errors.iter().map(scene_problem).collect());
         self.hit_regions = result.hit_regions;
         self.layer_frame = result.layer_frame;
         self.text_layout = result.text_layout;

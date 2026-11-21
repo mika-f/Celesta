@@ -44,7 +44,7 @@ pub use types::{
     PrimitivePropertyGroup, PrimitivePropertyRow, PrimitivePropertyTable, PrimitiveSize,
     ProjectFrame, PropOverride, ReactAudioClipDescriptor, ReactChapter, ReactCompositionInfo,
     ReactCompositionMetadata, ReactDuck, ReactSubtitleDescriptor, ReceivedProps, ReceivedValue,
-    SourcePos, SpawnOptions, TimingWindow, chapter_at, describe_rough, rough_chapters,
+    SceneError, SourcePos, SpawnOptions, TimingWindow, chapter_at, describe_rough, rough_chapters,
 };
 
 mod project_templates;

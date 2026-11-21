@@ -218,3 +218,39 @@ test('TransitionSeries parts and hooks throw outside a series', () => {
     /unknown from "center"/,
   );
 });
+
+test('a scene that throws draws its error card through the transition in the preview', () => {
+  function Throws(): ReactElement {
+    throw new Error('b broke');
+  }
+  const composition = mount(() => h(Composition, { width: 100, height: 50, fps: FPS, durationInFrames: 15 },
+    h(TransitionSeries, null,
+      h(TransitionSeries.Sequence, { durationInFrames: 10 }, h(Scene, { name: 'a' })),
+      h(TransitionSeries.Transition, { type: 'crossfade', durationInFrames: 5 }),
+      h(TransitionSeries.Sequence, { durationInFrames: 10, id: 'b', name: 'Scene B' }, h(Throws)),
+    ),
+  ));
+  const texts = (layers: Layer[]): string[] => layers.flatMap((layer) =>
+    layer.content.type === 'text' ? [layer.content.text] : texts(layer.content.type === 'group' ? layer.content.layers : []));
+  const preview = (frame: number) => composition.renderAt({ value: frame, timescale: FPS }, null, { preview: true });
+  assert.deepEqual(texts(preview(2).scene.layers), ['a:2']);
+  // Mid-crossfade both scenes draw: `a`, and `b`'s card fading in.
+  const crossfade = preview(7);
+  const [first, second] = crossfade.scene.layers;
+  assert.deepEqual(scenes([first]).map(({ text }) => text), ['a:7']);
+  assert.ok(texts([second]).includes('Scene B'), texts([second]).join(' | '));
+  assert.ok(texts([second]).includes('id: b'));
+  assert.ok(childrenOf(second)[0].opacity < 1, 'the card fades in with its scene');
+  assert.deepEqual(crossfade.sceneErrors?.map(({ id, name, message }) => [id, name, message]), [['b', 'Scene B', 'b broke']]);
+  assert.throws(() => at(composition, 7), /^SceneRenderError: scene "b" \(Scene B\) threw while rendering: b broke$/);
+  // Unnamed scenes are named by their place.
+  const unnamed = mount(() => h(Composition, { width: 100, height: 50, fps: FPS, durationInFrames: 20 },
+    h(TransitionSeries, null,
+      h(TransitionSeries.Sequence, { durationInFrames: 10 }, h(Scene, { name: 'a' })),
+      h(TransitionSeries.Sequence, { durationInFrames: 10 }, h(Throws)),
+    ),
+  ));
+  assert.deepEqual(unnamed.renderAt({ value: 12, timescale: FPS }, null, { preview: true }).sceneErrors?.map(({ id, name }) => [id, name]), [['scene-2', 'Scene 2']]);
+  composition.dispose();
+  unnamed.dispose();
+});

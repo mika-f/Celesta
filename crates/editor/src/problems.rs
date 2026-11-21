@@ -182,6 +182,8 @@ impl LogEntry {
 pub(crate) struct Problems {
     active: BTreeMap<Source, ActiveProblem>,
     preview_warnings: Vec<String>,
+    /// The scenes the shown preview frame drew an error card for.
+    scene_errors: Vec<Problem>,
     history: VecDeque<LogEntry>,
     /// How many of the newest history entries have not been announced.
     unannounced: usize,
@@ -281,6 +283,29 @@ impl Problems {
         self.preview_warnings = warnings;
     }
 
+    /// Replaces the scenes the preview frame drew an error card for. A
+    /// scene error the previous frame did not have is logged, without a
+    /// toast (the card shows it in place), so playing through a failing
+    /// scene logs it once.
+    pub(crate) fn set_scene_errors(&mut self, errors: Vec<Problem>) {
+        for problem in &errors {
+            if !self.scene_errors.contains(problem) {
+                self.push(
+                    Local::now(),
+                    Severity::Error,
+                    Source::Preview,
+                    problem.clone(),
+                    false,
+                );
+            }
+        }
+        self.scene_errors = errors;
+    }
+
+    pub(crate) fn scene_errors(&self) -> &[Problem] {
+        &self.scene_errors
+    }
+
     pub(crate) fn active(&self, source: Source) -> Option<&ActiveProblem> {
         self.active.get(&source)
     }
@@ -325,7 +350,7 @@ impl Problems {
     }
 
     pub(crate) fn error_count(&self) -> usize {
-        self.count(Severity::Error)
+        self.count(Severity::Error) + self.scene_errors.len()
     }
 
     pub(crate) fn warning_count(&self) -> usize {
@@ -593,6 +618,37 @@ mod tests {
         let summary = summarize_warnings(&warnings);
         assert_eq!(summary.shown, &warnings[..3]);
         assert_eq!(summary.hidden, 2);
+    }
+
+    #[test]
+    fn scene_errors_count_as_errors_and_are_logged_once_while_they_last() {
+        let mut problems = Problems::default();
+        let stats = problem(
+            "Scene \"stats\" failed to render",
+            "boom\n    at Stats (a.tsx:3:1)",
+        );
+        let outro = problem("Scene \"outro\" failed to render", "bang");
+        problems.set_scene_errors(vec![stats.clone()]);
+        // The next frames of the same scene fail the same way.
+        problems.set_scene_errors(vec![stats.clone()]);
+        problems.set_scene_errors(vec![stats.clone(), outro.clone()]);
+        assert_eq!(problems.error_count(), 2);
+        assert_eq!(problems.scene_errors(), [stats.clone(), outro.clone()]);
+        let logged: Vec<_> = problems.history().map(|entry| &entry.problem).collect();
+        assert_eq!(logged, [&stats, &outro]);
+        assert!(
+            problems
+                .history()
+                .all(|entry| entry.severity == Severity::Error
+                    && entry.source == Source::Preview
+                    && !entry.toast)
+        );
+        // A frame without them clears them; coming back logs again.
+        problems.set_scene_errors(Vec::new());
+        assert_eq!(problems.error_count(), 0);
+        problems.set_scene_errors(vec![stats.clone()]);
+        assert_eq!(problems.history().count(), 3);
+        assert!(problems.take_unannounced().is_empty());
     }
 
     #[test]
