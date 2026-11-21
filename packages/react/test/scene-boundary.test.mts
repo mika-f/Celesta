@@ -321,3 +321,21 @@ test('a sound declared the same in a scene that played is not cut', () => {
   }
   composition.dispose();
 });
+
+test('a cut between frames moves whole-second keyframes by exactly the cut', () => {
+  function Fade(): React.ReactElement {
+    const frame = useCurrentFrame();
+    // Broken from 0.2 s to 0.4 s; heard again from 0.4 s.
+    if (frame >= 6 && frame < 12) throw new Error('fade broke');
+    return h(Audio, { src: 'fade.wav', volume: keyframesAt([[0, 1, 0], [1, 1, 1]]) });
+  }
+  const scenes = defineScenes([{ id: 'fade', durationInFrames: 60, Scene: Fade }]);
+  const composition = mount(() => h(Composition, { width: 100, height: 100, fps: 30, durationInFrames: 60 }, h(Scenes, { scenes })));
+  const [, resumed] = composition.collectAudio({ preview: true });
+  assert.ok(Math.abs(resumed.start - 0.4) < 1e-9);
+  const volume = resumed.volume;
+  assert.ok(typeof volume !== 'number');
+  // Full at 1 s on the clip: 0.6 s into the piece that starts at 0.4 s.
+  assert.deepEqual(volume.keyframes.map(({ time }) => time.value / time.timescale), [-0.4, 0.6]);
+  composition.dispose();
+});
