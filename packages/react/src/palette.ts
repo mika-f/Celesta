@@ -141,14 +141,14 @@ export function contrastRatio(foreground: string, background: string): number {
   return (light + 0.05) / (dark + 0.05);
 }
 
-// JavaScript lists an object's array-index keys ("2026", "1") first, in
-// numeric order, so they would lose the order they were written in, which
+// JavaScript lists an object's array-index keys ("2026", "1": canonical
+// whole numbers below 2^32 - 1) first, in numeric order, so they would lose the order they were written in, which
 // picks the default palette, orders the property's options, and lets a
 // derived color use the ones above it.
 const INDEX_KEY = /^(0|[1-9][0-9]*)$/;
 
 function checkNames(names: readonly string[], what: string): void {
-  const index = names.find((name) => INDEX_KEY.test(name));
+  const index = names.find((name) => INDEX_KEY.test(name) && Number(name) < 0xffffffff);
   if (index !== undefined) {
     throw new Error(
       `${what} name "${index}" is a whole number, which an object does not keep in the order written; give it a name that starts with a letter, such as "v${index}"`,

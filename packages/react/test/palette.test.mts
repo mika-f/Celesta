@@ -81,6 +81,9 @@ test('whole-number names are refused, since an object reorders them', () => {
   );
   // Names that only contain digits among other characters keep their order.
   expect(definePalettes({ y2026: harbor, '2025b': paper, '01': paper }).names).toEqual(['y2026', '2025b', '01']);
+  // Only whole numbers below 2^32 - 1 are reordered; larger ones keep their place.
+  expect(() => definePalettes({ harbor, '4294967294': paper })).toThrow('palette name "4294967294" is a whole number');
+  expect(definePalettes({ harbor, '4294967295': paper, '1763769600000': paper }).names).toEqual(['harbor', '4294967295', '1763769600000']);
 });
 
 test('get() picks a palette by name, the default without one, and refuses other names', () => {
