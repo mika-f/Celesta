@@ -103,7 +103,9 @@ type Rgba = [number, number, number, number];
 
 function hex([r, g, b, a]: Rgba): string {
   const byte = (value: number) => Math.round(Math.min(255, Math.max(0, value))).toString(16).padStart(2, '0');
-  return `#${byte(r)}${byte(g)}${byte(b)}${a >= 255 ? '' : byte(a)}`.toUpperCase();
+  // Compare the rounded byte: a blend of opaque colors may land just under 255.
+  const opacity = byte(a);
+  return `#${byte(r)}${byte(g)}${byte(b)}${opacity === 'ff' ? '' : opacity}`.toUpperCase();
 }
 
 // CSS color-mix in srgb: interpolate premultiplied, then unpremultiply.
@@ -137,6 +139,21 @@ export function contrastRatio(foreground: string, background: string): number {
   const shown: Rgba = [lay(0), lay(1), lay(2), 255];
   const [light, dark] = [luminance(shown), luminance(opaqueBack)].sort((x, y) => y - x) as [number, number];
   return (light + 0.05) / (dark + 0.05);
+}
+
+// JavaScript lists an object's array-index keys ("2026", "1") first, in
+// numeric order, so they would lose the order they were written in, which
+// picks the default palette, orders the property's options, and lets a
+// derived color use the ones above it.
+const INDEX_KEY = /^(0|[1-9][0-9]*)$/;
+
+function checkNames(names: readonly string[], what: string): void {
+  const index = names.find((name) => INDEX_KEY.test(name));
+  if (index !== undefined) {
+    throw new Error(
+      `${what} name "${index}" is a whole number, which an object does not keep in the order written; give it a name that starts with a letter, such as "v${index}"`,
+    );
+  }
 }
 
 function checkAmount(name: string, amount: unknown): number {
@@ -200,6 +217,7 @@ export function definePalettes(
   options: DefinePalettesOptions = {},
 ): PaletteSet {
   const derived = options.derived ?? {};
+  checkNames(Object.keys(derived), 'derived color');
   for (const key of Object.keys(derived)) {
     if ((PALETTE_ROLES as readonly string[]).includes(key)) {
       throw new Error(`palette color "${key}" is a role; give the derived color another name`);
@@ -207,6 +225,7 @@ export function definePalettes(
   }
   const names = Object.keys(palettes);
   if (names.length === 0) throw new Error('definePalettes() needs at least one palette');
+  checkNames(names, 'palette');
   const resolved: Record<string, Palette> = {};
   for (const name of names) resolved[name] = resolvePalette(name, palettes[name]!, derived);
 

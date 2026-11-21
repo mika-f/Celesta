@@ -26,8 +26,11 @@ whole film.
   property path; `palettes.get(getProjectProperty('palette'))` resolves it.
 - Validation, at palette level only: `definePalettes()` throws on a missing
   role, a role that is not a hex color, an unknown key, a derived color that
-  names something not defined above it, an amount outside 0 to 1, and a
-  derived name that is a role. It `console.warn`s (stderr, so the exporter's
+  names something not defined above it, an amount outside 0 to 1, a
+  derived name that is a role, and a palette or derived name that is a
+  whole number (an array-index key, which objects list first in numeric
+  order, so it would lose the written order that picks the default, orders
+  the options, and lets a derived color use the names above it). It `console.warn`s (stderr, so the exporter's
   terminal and the editor's log) for each palette whose `second` is below
   4.5:1 WCAG contrast on `ground`; `palettes.check()` returns the same
   findings. The rendered, layer-level contrast lint is a separate task.
@@ -45,7 +48,7 @@ the CLI's validation in `packages/cli/src/property-inputs.ts`, and
   `contrastRatio` (WCAG, a see-through foreground laid over the background),
   `PALETTE_ROLES`, `MIN_TEXT_CONTRAST`, and the types. Derived colors are
   computed once per palette at definition and stored as upper-case hex
-  (`#RRGGBBAA` only when not opaque). Exported from `index.ts` and
+  (`#RRGGBBAA` only when the rounded alpha byte is below `FF`). Exported from `index.ts` and
   `browser.ts`.
 - `packages/react/src/theme.ts`: `ThemeValues.palette`, `ResolvedTheme.palette`;
   `mergeTheme` layers `outer.colors`, then `palette.colors`, then `colors`;

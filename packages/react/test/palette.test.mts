@@ -66,6 +66,23 @@ test('mix() blends see-through colors like CSS color-mix, premultiplied', () => 
   expect(colors.none).toBe('#F2B54400');
 });
 
+test('an opaque blend stays #RRGGBB even when rounding lands just under full opacity', () => {
+  const { colors } = definePalettes({ harbor }, { derived: { tint: mix('ground', 'main', 0.04), faint: mix('ground', 'accent', 0.37) } }).get();
+  expect(colors.tint).toMatch(/^#[0-9A-F]{6}$/);
+  expect(colors.faint).toMatch(/^#[0-9A-F]{6}$/);
+});
+
+test('whole-number names are refused, since an object reorders them', () => {
+  expect(() => definePalettes({ '2026': harbor, '2025': paper })).toThrow(
+    'palette name "2025" is a whole number, which an object does not keep in the order written; give it a name that starts with a letter, such as "v2025"',
+  );
+  expect(() => definePalettes({ harbor }, { derived: { base: alpha('main', 0.5), 1: mix('base', 'main', 0.5) } })).toThrow(
+    'derived color name "1" is a whole number',
+  );
+  // Names that only contain digits among other characters keep their order.
+  expect(definePalettes({ y2026: harbor, '2025b': paper, '01': paper }).names).toEqual(['y2026', '2025b', '01']);
+});
+
 test('get() picks a palette by name, the default without one, and refuses other names', () => {
   const palettes = definePalettes({ harbor, paper }, { default: 'paper' });
   expect(palettes.names).toEqual(['harbor', 'paper']);

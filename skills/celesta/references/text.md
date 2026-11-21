@@ -184,7 +184,9 @@ Celesta-export --react film.tsx paper.mp4 --props '{"palette":"paper"}'
   `undefined`; `palettes.names` and `palettes.palettes` list them.
 - `definePalettes()` throws when a role is missing or not a hex color, a
   key is not a role, a derived color names something undefined above it,
-  or an amount is outside 0 to 1. It warns on stderr
+  an amount is outside 0 to 1, or a palette or derived name is a whole
+  number (`"2026"`: JavaScript lists such keys first, in numeric order, so
+  name it `"y2026"`). It warns on stderr
   (`Celesta: palette "dim": second #999999 on ground #F4F1EA has 2.52:1
   contrast, below 4.5:1 for text`) for each palette whose `second` fails
   4.5:1; `palettes.check()` returns those findings, and
