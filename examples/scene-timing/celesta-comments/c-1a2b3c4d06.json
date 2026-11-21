@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "id": "c-1a2b3c4d06",
+  "entry": "film.tsx",
+  "anchor": {
+    "chapter": "credits",
+    "from": 0
+  },
+  "lastSeen": {
+    "frame": 270,
+    "chapterName": "Credits"
+  },
+  "author": "Reviewer",
+  "createdAt": "2026-11-22T10:06:00Z",
+  "body": "Add the music credit here."
+}

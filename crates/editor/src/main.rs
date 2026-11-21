@@ -14,6 +14,7 @@ use gpui_kit::component::resizable::ResizableState;
 use gpui_kit::component::{Root, TitleBar};
 use gpui_kit::prelude::*;
 use gpui_kit::{App, Bounds, KeyBinding, Menu, MenuItem, WindowBounds, WindowOptions, px, size};
+use review_panel::ReviewInputs;
 
 mod about;
 mod actions;
@@ -61,6 +62,8 @@ mod react_audio;
 mod refresh;
 mod registry;
 mod render;
+mod review;
+mod review_panel;
 mod scene_entries;
 mod scope;
 #[cfg(test)]
@@ -81,10 +84,10 @@ mod widgets;
 mod worker;
 
 use actions::{
-    AboutCelesta, ClearExportRange, CloseWindow, CreateNewProject, ExportProject, FindPlugins,
-    GoToEnd, GoToIn, GoToOut, GoToStart, JumpBackward, JumpForward, NextEditPoint, NextFrame,
-    OpenProject, PausePlayback, PlayForward, PreviousEditPoint, PreviousFrame, Quit, Redo,
-    ReloadPlugins, ReloadProject, SetExportIn, SetExportOut, SetUpTypeScript,
+    AboutCelesta, AddComment, ClearExportRange, CloseWindow, CreateNewProject, ExportProject,
+    FindPlugins, GoToEnd, GoToIn, GoToOut, GoToStart, JumpBackward, JumpForward, NextEditPoint,
+    NextFrame, OpenProject, PausePlayback, PlayForward, PreviousEditPoint, PreviousFrame, Quit,
+    Redo, ReloadPlugins, ReloadProject, SetExportIn, SetExportOut, SetUpTypeScript,
     SetUpTypeScriptInFolder, ShowProblems, ToggleInteractive, ToggleLoop, TogglePlayback,
     ToggleSafeAreas, Undo, ZoomTimelineIn, ZoomTimelineOut, ZoomTimelineToFit,
 };
@@ -171,6 +174,7 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("'", ToggleSafeAreas, EDITOR_KEYS),
         KeyBinding::new(secondary!("shift-m"), ShowProblems, Some("CelestaEditor")),
         KeyBinding::new("v", ToggleInteractive, EDITOR_KEYS),
+        KeyBinding::new("c", AddComment, EDITOR_KEYS),
         KeyBinding::new("=", ZoomTimelineIn, EDITOR_KEYS),
         KeyBinding::new("-", ZoomTimelineOut, EDITOR_KEYS),
         KeyBinding::new("shift-z", ZoomTimelineToFit, EDITOR_KEYS),
@@ -343,6 +347,8 @@ fn run() -> anyhow::Result<()> {
                         editor.watch_react_entry(cx);
                         editor.refresh_scene_sources(cx);
                     }
+                    editor.review_inputs = Some(ReviewInputs::new(window, cx));
+                    editor.watch_comments(cx);
                     editor.attach_registry(registry_client, window, cx);
                     editor
                 });
@@ -415,6 +421,8 @@ fn app_menus() -> Vec<Menu> {
             MenuItem::separator(),
             MenuItem::action("Go to In", GoToIn),
             MenuItem::action("Go to Out", GoToOut),
+            MenuItem::separator(),
+            MenuItem::action("Add Comment…", AddComment),
         ]),
         Menu::new("View").items([
             MenuItem::action("Safe Areas", ToggleSafeAreas),

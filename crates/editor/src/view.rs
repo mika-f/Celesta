@@ -66,6 +66,8 @@ pub(crate) enum RightTab {
     /// The content plugins: what was found, from where, and whether each
     /// may run.
     Plugins,
+    /// The review comments on the open entry.
+    Comments,
     Problems,
 }
 
@@ -74,7 +76,7 @@ impl RightTab {
     /// Problems.
     pub(crate) fn toggled_problems(self) -> Self {
         match self {
-            Self::Details | Self::Properties | Self::Plugins => Self::Problems,
+            Self::Details | Self::Properties | Self::Plugins | Self::Comments => Self::Problems,
             Self::Problems => Self::Details,
         }
     }
@@ -86,10 +88,11 @@ impl RightTab {
                 Self::Details,
                 Self::Properties,
                 Self::Plugins,
+                Self::Comments,
                 Self::Problems,
             ]
         } else {
-            &[Self::Details, Self::Plugins, Self::Problems]
+            &[Self::Details, Self::Plugins, Self::Comments, Self::Problems]
         }
     }
 
@@ -116,6 +119,10 @@ pub(crate) struct EditorView {
     /// Every error and warning, and the log since this project opened.
     pub(crate) problems: Problems,
     pub(crate) right_tab: RightTab,
+    /// The open entry's review comments and the Comments tab's state.
+    pub(crate) review: crate::review::Review,
+    /// The Comments tab's text fields; `None` until the window is made.
+    pub(crate) review_inputs: Option<crate::review_panel::ReviewInputs>,
     /// The Inspector sections collapsed this session, by section id.
     pub(crate) collapsed_sections: crate::inspector::CollapsedSections,
     /// History rows the user expanded, by `LogEntry::id`.
@@ -527,12 +534,15 @@ impl EditorView {
         let component_schema_worker = spawn_component_schema()?;
         let react_audio_worker = spawn_react_audio()?;
         let occurrence_worker = spawn_occurrences()?;
+        let review = crate::review::Review::open(source_path.as_deref());
         let mut editor = Self {
             source_path,
             session: 0,
             opening: false,
             problems: Problems::default(),
             right_tab: RightTab::Details,
+            review,
+            review_inputs: None,
             collapsed_sections: crate::inspector::CollapsedSections::default(),
             expanded_log_entries: HashSet::new(),
             toasted_sources: HashSet::new(),
@@ -718,13 +728,21 @@ mod tests {
                 RightTab::Details,
                 RightTab::Properties,
                 RightTab::Plugins,
+                RightTab::Comments,
                 RightTab::Problems
             ]
         );
         assert_eq!(
             RightTab::offered(false),
-            [RightTab::Details, RightTab::Plugins, RightTab::Problems]
+            [
+                RightTab::Details,
+                RightTab::Plugins,
+                RightTab::Comments,
+                RightTab::Problems
+            ]
         );
+        assert_eq!(RightTab::Comments.shown(false), RightTab::Comments);
+        assert_eq!(RightTab::Comments.toggled_problems(), RightTab::Problems);
         assert_eq!(RightTab::Properties.shown(true), RightTab::Properties);
         assert_eq!(RightTab::Properties.shown(false), RightTab::Details);
         assert_eq!(RightTab::Problems.shown(false), RightTab::Problems);

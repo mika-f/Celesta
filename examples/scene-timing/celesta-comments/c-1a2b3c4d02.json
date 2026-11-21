@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "id": "c-1a2b3c4d02",
+  "entry": "film.tsx",
+  "anchor": {
+    "chapter": "main",
+    "from": 30,
+    "to": 90,
+    "point": {
+      "x": 0.78,
+      "y": 0.45
+    }
+  },
+  "lastSeen": {
+    "frame": 120,
+    "chapterName": "Main"
+  },
+  "author": "Reviewer",
+  "createdAt": "2026-11-22T10:02:00Z",
+  "body": "The circle lands too hard. Ease it out as it arrives.",
+  "replies": [
+    {
+      "id": "r-1a2b3c4d03",
+      "author": "agent",
+      "createdAt": "2026-11-22T10:20:00Z",
+      "body": "Should it overshoot a little, or stop dead?"
+    }
+  ]
+}

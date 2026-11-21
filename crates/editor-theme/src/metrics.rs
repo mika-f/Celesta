@@ -108,6 +108,11 @@ pub fn chapter_lane_height() -> Rems {
     rems(2.0)
 }
 
+/// Side of a review comment's pin on the canvas.
+pub fn comment_pin_size() -> Rems {
+    rems(1.5)
+}
+
 /// Width of the master meter column beside the timeline.
 pub fn meter_column_width() -> Rems {
     rems(10.0)

@@ -24,6 +24,7 @@ impl EditorView {
         let shown = self.right_tab.shown(react_preview);
         let count = self.problems.error_count() + self.problems.warning_count();
         let waiting = self.found_plugins.pending.len();
+        let comments = self.review.open_count(self.review_shown());
         let muted = cx.theme().muted_foreground;
         let mono = cx.theme().mono_font_family.clone();
         // Classic tabs: the selected one takes the panel's color and joins the
@@ -46,6 +47,18 @@ impl EditorView {
                             .child(waiting.to_string()),
                     )
                 }),
+                RightTab::Comments => Tab::new().px_2().label("Comments").when(
+                    comments > 0,
+                    |tab| {
+                        tab.suffix(
+                            div()
+                                .font_family(mono.clone())
+                                .text_sm()
+                                .text_color(muted)
+                                .child(comments.to_string()),
+                        )
+                    },
+                ),
                 RightTab::Problems => Tab::new().px_2().label("Problems").when(count > 0, |tab| {
                     tab.suffix(
                         div()
@@ -74,6 +87,7 @@ impl EditorView {
                 RightTab::Details => self.inspector_panel(cx).into_any_element(),
                 RightTab::Properties => self.properties_panel(cx).into_any_element(),
                 RightTab::Plugins => self.plugins_panel(cx).into_any_element(),
+                RightTab::Comments => self.comments_panel(cx).into_any_element(),
                 RightTab::Problems => self.problems_panel(cx).into_any_element(),
             })
     }

@@ -791,6 +791,13 @@ impl EditorView {
         next.preparing_update = self.preparing_update;
         // A reload of the same entry keeps its history; another file starts empty.
         next.edit_history = std::mem::take(&mut self.edit_history);
+        next.review_inputs = self.review_inputs.take();
+        // The same entry keeps its open thread and the resolved toggle.
+        if self.source_path == next.source_path {
+            next.review.selected = self.review.selected.take();
+            next.review.show_resolved = self.review.show_resolved;
+            next.review.draft = self.review.draft.take();
+        }
         if self.react_entry().is_none() || self.react_entry() != next.react_entry() {
             next.edit_history.clear();
         }
@@ -801,6 +808,7 @@ impl EditorView {
             self.watch_react_entry(cx);
             self.refresh_scene_sources(cx);
         }
+        self.watch_comments(cx);
         // The constructor's sweep ran before Select layers carried over.
         self.refresh_occurrences(false);
         self.sync_plugin_page(cx);

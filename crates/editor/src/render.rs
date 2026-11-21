@@ -94,6 +94,7 @@ impl EditorView {
             .on_action(cx.listener(Self::toggle_loop_action))
             .on_action(cx.listener(Self::toggle_safe_areas_action))
             .on_action(cx.listener(Self::show_problems_action))
+            .on_action(cx.listener(Self::add_comment_action))
             .on_action(cx.listener(Self::toggle_interactive_action))
             .on_action(cx.listener(Self::zoom_timeline_in_action))
             .on_action(cx.listener(Self::zoom_timeline_out_action))
