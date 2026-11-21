@@ -14,4 +14,4 @@ celesta-project.workspace = true
 [dev-dependencies]
 # GPUI's test context, for running `init` in the theme's tests. gpui-kit's
 # own `test-support` feature pulls a taffy that conflicts with gpui-pre's.
-gpui = { package = "gpui-pre", version = "=0.3.11", features = ["test-support"] }
+gpui = { package = "gpui-pre", version = "=0.3.13", features = ["test-support"] }
