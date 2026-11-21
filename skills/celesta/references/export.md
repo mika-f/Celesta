@@ -74,6 +74,7 @@ Use `.mp4` when an H.264 encoder is installed. x264-only options such as
 | `--preset <name>` | An export preset from `export-presets.json`: looked up in `--preset-file`, then the project's file, then the user's. The other component and option flags go over it. x264's preset is a setting of the optional `ffmpeg-x264/libx264`: `--video-encoder ffmpeg-x264/libx264 --video-option preset=<name>`. See [Export presets](#export-presets). |
 | `--preset-file <file>` | An `export-presets.json` to look `--preset` up in first; a missing or invalid one is a `usage` error. |
 | `--loop` | The video plays in a loop (Shorts, TikTok): the AAC sound is encoded to run from its end into its start. Any video output; WebM ignores it. See [Looping video](#looping-video). |
+| `--final` | Refuse a React video whose span holds a rough scene (`status: 'rough'` in `<Composition chapters>`) with the error code `rough_scenes`, instead of exporting its placeholder card with a warning. See [animation.md](animation.md#rough-cut). |
 | `--loudness <l>` | Bring the whole mix to an integrated loudness: LUFS from -70 to -5, `streaming` (-14), or `broadcast` (-23). Video only. See [Loudness](#loudness). |
 | `--true-peak <db>` | The highest true peak `--loudness` may leave, -9 to 0 dBTP (default -1). |
 | `--peak-handling <h>` | `limit` (default): a limiter holds peaks at `--true-peak`. `lower`: the gain stops short of the target instead. |
@@ -553,6 +554,13 @@ props file, the result also has `propsFile` (its path) and `propsFileAuto`
     and `lang` when the subtitles have a language;
   - `contactSheet`: one image, with `columns` and the tile `frames` in
     reading order.
+- `codedWarnings` lists the warnings that have a stable code, as
+  `{code, message}`; each is also in `warnings`, and the key is absent when
+  there are none. `rough_scenes`: the exported span holds rough scenes,
+  which are in the video as placeholder cards (`message` names them);
+  build them, or export with `--final` to make that an error
+  ([animation.md](animation.md#rough-cut)). A `--json-progress` `warning`
+  event has the same `code`.
 - `stats.renderFps` is the average speed of the whole export in frames per
   second: rendering and video encoding run side by side, so it is the speed
   of whichever is slower. At large sizes x264's default `medium` preset can
@@ -600,6 +608,7 @@ props file, the result also has `propsFile` (its path) and `propsFileAuto`
 | `unsupported_media` | Media plugins were found, but none of their decoders reads a file the entry uses (`message` names the file and the decoders tried). Convert it to a format the `ffmpeg` plugin reads, such as MP4 or WAV. |
 | `plugins_unsatisfied` | The project's `celesta.lock` does not give the registry plugins `celesta.config.json` declares: no lock, a lock that does not match, versions not downloaded here, a lock from another Celesta minor version, a lock that cannot be read, or a `celesta.config.json` that cannot be read. `message` names the `celesta plugin install` or `celesta plugin update` to run, or the file to fix ([plugins.md](plugins.md#registry-plugins)). |
 | `unsupported_dimensions` | Video needs non-zero even width and height. |
+| `rough_scenes` | `--final` (MCP and `@celesta.studio/exporter`: `final`) and the exported span holds rough scenes; `message` names them. Build them and drop their `status: 'rough'`, or export without `--final` to get the placeholder cards with a warning. |
 | `unsupported_subtitles` | The `--subtitles` path is not a `.srt` or `.vtt` file. |
 | `mixed_subtitle_languages` | Subtitles in several languages would share a `--subtitles` path without `{lang}`; see [subtitles.md](subtitles.md#several-languages). |
 | `project_io`, `project_json` | The project file could not be read or is not valid JSON. |

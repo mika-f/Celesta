@@ -104,6 +104,21 @@ Check that:
 - nothing is `MISSING FILE` and no frame reports `ERROR`;
 - audio clips start and last as long as intended.
 
+A composition with `chapters` lists them after the composition line, one
+line each when any is rough or has a `desc`, and warns while scenes are
+still rough (a rough cut's placeholder cards, see
+[animation.md](animation.md#rough-cut)); the MCP `inspect` tool does the
+same and adds `chapters` to its structured result:
+
+```text
+chapters (2 of 3 rough):
+  Title [0, 60): The film's name on the ground.
+  The card [60, 165) rough: A card slides onto the blueprint.
+  Logo [165, 210) rough
+…
+warning: 2 scenes are still rough and draw placeholder cards: The card [60, 165), Logo [165, 210); export warns about them (rough_scenes) and --final refuses them
+```
+
 The exit code is 1 when the entry fails to load, a frame fails, or a local
 file is missing, and 2 when the only problem is text it could not measure
 (below).

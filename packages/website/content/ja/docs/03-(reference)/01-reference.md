@@ -28,6 +28,7 @@ Celesta は Remotion のようにパッケージに分かれています。コ�
 | `Transition` | `@celesta.studio/transitions` | 親シーケンスの開始・終了に、フェード・スライド・拡縮を単独または組み合わせて適用します。 |
 | `Series` / `computeSeries` | `@celesta.studio/react` | 長さでシーンを続けて並べます。[シーン・キュー・拍](/ja/docs/motion-toolkit/)を参照。 |
 | `defineScenes` / `Scenes` / `useScene()` / `sceneAt` | `@celesta.studio/react` | 名前付きの章を続けて並べ、現在の章と進み具合を取得します。 |
+| `ScenePlaceholder` | `@celesta.studio/react` | ラフのシーンが再生する仮のカード。名前、`desc`、位置、長さを描きます。`<Scenes>` は `status: 'rough'` のエントリーにこれを描きます。[シーン・キュー・拍](/ja/docs/motion-toolkit/)を参照。 |
 | `<Composition chapters>` / `listChapters` | `@celesta.studio/react` | エディタのプレビューで一覧表示し、シークできる名前付きの区間。シーンの一覧、会話の計画、区間の配列から作ります。[シーン・キュー・拍](/ja/docs/motion-toolkit/)を参照。 |
 | `TransitionSeries` / `computeTransitionSeries` | `@celesta.studio/transitions` | シーンの間をカット・クロスフェード・スライド・ワイプ・アイリス・クロックワイプ・ズーム・ディゾルブ・ぼかし・フリップ・キューブでつなぎ、重なりと全体の長さを計算します。[シーン・キュー・拍](/ja/docs/motion-toolkit/)を参照。 |
 | `defineTransition` / `iris`、`clockWipe`、`zoom`、`dissolve`、`blur`、`flip`、`cube`、`crossfade`、`slide`、`wipe` | `@celesta.studio/transitions` | `TransitionSeries` のトランジションを関数で定義したり、組み込みのトランジションのオプションを指定したりします。 |

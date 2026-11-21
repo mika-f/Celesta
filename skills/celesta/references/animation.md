@@ -55,6 +55,7 @@ what they produce constant across frames.
 - [Series and computeSeries](#series-and-computeseries)
 - [Scenes and useScene](#scenes-and-usescene)
 - [Chapters in the preview](#chapters-in-the-preview)
+- [Rough cut](#rough-cut)
 - [FrameChrome](#framechrome)
 - [TransitionSeries](#transitionseries)
 - [Stagger](#stagger)
@@ -409,12 +410,14 @@ const { durationInFrames } = computeSeries(SCENES);
 ## Scenes and useScene
 
 Chapters declared once, by name, and read from anywhere. `defineScenes(entries)`
-places `{ id, name?, durationInFrames, offset?, Scene? }` entries back to back
+places `{ id, name?, durationInFrames, offset?, Scene?, desc?, status? }` entries back to back
 like `Series` (`offset` overlaps or gaps; `durationInFrames` may be 0, which
 keeps the entry in the list but never plays it; ids must be unique) and
 returns `{ scenes, durationInFrames }`, each scene with its `index`, `name`
 (defaults to `id`) and `from`. Extra fields stay on the entries.
-`<Scenes scenes={list} />` plays each `Scene` in a `<Sequence>`.
+`<Scenes scenes={list} />` plays each `Scene` in a `<Sequence>`; an entry
+with `status: 'rough'` or without a `Scene` plays a placeholder card instead
+(see [Rough cut](#rough-cut)).
 
 `useScene(list)` (or `sceneAt(list, frame)`) returns `null` before the first
 scene and from the list's end on, else `{ scene, index, id, name, from,
@@ -458,7 +461,10 @@ function Hud() {
 Chapters row above the timeline's tracks and a Chapters list in the React
 Preview tab, the current one highlighted, a click seeking to its start.
 `source` is a `defineScenes` list, a `planDialogue` plan (its `scenes`), or
-`{ id, name?, from, durationInFrames }[]` in the composition's frames. Read
+`{ id, name?, from, durationInFrames, desc?, status? }[]` in the composition's
+frames. A chapter keeps its `desc` (shown under its name in the list and on
+hover in the row) and its `status`: a rough one is greyed out and tagged
+Rough. Read
 once at load (and on every reload) like `width`/`fps`; nothing is inferred
 from the tree, and a composition without it previews as before. Chapters are
 sorted by `from` and cut at the end; length 0 is a seekable mark; a missing
@@ -484,6 +490,54 @@ const chapters = [...listChapters(SCENES), ...listChapters(PARTS, { from: SCENES
 // A dialogue plan, titled:
 <Composition ... chapters={plan.scenes.map((scene) => ({ ...scene, name: TITLES[scene.id] }))}>
 ```
+
+## Rough cut
+
+Agree on a film's structure and timing before building every scene, as a
+storyboard does: list the scenes with their `name`, `durationInFrames`, and
+a one-sentence `desc`, and mark the ones not built yet `status: 'rough'`.
+`<Scenes>` draws each rough scene (and each entry without a `Scene`) as a
+placeholder card: the name, the `desc`, "Scene 2 of 5", the length in
+seconds and frames, and a bar that fills as the scene plays, all from the
+frame alone. A rough scene's `Scene` stays hidden until the status goes, so
+it can be built in place. Pass the list as `<Composition chapters>`, so the
+editor, `inspect`, and export see the statuses:
+
+```tsx
+const SCENES = defineScenes([
+  { id: 'title', name: 'Title', durationInFrames: 60, desc: "The film's name on the ground.", Scene: Title },
+  { id: 'card', name: 'The card', durationInFrames: 105, status: 'rough', desc: 'A card slides onto the blueprint.' },
+  { id: 'logo', name: 'Logo', durationInFrames: 45, status: 'rough' },
+]);
+
+<Composition width={1920} height={1080} fps={30} durationInFrames={SCENES.durationInFrames} chapters={SCENES}>
+  <Scenes scenes={SCENES} />
+</Composition>
+```
+
+- The editor's Chapters row greys out rough chapters and tags them Rough;
+  hovering one shows its `desc`. The React Preview tab's Chapters list
+  tags them and puts the `desc` under each name.
+- `inspect.mjs` and the MCP `inspect` tool list the chapters with `rough`
+  and their `desc`, and warn how many are still rough.
+- A video export of a span with rough scenes warns, with the code
+  `rough_scenes` in `--json`'s `codedWarnings`; `--final` (MCP `final`,
+  `@celesta.studio/exporter`'s `final`) refuses it with the error code
+  `rough_scenes`. Stills and contact sheets do not warn: a sheet of the
+  rough cut is how to review it. Only `chapters` carry the status, so a
+  list played by `<Scenes>` but not passed as `chapters` draws its cards
+  without the warning.
+- An entry without a `Scene` and without a status draws a card tagged "No
+  Scene yet" but is not rough: a list that only names chapters laid out
+  elsewhere has no `Scene`s.
+- `<ScenePlaceholder name desc? index? count? durationInFrames label?>`
+  draws the same card yourself, inside a `<Sequence>` of the scene's length,
+  for scenes laid out with `<TransitionSeries>` or `<Sequence>`. It is sized
+  from the composition, so it fits vertical and square canvases.
+- `desc` is not drawn by `<FrameChrome>`: it is a note for the people
+  agreeing on the cut, not a caption.
+
+Runnable: [`packages/cli/examples/rough-cut.tsx`](../../../packages/cli/examples/rough-cut.tsx).
 
 ## FrameChrome
 
