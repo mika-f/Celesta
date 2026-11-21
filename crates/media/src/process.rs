@@ -726,15 +726,20 @@ impl Decoder for MediaProcess {
                     ..*request
                 },
             )?;
-            self.child
+            // A failed send leaves the decoded frame valid; the process's
+            // failure surfaces on the next request instead.
+            if self
+                .child
                 .send(
                     message,
                     "videoFrame",
                     DECODE_VIDEO_TIMEOUT,
                     DeadlineFrom::Sent,
                 )
-                .map_err(media_error)?;
-            self.speculative = Some(DecodeKey { session, time });
+                .is_ok()
+            {
+                self.speculative = Some(DecodeKey { session, time });
+            }
         }
         Ok(frame)
     }
