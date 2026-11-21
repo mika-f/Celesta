@@ -1,0 +1,12 @@
+{
+  "name": "@celesta.studio/example-score",
+  "private": true,
+  "scripts": {
+    "preview": "celesta-editor film.tsx",
+    "export": "celesta-exporter --json --react --overwrite film.tsx score.mp4",
+    "typecheck": "tsc --project tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}

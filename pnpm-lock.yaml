@@ -471,6 +471,12 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
+  examples/score:
+    devDependencies:
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
   examples/shorts-explainer:
     dependencies:
       '@celesta.studio/character':
@@ -1097,6 +1103,27 @@ importers:
       '@types/react-reconciler':
         specifier: ^0.34.0
         version: 0.34.1(@types/react@19.3.0)
+      react:
+        specifier: ^19.3.0
+        version: 19.3.1
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+      vitest:
+        specifier: ^5.0.3
+        version: 5.1.0(@types/node@26.6.6)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0))
+
+  packages/score:
+    devDependencies:
+      '@celesta.studio/react':
+        specifier: workspace:*
+        version: link:../react
+      '@types/node':
+        specifier: ^26.0.0
+        version: 26.6.6
+      '@types/react':
+        specifier: ^19.3.0
+        version: 19.3.0
       react:
         specifier: ^19.3.0
         version: 19.3.1

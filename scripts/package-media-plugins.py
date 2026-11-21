@@ -13,7 +13,7 @@ takes: the plugin directory's contents at the ZIP root, one ZIP per target at
 `executable` names the program of every target in --targets the plugin is
 built for (.github/workflows/plugin-release.yml). With --registry and
 --plugins naming component-only plugins (aivis-speech, code, lottie,
-voicevox), each of those as its one archive, <out>/<id>/any.zip: they have
+score, voicevox), each of those as its one archive, <out>/<id>/any.zip: they have
 no program, so one archive serves every system, and any system can build it.
 """
 
@@ -53,7 +53,7 @@ PLUGINS = {
 }
 # The first-party plugins without a process: a module alone, built from the
 # workspace package of the same name, for the registry's target `any`.
-COMPONENTS = ("aivis-speech", "code", "lottie", "voicevox")
+COMPONENTS = ("aivis-speech", "code", "lottie", "score", "voicevox")
 # The plugins that are a separate download on the GitHub release; the others
 # come with Celesta.
 DOWNLOADS = ("ffmpeg-x264",)

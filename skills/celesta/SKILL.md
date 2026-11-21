@@ -213,6 +213,7 @@ These come from Celesta's plugin registry (see
 | `@celesta-plugin/lottie` | `Lottie` (Lottie/Bodymovin JSON animations), `inspectLottie`, `lottieFrameAt`, and the Lottie file types |
 | `@celesta-plugin/voicevox` | `prepareNarration` (synthesize and cache a script's voices with VOICEVOX Engine), `NarrationError`, `lipSyncFromVoicevox`, `timingFromVoicevox`, `voicevoxVowelShape`, and their types |
 | `@celesta-plugin/aivis-speech` | `lipSyncFromAivisSpeech`, `timingFromAivisSpeech`, and their types |
+| `@celesta-plugin/score` | `defineScore` (sound effects, drums, and simple music written as data, rendered in `prepare()` to the same WAV every run), `ScoreAudio`, `PATCH_NAMES`/`DRUM_NAMES`/`EFFECT_NAMES`, and their types |
 | `@celesta-plugin/vrm` | `Vrm` (VRM 1.0 avatars in 3D; a program per system) |
 
 A project that uses one declares it: `celesta plugin add <id>` (with
@@ -251,6 +252,7 @@ Load only the one you need; each is self-contained.
 | `Text`, `TextStyle`, shorthand props and `Theme`, fonts and fallback, font stacks (和欧混植), text language (`lang`), emoji, line breaking, `TextReveal`, `TypewriterText`, `useTypewriter`, `useCountUp`, `useTextMetrics`/`measureText`, `TextBox`/`useFitText`/`fitText`, `TitleCard`, `LowerThird` | [text.md](references/text.md) |
 | Subtitle files: reading SRT/WebVTT (`parseSubtitles`), drawing timed captions from data (`CaptionTrack`), `<Subtitles>`, writing them with `formatSubtitles` or `--subtitles` on export | [subtitles.md](references/subtitles.md) |
 | Syntax-highlighted code, typing code, highlighted lines, carets, drawing code lines yourself (`@celesta-plugin/code`) | [code.md](references/code.md) |
+| Sound effects and simple music without audio files: a tick per typed character, a whoosh into each cut, drums and patterns on the beat grid (`@celesta-plugin/score`, `defineScore`, `ScoreAudio`) | [score.md](references/score.md) |
 | About to write a small helper (clamp, eased progress, random hash, timecode, text width, current section): the API that already does it | [helpers.md](references/helpers.md) |
 | Seeded random, noise, clamp/lerp/remap, waves, angles, points (`@celesta.studio/math`) | [math.md](references/math.md) |
 | A seamless loop (Shorts, TikTok): loop length from beats and bars, periodic motion, looping noise, folding the music's tail back, `inspect.mjs --loop`, exporting with `--loop` | [loops.md](references/loops.md) |

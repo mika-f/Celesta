@@ -3,7 +3,7 @@ name: Plugin release
 # Builds the first-party plugins for each target and publishes them to
 # registry.celesta.studio, on the same release tags as package.yml: those with
 # a process (ffmpeg, ffmpeg-x264, avfoundation, mediafoundation, vrm) once per
-# target, and the component-only ones (aivis-speech, code, lottie, voicevox)
+# target, and the component-only ones (aivis-speech, code, lottie, score, voicevox)
 # once, for the target `any`. The
 # registry allows this workflow's tag runs through the PUBLISH_WORKFLOW_REFS
 # entry `mika-f/Celesta/.github/workflows/plugin-release.yml@refs/tags/v*`,
@@ -244,7 +244,7 @@ jobs:
           # PLUGIN_TARGETS is split into one argument per target on purpose.
           # shellcheck disable=SC2086
           python3 scripts/package-media-plugins.py --registry --targets $PLUGIN_TARGETS \
-            --version "$VERSION" --plugins aivis-speech code lottie voicevox
+            --version "$VERSION" --plugins aivis-speech code lottie score voicevox
 
       - uses: actions/upload-artifact@v7.0.2
         with:
