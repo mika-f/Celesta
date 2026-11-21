@@ -12,6 +12,10 @@ export interface ChapterInput {
   from: number;
   /** Length in frames. 0 marks a point: listed and seekable, never current. */
   durationInFrames: number;
+  /** One sentence on what happens, listed beside the name. */
+  desc?: string;
+  /** `'rough'` marks a span that is not built yet; see `SceneEntry.status`. */
+  status?: 'rough' | 'final';
 }
 
 /**
@@ -27,6 +31,10 @@ export interface Chapter {
   name: string;
   from: number;
   durationInFrames: number;
+  /** Present when the source gave one. */
+  desc?: string;
+  /** Present when the source gave one; absent means final. */
+  status?: 'rough' | 'final';
 }
 
 export interface ListChaptersOptions {
@@ -52,8 +60,12 @@ export interface ListChaptersOptions {
  * <Composition chapters={chapters} ...>
  * ```
  *
- * Throws for a missing or empty `id`, a negative or fractional frame, and an
- * `id` used twice.
+ * A chapter keeps its source's `desc` and `status`, so the editor marks rough
+ * scenes and an export warns about them.
+ *
+ * Throws for a missing or empty `id`, a negative or fractional frame, an
+ * `id` used twice, a `desc` that is not a string, and a `status` other than
+ * `'rough'` or `'final'`.
  */
 export function listChapters(source: ChapterSource, options?: ListChaptersOptions): Chapter[] {
   const shift = options?.from ?? 0;
@@ -66,7 +78,7 @@ export function listChapters(source: ChapterSource, options?: ListChaptersOption
   }
   const ids = new Set<string>();
   return entries.map((entry: ChapterInput, index): Chapter => {
-    const { id, name, from, durationInFrames } = entry ?? ({} as ChapterInput);
+    const { id, name, from, durationInFrames, desc, status } = entry ?? ({} as ChapterInput);
     if (typeof id !== 'string' || id === '') {
       throw new Error(`chapter ${index} requires a non-empty string id`);
     }
@@ -83,7 +95,20 @@ export function listChapters(source: ChapterSource, options?: ListChaptersOption
     if (!Number.isInteger(durationInFrames) || durationInFrames < 0) {
       throw new Error(`chapter "${id}" requires a non-negative integer durationInFrames`);
     }
-    return { id, name: name ?? id, from: from + shift, durationInFrames };
+    if (desc !== undefined && typeof desc !== 'string') {
+      throw new Error(`chapter "${id}" requires a string desc`);
+    }
+    if (status !== undefined && status !== 'rough' && status !== 'final') {
+      throw new Error(`chapter "${id}" requires status to be 'rough' or 'final'`);
+    }
+    return {
+      id,
+      name: name ?? id,
+      from: from + shift,
+      durationInFrames,
+      ...(desc !== undefined ? { desc } : {}),
+      ...(status !== undefined ? { status } : {}),
+    };
   });
 }
 

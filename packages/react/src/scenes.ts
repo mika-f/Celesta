@@ -7,7 +7,15 @@ import type { ComponentType } from 'react';
 
 import { Sequence } from './components';
 import { CompositionRuntimeContext, RootRuntimeContext, runtimeFrame, useCurrentFrame } from './hooks';
+import { ScenePlaceholder } from './scene-placeholder';
 import { markTransparent } from './source-chain';
+
+/**
+ * Where a scene stands: `'rough'` while only its name, length and `desc` are
+ * agreed (a rough cut), `'final'` once it is built. Entries without a status
+ * are final.
+ */
+export type SceneStatus = 'rough' | 'final';
 
 export interface SceneEntry {
   /** Unique key of the scene, for code and for the preview's chapter list. */
@@ -21,8 +29,21 @@ export interface SceneEntry {
    * `<Series.Sequence offset>`: negative overlaps, positive leaves a gap.
    */
   offset?: number;
-  /** What `<Scenes>` draws for it. Inside, frames restart at 0. */
+  /**
+   * What `<Scenes>` draws for it. Inside, frames restart at 0. Without one,
+   * or while `status` is `'rough'`, `<Scenes>` draws a `<ScenePlaceholder>`
+   * card instead.
+   */
   Scene?: ComponentType;
+  /** One sentence on what happens in the scene: the rough cut's script. */
+  desc?: string;
+  /**
+   * `'rough'` marks a scene that is not built yet: `<Scenes>` draws its
+   * placeholder card even when it has a `Scene`, the editor's Chapters row
+   * marks it, and an export warns about it (`--final` refuses it).
+   * Defaults to `'final'`.
+   */
+  status?: SceneStatus;
 }
 
 /** A scene with its place on the timeline. */
@@ -69,7 +90,7 @@ export function defineScenes<T extends SceneEntry>(entries: readonly T[]): Scene
   let at = 0;
   let end = 0;
   const scenes = entries.map((entry, index) => {
-    const { id, durationInFrames, offset = 0 } = entry;
+    const { id, durationInFrames, offset = 0, desc, status } = entry;
     if (typeof id !== 'string' || id === '') {
       throw new Error(`scene ${index} requires a non-empty string id`);
     }
@@ -82,6 +103,12 @@ export function defineScenes<T extends SceneEntry>(entries: readonly T[]): Scene
     }
     if (!Number.isInteger(offset)) {
       throw new Error(`scene "${id}" requires an integer offset`);
+    }
+    if (desc !== undefined && typeof desc !== 'string') {
+      throw new Error(`scene "${id}" requires a string desc`);
+    }
+    if (status !== undefined && status !== 'rough' && status !== 'final') {
+      throw new Error(`scene "${id}" requires status to be 'rough' or 'final'`);
     }
     at += offset;
     if (at < 0) {
@@ -155,8 +182,10 @@ export interface ScenesProps<T extends SceneEntry = SceneEntry> {
 
 /**
  * Plays a `defineScenes` list: each scene's `Scene` in a `<Sequence>` at its
- * place. Inside, `useScene()` reports the current scene whatever
- * `<Sequence>`s enclose the call.
+ * place. A scene with `status: 'rough'` or without a `Scene` plays its
+ * `<ScenePlaceholder>` card: its name, `desc`, place in the list and length.
+ * Inside, `useScene()` reports the current scene whatever `<Sequence>`s
+ * enclose the call.
  *
  * ```tsx
  * const scenes = defineScenes([
@@ -174,9 +203,22 @@ export function Scenes<T extends SceneEntry>({ scenes }: ScenesProps<T>): React.
   return React.createElement(
     ScenesContext.Provider,
     { value: scope },
-    scenes.scenes.map(({ id, from, durationInFrames, Scene }) =>
-      durationInFrames > 0 && Scene
-        ? React.createElement(Sequence, { key: id, from, durationInFrames }, React.createElement(Scene))
+    scenes.scenes.map(({ id, name, desc, index, from, durationInFrames, Scene, status }) =>
+      durationInFrames > 0
+        ? React.createElement(
+            Sequence,
+            { key: id, from, durationInFrames },
+            Scene && status !== 'rough'
+              ? React.createElement(Scene)
+              : React.createElement(ScenePlaceholder, {
+                  name,
+                  desc,
+                  index,
+                  count: scenes.scenes.length,
+                  durationInFrames,
+                  label: status === 'rough' ? 'Rough cut' : 'No Scene yet',
+                }),
+          )
         : null,
     ),
   );
