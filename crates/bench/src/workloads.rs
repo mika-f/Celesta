@@ -42,6 +42,11 @@ enum Source {
 
 pub const WORKLOADS: &[Workload] = &[
     Workload {
+        name: "supernova",
+        description: "SUPERNOVA from examples/supernova (React; sustained particles, paths, filters and masks)",
+        source: Source::React("examples/supernova/film.tsx", &[90, 300, 510, 730, 960]),
+    },
+    Workload {
         name: "nebula",
         description: "NEBULA from examples/versus/bench (React; about 1,660 layers)",
         source: Source::React("examples/versus/bench/celesta/nebula.tsx", &[0]),

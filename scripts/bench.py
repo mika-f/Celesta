@@ -371,7 +371,7 @@ def main():
         sys.exit("instructions mode needs valgrind (3.22 or later)")
     worktrees = (options.worktrees or target_dir / "bench-worktrees").resolve()
     revisions = {"base": describe(base), "head": describe(options.head)}
-    react = not options.workloads or "nebula" in options.workloads
+    react = not options.workloads or any(name in options.workloads for name in ("nebula", "spectra", "supernova"))
     binaries = {"base": build(base, "base", target_dir, worktrees, react),
                 "head": build(options.head, "head", target_dir, worktrees, react)}
     if binaries["head"] is None:

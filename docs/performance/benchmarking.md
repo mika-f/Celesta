@@ -21,6 +21,7 @@ every scene before it starts timing, so only rendering is measured.
 
 | Workload | What it draws |
 | --- | --- |
+| `supernova` | SUPERNOVA from `examples/supernova`: 36 seconds of generated visuals, 12,000 instanced stars, 240 thin gradient rings, blur-only bokeh, filter-only glass, nested masks and perspective, custom WGSL lensing and typography. Runs start at frames 90, 300, 510, 730 and 960; needs `--frames 5` or more. No network or media plugins required. |
 | `nebula` | NEBULA from [`examples/versus/bench`](../../examples/versus/bench/SCENE.md), the real React composition (`celesta/nebula.tsx`), evaluated by the React bridge: about 1,660 layers per frame |
 | `spectra` | SPECTRA from [`examples/spectra`](../../examples/spectra/README.md), a React reel of five chapters that uses blur, shadows, glows, blend modes, clips, paths, text, code, images and a camera. Its measured frames are split into five runs of consecutive frames, one in each chapter's settled part or crossfade: the first follows the warmup frames from frame 60, the others start at frames 140, 300, 410 and 600 whatever the warmup. It needs `--frames 5` or more |
 | `rings` | NEBULA's 24 rotating stroked ellipses alone ([path-rasterization.md](path-rasterization.md)) |
@@ -32,9 +33,9 @@ every scene before it starts timing, so only rendering is measured.
 | `shaders` | the `images` image graded by a full-screen custom shader, under six text lines that each ripple through a padded custom shader ([custom-shaders.md](custom-shaders.md)) |
 
 The synthetic workloads are laid out at 1920x1080 and scaled to `--size`;
-`nebula` and `spectra` are wrapped in a scaling group, with their blur,
-shadow, and glow radii scaled to match. `--size` must be 16:9. `nebula` and
-`spectra` need Node.js and a built `packages/react`: `scripts/bench.py
+`nebula`, `spectra` and `supernova` are wrapped in a scaling group, with their blur,
+shadow, and glow radii scaled to match. `--size` must be 16:9. `nebula`,
+`spectra` and `supernova` need Node.js and a built `packages/react`: `scripts/bench.py
 compare` builds it at both revisions, but before running `celesta-bench`
 directly, build it yourself:
 
