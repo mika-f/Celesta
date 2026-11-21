@@ -173,57 +173,29 @@ pub fn inspect(args: InspectArgs, stop: &Stop, media: &SharedMedia) -> CallToolR
     }
     let entry = std::path::absolute(&args.entry).unwrap_or_else(|_| args.entry.clone());
     let props = args.props.map(|props| Value::Object(props).to_string());
-    let failed = |error: ExportError| {
-        let choice = resolve_props_file(&entry, args.props_file.as_deref());
-        let (report, _) = report::build(&entry, choice, HintStyle::Mcp, |_| Err(error));
-        CallToolResult::structured_error(serde_json::to_value(report).expect("reports serialize"))
-    };
-    let (plugins, media) = match media.for_project(&entry) {
-        Ok(found) => found,
-        Err(error) => {
-            return match stop.halted() {
-                Some(halt) => stop.result(halt, LOADING),
-                None => failed(error),
-            };
-        }
-    };
-    let runtime = match ReactRuntimeOptions::for_entry(
+    let mut bridge = match spawn_bridge(
         &entry,
+        args.composition,
         args.props_file.as_deref(),
         props.as_deref(),
+        stop,
+        media,
     ) {
-        Ok(runtime) => runtime,
-        Err(error) => {
-            return match stop.halted() {
-                Some(halt) => stop.result(halt, LOADING),
-                None => failed(error),
-            };
-        }
-    };
-    let bridge = ReactBridge::spawn_with_options(
-        &runtime.node,
-        &runtime.cli_script,
-        &entry,
-        &runtime.properties,
-        SpawnOptions {
-            composition_id: args.composition,
-            stop: Some(stop.runtime.clone()),
-            plugins: Some(plugins.runtime()),
-            media: Some(media),
-            ..SpawnOptions::default()
-        },
-    );
-    let mut bridge = match bridge {
         Ok(bridge) => bridge,
-        Err(error) => {
-            return match stop.halted() {
-                Some(halt) => stop.result(halt, LOADING),
-                None => failed(ExportError::React(error)),
-            };
-        }
+        Err(result) => return result,
     };
     let entry_dir = entry.parent().unwrap_or_else(|| Path::new(".")).to_owned();
     let mut inspection = Inspection::new(&bridge, entry_dir);
+    let metadata = bridge.metadata();
+    inspection.comments = crate::comments::summary(
+        &entry,
+        &metadata.composition_id,
+        metadata
+            .compositions
+            .first()
+            .is_none_or(|first| first.id == metadata.composition_id),
+        &metadata.chapters,
+    );
     let finished = if args.loop_check {
         inspection
             .check_loop(&mut bridge, stop)
@@ -292,6 +264,47 @@ fn write_chapters(text: &mut String, chapters: &[ReactChapter]) {
     }
 }
 
+/// The React bridge for `entry`, loaded as an export would load it, or the
+/// tool's result when it fails or `stop` ends it first.
+#[expect(
+    clippy::result_large_err,
+    reason = "the error is the tool's own result, made once per call and returned as it is"
+)]
+pub(crate) fn spawn_bridge(
+    entry: &Path,
+    composition: Option<String>,
+    props_file: Option<&Path>,
+    props: Option<&str>,
+    stop: &Stop,
+    media: &SharedMedia,
+) -> Result<ReactBridge, CallToolResult> {
+    let failed = |error: ExportError| {
+        let choice = resolve_props_file(entry, props_file);
+        let (report, _) = report::build(entry, choice, HintStyle::Mcp, |_| Err(error));
+        CallToolResult::structured_error(serde_json::to_value(report).expect("reports serialize"))
+    };
+    let halted_or = |error: ExportError| match stop.halted() {
+        Some(halt) => stop.result(halt, LOADING),
+        None => failed(error),
+    };
+    let (plugins, media) = media.for_project(entry).map_err(halted_or)?;
+    let runtime = ReactRuntimeOptions::for_entry(entry, props_file, props).map_err(halted_or)?;
+    ReactBridge::spawn_with_options(
+        &runtime.node,
+        &runtime.cli_script,
+        entry,
+        &runtime.properties,
+        SpawnOptions {
+            composition_id: composition,
+            stop: Some(stop.runtime.clone()),
+            plugins: Some(plugins.runtime()),
+            media: Some(media),
+            ..SpawnOptions::default()
+        },
+    )
+    .map_err(|error| halted_or(ExportError::React(error)))
+}
+
 struct Inspection {
     frame_rate: Rational,
     total: u64,
@@ -306,6 +319,8 @@ struct Inspection {
     warnings: Vec<String>,
     missing: Vec<String>,
     problems: usize,
+    /// The comments line and counts, when the composition has comments.
+    comments: Option<(String, Value)>,
 }
 
 impl Inspection {
@@ -373,6 +388,7 @@ impl Inspection {
             frames: Vec::new(),
             loop_check: None,
             warnings,
+            comments: None,
             missing: Vec::new(),
             problems: 0,
         }
@@ -565,6 +581,9 @@ impl Inspection {
             (None, 0) => "OK: entry loads and every inspected frame evaluates".to_owned(),
             (_, problems) => format!("{problems} problem(s) found"),
         };
+        if let Some((line, _)) = &self.comments {
+            let _ = writeln!(self.text, "{line}");
+        }
         self.text.push_str(&summary);
         let mut value = json!({
             "composition": self.composition,
@@ -574,6 +593,9 @@ impl Inspection {
             "warnings": warnings,
             "missingFiles": self.missing,
         });
+        if let Some((_, comments)) = self.comments {
+            value["comments"] = comments;
+        }
         match self.loop_check {
             Some(loop_check) => value["loop"] = loop_check,
             None => value["frames"] = Value::Array(self.frames),

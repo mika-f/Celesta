@@ -81,6 +81,25 @@ pub struct Anchor {
     pub point: Option<Point>,
 }
 
+impl Anchor {
+    /// Where the anchor falls among `chapters`; an orphan has no last place
+    /// here (see [`Comment::place`]).
+    pub fn place(&self, chapters: &[ChapterSpan<'_>]) -> Placement {
+        let (start, chapter_name) = match &self.chapter {
+            None => (0, None),
+            Some(id) => match chapters.iter().find(|chapter| chapter.id == id) {
+                Some(chapter) => (chapter.from, Some(chapter.name.to_owned())),
+                None => return Placement::Orphaned { last_seen: None },
+            },
+        };
+        Placement::Placed {
+            from: start + self.from,
+            to: self.to.map(|to| start + to),
+            chapter_name,
+        }
+    }
+}
+
 /// A spot on the canvas: 0 is the left or top edge, 1 the right or bottom.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Point {
@@ -196,21 +215,11 @@ impl Comment {
     /// Where the anchor falls among `chapters`, the composition's chapters
     /// now.
     pub fn place(&self, chapters: &[ChapterSpan<'_>]) -> Placement {
-        let (start, chapter_name) = match &self.anchor.chapter {
-            None => (0, None),
-            Some(id) => match chapters.iter().find(|chapter| chapter.id == id) {
-                Some(chapter) => (chapter.from, Some(chapter.name.to_owned())),
-                None => {
-                    return Placement::Orphaned {
-                        last_seen: self.last_seen.clone(),
-                    };
-                }
+        match self.anchor.place(chapters) {
+            Placement::Orphaned { .. } => Placement::Orphaned {
+                last_seen: self.last_seen.clone(),
             },
-        };
-        Placement::Placed {
-            from: start + self.anchor.from,
-            to: self.anchor.to.map(|to| start + to),
-            chapter_name,
+            placed => placed,
         }
     }
 

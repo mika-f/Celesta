@@ -1215,6 +1215,7 @@ dependencies = [
  "celesta-exporter",
  "celesta-media",
  "celesta-plugin-host",
+ "celesta-project",
  "celesta-react-bridge",
  "celesta-renderer",
  "image",

@@ -26,6 +26,7 @@ use tokio::sync::Mutex;
 use crate::args::{
     ContactSheetArgs, DescribeComponentArgs, ExportVideoArgs, ListComponentsArgs, RenderFramesArgs,
 };
+use crate::comments::{self, ListCommentsArgs, ReplyArgs, ResolveArgs};
 use crate::docs;
 use crate::export::{self, Run};
 use crate::frames::{OutputDirs, image_blocks};
@@ -298,6 +299,48 @@ impl CelestaServer {
         let result = blocking(move || inspect::inspect(args, &stop, &media)).await;
         watcher.abort();
         result
+    }
+
+    #[tool(
+        description = "List the review comments people left on a video (in the project's celesta-comments/ folder): each one's id, author, body, replies, and anchor (a chapter id, frames from the chapter's start, and optionally a layer id and a canvas point as 0-1 fractions), placed in the composition as it is now: `frame` (and `toFrame` for a span) and `seconds` to pass to render_frames. `orphaned` is `chapter` when its chapter id is gone (`lastSeenFrame` is where it was) or `layer` when its layer is not at that frame. Open comments by default (`status`: open, resolved, all). Loads the entry to place them unless `check` is false."
+    )]
+    async fn list_comments(
+        &self,
+        Parameters(args): Parameters<ListCommentsArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> CallToolResult {
+        let stop = inspect::Stop::new(inspect::DEFAULT_TIMEOUT);
+        if context.ct.is_cancelled() {
+            stop.halt(Halt::Cancelled);
+        }
+        let watcher = {
+            let stop = stop.clone();
+            let cancelled = context.ct.clone();
+            tokio::spawn(async move {
+                tokio::select! {
+                    () = cancelled.cancelled() => stop.halt(Halt::Cancelled),
+                    () = tokio::time::sleep(inspect::DEFAULT_TIMEOUT) => stop.halt(Halt::TimedOut),
+                }
+            })
+        };
+        let media = self.media.clone();
+        let result = blocking(move || comments::list(args, &stop, &media)).await;
+        watcher.abort();
+        result
+    }
+
+    #[tool(
+        description = "Reply to a review comment from list_comments: say what you changed or ask what was meant. Pass your name as `author`."
+    )]
+    async fn reply_to_comment(&self, Parameters(args): Parameters<ReplyArgs>) -> CallToolResult {
+        blocking(move || comments::reply(args)).await
+    }
+
+    #[tool(
+        description = "Resolve a review comment once the change it asks for is made and checked (render the frame it names first), with an optional last `reply` saying what changed. `resolved: false` reopens it. Pass your name as `author`."
+    )]
+    async fn resolve_comment(&self, Parameters(args): Parameters<ResolveArgs>) -> CallToolResult {
+        blocking(move || comments::resolve(args)).await
     }
 
     #[tool(

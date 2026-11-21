@@ -248,3 +248,49 @@ fn the_author_can_be_set_by_environment() {
     // set here, since tests run in parallel in one process.
     assert!(!default_author(Path::new(".")).is_empty());
 }
+
+#[test]
+fn the_example_comments_load() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/scene-timing");
+    if !root.exists() {
+        return; // A packaged crate has no examples.
+    }
+    let loaded = CommentStore::new(&root).load();
+    assert!(loaded.problems.is_empty(), "{:?}", loaded.problems);
+    assert_eq!(loaded.comments.len(), 4);
+    let chapters = [
+        ChapterSpan {
+            id: "intro",
+            name: "Intro",
+            from: 0,
+        },
+        ChapterSpan {
+            id: "main",
+            name: "Main",
+            from: 90,
+        },
+        ChapterSpan {
+            id: "outro",
+            name: "Outro",
+            from: 210,
+        },
+    ];
+    let orphans: Vec<&str> = loaded
+        .comments
+        .iter()
+        .filter(|comment| comment.place(&chapters).is_orphaned())
+        .map(|comment| comment.anchor.chapter.as_deref().unwrap_or_default())
+        .collect();
+    assert_eq!(orphans, ["credits"]);
+    // Each comment's lastSeen matches where it is placed now.
+    for comment in &loaded.comments {
+        if let Placement::Placed { from, .. } = comment.place(&chapters) {
+            assert_eq!(
+                comment.last_seen.as_ref().map(|seen| seen.frame),
+                Some(from),
+                "{}",
+                comment.id
+            );
+        }
+    }
+}
