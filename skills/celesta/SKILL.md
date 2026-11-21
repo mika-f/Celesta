@@ -187,6 +187,16 @@ produces a video that differs between preview and export.
    - See the whole video at once with a contact sheet:
      `--every 150 --contact-sheet /tmp/celesta-sheet.png` (one tile every
      5 s at 30 fps).
+   - Before the final export, run the quality check:
+     `Celesta-export --json --react film.tsx --check-quality` (MCP:
+     `check_quality`). It renders every frame and reports, by stable code,
+     `flashing`/`red-flashing` (more than 3 flashes a second, a seizure
+     risk), `low-contrast-text` (under 4.5:1, 3:1 when large),
+     `short-shot`/`short-scene` (under 1 s), and `blank-first-frame` (frame
+     0 is the thumbnail). Fix each one, or tell the user why it stays
+     ([verify.md](references/verify.md#check-flashing-contrast-and-pacing)).
+     `inspect.mjs` and every export already warn about the layer-level
+     ones.
    - Export video only for audio or the final file. Use MOV/ProRes with the
      standard plugin; MP4 needs an installed H.264 encoder (native on macOS/Windows
      or the `ffmpeg-x264` download). Check `--list-components --check` first

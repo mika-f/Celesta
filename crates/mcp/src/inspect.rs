@@ -9,6 +9,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use celesta_composition::{Rational, Time};
+use celesta_exporter::quality::{self, QualityIssue, SceneLint};
 use celesta_exporter::report::{self, HintStyle};
 use celesta_exporter::{ExportError, ReactRuntimeOptions};
 use celesta_react_bridge::{
@@ -325,6 +326,10 @@ struct Inspection {
     frames: Vec<Value>,
     loop_check: Option<Value>,
     warnings: Vec<String>,
+    /// The quality issues found so far: the short scenes, then each frame's
+    /// layers through `lint`.
+    quality: Vec<QualityIssue>,
+    lint: SceneLint,
     missing: Vec<String>,
     problems: usize,
     /// The comments line and counts, when the composition has comments.
@@ -397,6 +402,8 @@ impl Inspection {
             loop_check: None,
             warnings,
             comments: None,
+            quality: quality::short_chapters(&metadata.chapters, rate),
+            lint: SceneLint::new(rate, true),
             missing: Vec::new(),
             problems: 0,
         }
@@ -470,6 +477,7 @@ impl Inspection {
     }
 
     fn describe(&mut self, frame: u64, evaluation: &FrameEvaluation) {
+        self.lint.observe(frame, &evaluation.scene);
         let scene = serde_json::to_value(&evaluation.scene).expect("scenes serialize");
         let audio: Vec<Value> = evaluation
             .audio
@@ -564,6 +572,10 @@ impl Inspection {
     fn finish(mut self) -> CallToolResult {
         self.problems += self.missing.len();
         self.text.push('\n');
+        let mut issues = std::mem::take(&mut self.quality);
+        issues.extend(self.lint.finish());
+        quality::sort_issues(&mut issues);
+        self.warnings.extend(issues.iter().map(ToString::to_string));
         let mut warnings = Vec::new();
         for warning in &self.warnings {
             if !warnings.contains(warning) {
@@ -599,6 +611,7 @@ impl Inspection {
             "compositions": self.compositions,
             "chapters": self.chapters,
             "warnings": warnings,
+            "quality": issues,
             "missingFiles": self.missing,
         });
         if let Some((_, comments)) = self.comments {

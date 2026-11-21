@@ -209,6 +209,31 @@ async fn render_frames_validates_json_projects() {
 }
 
 #[tokio::test]
+async fn check_quality_reports_what_the_pixels_show() {
+    if !runtime_built() {
+        return;
+    }
+    let (client, _) = client().await;
+    let dir = tempfile::tempdir().unwrap();
+    // Nothing is drawn: frame 0 is the background's one color.
+    let source = project(dir.path(), 16);
+    let result = call(&client, "check_quality", json!({ "source": source })).await;
+    assert!(!is_error(&result), "{}", text(&result));
+    let value = structured(&result);
+    assert_eq!(value["status"], "ok");
+    assert_eq!(value["quality"][0]["code"], "blank-first-frame", "{value}");
+    assert_eq!(value["quality"][0]["measured"], "pixels");
+    assert!(
+        text(&result).starts_with(
+            "1 quality issue(s) found:\nwarning: blank-first-frame: frame 0 is one flat color"
+        ),
+        "{}",
+        text(&result)
+    );
+    assert_eq!(value["outputs"], json!([]));
+}
+
+#[tokio::test]
 async fn react_arguments_on_json_are_usage_errors() {
     let (client, _) = client().await;
     let result = call(

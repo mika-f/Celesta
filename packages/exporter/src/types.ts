@@ -223,6 +223,29 @@ export interface ExportErrorReport {
   failedFrames?: FailedFrame[];
 }
 
+/**
+ * A quality or safety problem among the warnings: flashing, low-contrast
+ * text, a scene or shot under a second, a blank first frame. Every export
+ * reports those it reads from the layers; `Celesta-export --check-quality`
+ * renders every frame to measure the rest.
+ */
+export interface QualityIssue {
+  code: 'flashing' | 'red-flashing' | 'low-contrast-text' | 'short-scene' | 'short-shot' | 'blank-first-frame';
+  message: string;
+  /** From the evaluated layers, or from rendered pixels. */
+  measured: 'layers' | 'pixels';
+  /** Composition frames `[from, to)`, with their times in seconds. */
+  frames?: { from: number; to: number; start: number; end: number }[];
+  /** The text layer it is about. */
+  layer?: string;
+  /** Where on the canvas, in pixels. */
+  region?: { x: number; y: number; width: number; height: number };
+  /** Flashes in the worst second, a contrast ratio, or seconds. */
+  value?: number;
+  /** What `value` should stay within (flashes) or reach (contrast, seconds). */
+  limit?: number;
+}
+
 /** The exporter's `--json` result. */
 export interface ExportReport {
   status: 'ok' | 'error';
@@ -238,6 +261,8 @@ export interface ExportReport {
   warnings?: string[];
   /** The warnings with a stable code, each also in `warnings`. */
   codedWarnings?: CodedWarning[];
+  /** The quality issues among `warnings`, in full. */
+  quality?: QualityIssue[];
   stats?: { elapsedSeconds: number; renderFps?: number };
 }
 
@@ -261,6 +286,8 @@ export interface ExportResult {
   warnings: string[];
   /** The warnings with a stable code, each also in `warnings`. */
   codedWarnings: CodedWarning[];
+  /** The quality issues among `warnings`, in full; empty from an older exporter. */
+  quality: QualityIssue[];
   stats: { elapsedSeconds: number; renderFps?: number };
 }
 
@@ -282,7 +309,8 @@ export type ProgressEvent =
   | { event: 'rendering'; frame: number; total: number }
   | { event: 'mixingAudio' }
   | { event: 'muxing' }
-  | { event: 'warning'; code?: string; message: string }
+  /** A warning; a quality issue's has its `quality` entry too. */
+  | { event: 'warning'; code?: string; message: string; quality?: QualityIssue }
   /**
    * The components the export resolved, sent before rendering starts. A
    * still export sends it too, with its image muxer and encoder and

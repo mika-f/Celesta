@@ -24,7 +24,8 @@ use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
 use crate::args::{
-    ContactSheetArgs, DescribeComponentArgs, ExportVideoArgs, ListComponentsArgs, RenderFramesArgs,
+    CheckQualityArgs, ContactSheetArgs, DescribeComponentArgs, ExportVideoArgs, ListComponentsArgs,
+    RenderFramesArgs,
 };
 use crate::comments::{self, ListCommentsArgs, ReplyArgs, ResolveArgs};
 use crate::docs;
@@ -153,6 +154,25 @@ fn rendered(run: Run) -> CallToolResult {
     };
     result.structured_content = Some(run.report);
     result
+}
+
+/// A quality check's result: its warnings, one per line, then its report.
+/// Finding problems is a success: they are the result.
+fn checked(run: Run) -> CallToolResult {
+    if !run.ok {
+        return CallToolResult::structured_error(run.report);
+    }
+    let issues = run.report["quality"].as_array().map_or(0, Vec::len);
+    let mut text = match issues {
+        0 => "OK: no quality issues found\n".to_owned(),
+        found => format!("{found} quality issue(s) found:\n"),
+    };
+    for warning in run.report["warnings"].as_array().into_iter().flatten() {
+        if let Some(warning) = warning.as_str() {
+            text.push_str(&format!("warning: {warning}\n"));
+        }
+    }
+    success(text, run.report)
 }
 
 /// An error result shaped like an export report's.
@@ -381,6 +401,20 @@ impl CelestaServer {
     ) -> CallToolResult {
         match args.job() {
             Ok(job) => rendered(export::run(job, &self.render_lock, &self.media, &context).await),
+            Err(message) => usage_error(&message),
+        }
+    }
+
+    #[tool(
+        description = "Render every frame of a React entry or JSON project (or the start/end span) without writing a file, and report quality and safety problems as warnings with stable codes: flashing and red-flashing (more than 3 flashes in any second over a quarter of a third of the frame, WCAG 2.3.1), low-contrast-text (text under 4.5:1, 3:1 when large, against what is rendered behind it), short-shot (a picture between hard cuts under 1 s), short-scene (a chapter or video item under 1 s), and blank-first-frame (frame 0, the thumbnail, is one flat color). `quality` in the result lists each with its frames, times, layer, region and measured value. Takes as long as rendering the video; run it before the final export_video. inspect and every export already report short-scene, a blank frame 0 and text over solid colors from the layers."
+    )]
+    async fn check_quality(
+        &self,
+        Parameters(args): Parameters<CheckQualityArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> CallToolResult {
+        match args.job() {
+            Ok(job) => checked(export::run(job, &self.render_lock, &self.media, &context).await),
             Err(message) => usage_error(&message),
         }
     }

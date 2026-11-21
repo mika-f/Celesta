@@ -3,6 +3,7 @@ use crate::encode::{ExportSession, readback_for};
 use crate::error::ExportError;
 use crate::exporter::Exporter;
 use crate::project::{absolutize_fonts, absolutize_layers};
+use crate::quality::{self, SceneLint};
 use crate::range::ExportWindow;
 use crate::react::ReactVideoRequest;
 use celesta_composition::{Rational, Time, TimeError};
@@ -41,6 +42,8 @@ impl Exporter {
             .set_first_frame(u64::try_from(start_frame).map_err(|_| ExportError::TimelineTooLong)?);
         let mut reported_warnings = ReportedWarnings::default();
         let evaluator = Evaluator::new(project).map_err(ExportError::Evaluation)?;
+        quality::report(quality::short_items(project), progress);
+        let mut lint = SceneLint::new(frame_rate, true);
         for frame_index in 0..frame_count {
             ensure_not_cancelled(cancellation)?;
             progress(ExportProgress::Rendering {
@@ -59,6 +62,7 @@ impl Exporter {
                 .scene_at(time)
                 .map_err(ExportError::Evaluation)
                 .map_err(at_frame)?;
+            lint.observe(frame_index as u64, &scene);
             // `submit` keeps a few frames in flight on the GPU rather than
             // blocking on this frame's readback immediately, so the wait
             // (when there is one) overlaps with evaluating and encoding
@@ -77,6 +81,7 @@ impl Exporter {
         for frame in renderer.drain().map_err(ExportError::Render)? {
             session.encode_frame(frame)?;
         }
+        quality::report(lint.finish(), progress);
         Ok(())
     }
 
@@ -163,6 +168,7 @@ impl Exporter {
         };
 
         let mut reported_warnings = ReportedWarnings::default();
+        let mut lint = SceneLint::new(metadata.frame_rate, true);
         thread::scope(|scope| {
             // Node evaluates (and this side parses) the next frame on its own
             // thread while this one prepares and submits the current frame;
@@ -219,11 +225,13 @@ impl Exporter {
                 let Ok(scene) = frames.recv() else {
                     break;
                 };
+                let scene = scene?;
+                lint.observe(start_frame + offset, &scene);
                 // See render_video's matching comment: submit overlaps this
                 // frame's GPU work with evaluating and encoding other frames
                 // instead of blocking here.
                 if let Some(frame) = renderer
-                    .submit(&scene?)
+                    .submit(&scene)
                     .map_err(ExportError::Render)
                     .map_err(|error| error.at_frame(start_frame + offset))?
                 {
@@ -235,7 +243,9 @@ impl Exporter {
                 session.encode_frame(frame)?;
             }
             Ok(())
-        })
+        })?;
+        quality::report(lint.finish(), progress);
+        Ok(())
     }
 }
 

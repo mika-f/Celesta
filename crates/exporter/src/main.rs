@@ -106,6 +106,18 @@ chapters> entry with status: 'rough', drawn as a placeholder card) exports
 with a warning coded rough_scenes; --final refuses it instead, with the
 error code rough_scenes.
 
+Every export warns about scenes (React chapters, a JSON project's video
+items) under a second, a frame 0 with nothing but solid rectangles on it,
+and text whose color is too close to a solid color behind it, from the
+layers. --check-quality renders every frame (or the --from/--to span)
+without writing anything and also measures the pixels: more than three
+flashes in a second (WCAG 2.3.1, general and red), text under 4.5:1
+contrast (3:1 when large) against what is behind it, shots between hard
+cuts under a second, and a frame 0 of one flat color. Each warning starts
+with its code (flashing, red-flashing, low-contrast-text, short-scene,
+short-shot, blank-first-frame); --json lists them in full under quality.
+It exits 1 when it finds any.
+
 --inspect evaluates a React entry's frames without rendering pixels, with
 the same text shaping and media probing as an export. It reads one JSON
 request per stdin line, each a composition time (with openEnd, a time past
@@ -128,7 +140,7 @@ struct Cli {
     /// The .mp4, .mov (ProRes 4444 with alpha) or .webm (VP9 with alpha) file to
     /// write, or the .png, .jpg/.jpeg or .webp file for frame exports. Leave
     /// it out to write only the --subtitles files.
-    #[arg(required_unless_present_any = ["inspect", "info", "subtitles", "list_components", "describe"])]
+    #[arg(required_unless_present_any = ["inspect", "info", "subtitles", "list_components", "describe", "check_quality"])]
     output: Option<PathBuf>,
     /// Evaluate frames requested on stdin as JSON lines instead of exporting.
     #[arg(
@@ -142,6 +154,19 @@ struct Cli {
         ]
     )]
     inspect: bool,
+    /// Render every frame (or the --from/--to span) and report flashing,
+    /// low-contrast text, short shots and a blank first frame, writing
+    /// nothing; exits 1 when it finds any.
+    #[arg(
+        long,
+        conflicts_with_all = [
+            "output", "overwrite", "frames", "every", "contact_sheet", "columns", "tile_width",
+            "quality", "debug_guides", "subtitles", "looping", "loudness", "true_peak",
+            "peak_handling", "info", "inspect", "preset", "preset_file", "muxer", "video_encoder",
+            "video_option", "audio_encoder", "audio_option", "list_components", "describe",
+        ]
+    )]
+    check_quality: bool,
     /// Print the composition's size, frame rate and length, and a React
     /// entry's compositions, without rendering anything.
     #[arg(
@@ -503,15 +528,26 @@ fn main() -> ExitCode {
     }
     let range = export_range(cli.from, cli.to)
         .unwrap_or_else(|error| usage_error(cli.json, ErrorKind::ValueValidation, &error));
+    // A check fails when it finds anything; an export only when it fails.
+    let issues = std::cell::Cell::new(0_usize);
     let export = |on_progress: &mut dyn FnMut(ExportProgress)| {
-        job(&cli, &kind, range)?.run(&cancellation, on_progress)
+        job(&cli, &kind, range)?.run(&cancellation, &mut |event| {
+            if matches!(event, ExportProgress::Quality(_)) {
+                issues.set(issues.get() + 1);
+            }
+            on_progress(event);
+        })
     };
-    if cli.json {
-        return if json::run(cli.source(), props_file, cli.json_progress, export) {
+    let checked = |ok: bool| {
+        if ok && !(kind == OutputKind::Check && issues.get() > 0) {
             ExitCode::SUCCESS
         } else {
             ExitCode::FAILURE
-        };
+        }
+    };
+    if cli.json {
+        let ok = json::run(cli.source(), props_file, cli.json_progress, export);
+        return checked(ok);
     }
     let result = match (cli.output(), &kind) {
         (Some(output), OutputKind::Video(_) | OutputKind::Stills) => {
@@ -543,6 +579,10 @@ fn main() -> ExitCode {
                 }
             })
         }
+        (_, OutputKind::Check) => progress::run_plain(export).map(|()| match issues.get() {
+            0 => eprintln!("check complete: no quality issues found"),
+            found => eprintln!("check complete: {found} quality issue(s) found"),
+        }),
         // There is no picture to show progress for, so no dashboard either.
         _ => progress::run_plain(|on_progress| {
             export(&mut |event| {
@@ -555,7 +595,7 @@ fn main() -> ExitCode {
         .map(|()| eprintln!("export complete")),
     };
     match result {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(()) => checked(true),
         Err(error) => {
             print_error("Celesta export", &error);
             ExitCode::FAILURE
@@ -772,6 +812,7 @@ fn info(cli: &Cli, props_file: Option<PropsFileChoice>) -> ExitCode {
                     .collect();
                 println!("compositions: {}", ids.join(", "));
             }
+            ExportProgress::Quality(issue) => eprintln!("warning: {issue}"),
             _ => {}
         })
     });
@@ -881,6 +922,8 @@ enum OutputKind {
     /// A video, with these components.
     Video(OutputChoice),
     Stills,
+    /// Nothing: every frame is rendered and checked (`--check-quality`).
+    Check,
     /// Nothing: only the subtitle files.
     SubtitlesOnly,
 }
@@ -904,6 +947,9 @@ const COMPONENT_FLAGS: [(&str, &str); 7] = [
 /// flags clap cannot express. `explicit` tells whether the argument with
 /// that id was given on the command line.
 fn output_kind(cli: &Cli, explicit: &dyn Fn(&str) -> bool) -> Result<OutputKind, String> {
+    if cli.check_quality {
+        return Ok(OutputKind::Check);
+    }
     let Some(output) = cli.output() else {
         return subtitles_only_choice(explicit);
     };
@@ -1033,6 +1079,7 @@ fn described_job(cli: &Cli, kind: &OutputKind, range: Option<ExportRange>) -> Ex
             debug_guides: cli.debug_guides,
             quality: cli.quality,
         }),
+        check: *kind == OutputKind::Check,
         options: ExportOptions {
             overwrite: cli.overwrite,
             range,
@@ -1041,7 +1088,7 @@ fn described_job(cli: &Cli, kind: &OutputKind, range: Option<ExportRange>) -> Ex
                 // The audio and preset flags are refused for a still, so the
                 // choice carries only its image components.
                 OutputKind::Stills => cli.output_choice(),
-                OutputKind::SubtitlesOnly => OutputChoice::default(),
+                OutputKind::SubtitlesOnly | OutputKind::Check => OutputChoice::default(),
             },
             render_quality: cli.render_quality,
             driver: cli.driver,
@@ -1054,7 +1101,9 @@ fn described_job(cli: &Cli, kind: &OutputKind, range: Option<ExportRange>) -> Ex
                 OutputKind::Video(_) => {
                     PresetLookup::for_source(cli.source(), cli.preset_file.clone())
                 }
-                OutputKind::Stills | OutputKind::SubtitlesOnly => PresetLookup::default(),
+                OutputKind::Stills | OutputKind::SubtitlesOnly | OutputKind::Check => {
+                    PresetLookup::default()
+                }
             },
         },
         media: None,

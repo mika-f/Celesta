@@ -25,6 +25,8 @@ test('progress events reach the callback and the report resolves', { skip }, asy
   assert.equal((result as { status?: unknown }).status, undefined);
   // The fake echoes its arguments as warnings.
   assert.ok(result.warnings.includes('--json-progress'));
+  // An exporter older than the quality checks reports none.
+  assert.deepEqual(result.quality, []);
 });
 
 test('a video output carries its tracks', { skip }, async () => {

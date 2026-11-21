@@ -257,6 +257,9 @@ impl EditorView {
             ExportEvent::Progress(ExportProgress::Note(note)) => {
                 self.export_notices.note(note);
             }
+            ExportEvent::Progress(ExportProgress::Quality(issue)) => {
+                self.export_notices.warning(issue.to_string());
+            }
             // `Finished` reports the output; the status bar stays on the
             // last stage until then.
             ExportEvent::Progress(progress) => {

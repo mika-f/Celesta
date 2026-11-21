@@ -411,6 +411,7 @@ impl Exporter {
             frame_rate: project.settings.frame_rate,
             frames: frame_count(duration, project.settings.frame_rate)?,
         }));
+        crate::quality::report(crate::quality::short_items(project), &mut progress);
         Ok(())
     }
 

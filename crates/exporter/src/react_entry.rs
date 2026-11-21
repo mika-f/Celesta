@@ -553,7 +553,9 @@ pub(crate) fn check_rough_scenes(
 }
 
 /// Reports the entry's compositions and the selected one's size and length.
-fn report_composition(
+/// Reports the entry's roots and size, the legacy imports it uses, and
+/// its scenes (outermost chapters) shorter than a second.
+pub(crate) fn report_composition(
     metadata: &ReactCompositionMetadata,
     progress: &mut impl FnMut(ExportProgress),
 ) {
@@ -570,6 +572,10 @@ fn report_composition(
     for legacy in &metadata.legacy_imports {
         progress(ExportProgress::Warning(legacy.to_string()));
     }
+    crate::quality::report(
+        crate::quality::short_chapters(&metadata.chapters, metadata.frame_rate),
+        progress,
+    );
 }
 
 #[cfg(test)]

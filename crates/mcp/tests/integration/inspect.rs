@@ -36,6 +36,55 @@ async fn inspect_lists_layers() {
 }
 
 #[tokio::test]
+async fn inspect_reports_quality_warnings_from_the_layers() {
+    if !runtime_built() {
+        return;
+    }
+    let (_dir, source) = entry(
+        r##"
+import { Composition, Rect, Text } from '@celesta.studio/react';
+const chapters = [
+  { id: 'intro', from: 0, durationInFrames: 10 },
+  { id: 'body', from: 10, durationInFrames: 50 },
+];
+export default function Root() {
+  return <Composition width={320} height={180} fps={30} durationInFrames={60} chapters={chapters}>
+    <Rect width={320} height={180} fill="#0F2A3D" />
+    <Text id="title" x={160} y={90} style={{ fontSize: 8, fill: { type: 'solid', color: '#1F4A6D' } }}>Hello</Text>
+  </Composition>;
+}
+"##,
+    );
+    let (client, _) = client().await;
+    let result = call(&client, "inspect", json!({ "entry": source, "every": 1 })).await;
+    // Warnings, not problems.
+    assert!(!is_error(&result), "{}", text(&result));
+    let quality = structured(&result)["quality"].as_array().unwrap().clone();
+    let codes: Vec<&str> = quality
+        .iter()
+        .map(|issue| issue["code"].as_str().unwrap())
+        .collect();
+    assert_eq!(codes, ["low-contrast-text", "short-scene"], "{quality:?}");
+    assert_eq!(quality[0]["layer"], "title");
+    assert_eq!(quality[0]["frames"][0]["from"], 0);
+    assert_eq!(quality[0]["frames"][0]["to"], 60);
+    assert_eq!(quality[1]["frames"][0]["to"], 10);
+    assert!(
+        text(&result).contains("warning: short-scene: chapter \"intro\" lasts 0.33 s"),
+        "{}",
+        text(&result)
+    );
+
+    // Frame 0 with nothing but a rectangle is a blank thumbnail.
+    let (_dir, entry) = entry(RECT);
+    let result = call(&client, "inspect", json!({ "entry": entry })).await;
+    assert_eq!(
+        structured(&result)["quality"][0]["code"],
+        "blank-first-frame"
+    );
+}
+
+#[tokio::test]
 async fn inspect_resolves_negative_frames() {
     if !runtime_built() {
         return;

@@ -30,6 +30,10 @@ pub struct ExportJob {
     pub output: Option<PathBuf>,
     /// `Some` writes still images (PNG, JPEG or WebP) instead of a video.
     pub stills: Option<StillExport>,
+    /// Renders every frame (of `options.range`) and reports the quality
+    /// checks ([`crate::quality`]) instead of writing anything; `output`
+    /// and `stills` must be `None`.
+    pub check: bool,
     pub options: ExportOptions,
     /// The registry the export reads and writes media through, whatever
     /// registry is chosen meanwhile ([`Exporter::with_media`]); `None`
@@ -59,6 +63,29 @@ impl ExportJob {
             project_asset_root: asset_root(path),
         });
         let runtime = || self.runtime();
+        if self.check {
+            if self.output.is_some() || self.stills.is_some() {
+                return Err(ExportError::InvalidSelection(
+                    "a check writes no file; leave out the output".into(),
+                ));
+            }
+            return if self.react {
+                exporter.check_react_entry(
+                    &self.source,
+                    &runtime()?,
+                    companion,
+                    cancellation,
+                    progress,
+                )
+            } else {
+                exporter.check_project(
+                    &load(&self.source)?,
+                    asset_root(&self.source),
+                    cancellation,
+                    progress,
+                )
+            };
+        }
         let Some(output) = &self.output else {
             if self.stills.is_some() {
                 return Err(ExportError::InvalidSelection(
@@ -220,6 +247,7 @@ mod tests {
             props: None,
             output: Some(output.path().join("film.unwritten")),
             stills: None,
+            check: false,
             options: ExportOptions {
                 plugins: Some(celesta_plugin_host::InstalledPlugins::default()),
                 ..ExportOptions::default()

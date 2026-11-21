@@ -240,3 +240,79 @@ test('rough scenes are listed with their desc and warned about', () => {
     );
   });
 });
+
+/** What `inspect.mjs --json` reports as quality issues. */
+interface QualityIssue {
+  code: string;
+  message: string;
+  measured: 'layers' | 'pixels';
+  frames?: { from: number; to: number; start: number; end: number }[];
+  layer?: string;
+  value?: number;
+  limit?: number;
+}
+
+const lowContrast = `
+  import { Composition, Rect, Text, useCurrentFrame, interpolate } from '@celesta.studio/react';
+  const chapters = [
+    { id: 'intro', from: 0, durationInFrames: 10 },
+    { id: 'body', from: 10, durationInFrames: 50 },
+  ];
+  function Fading() {
+    // Fades in over frames 0–20, then holds: measured only once it holds.
+    const opacity = interpolate(useCurrentFrame(), [0, 20], [0, 1], { extrapolateRight: 'clamp' });
+    return <Text id="fading" x={160} y={150} opacity={opacity} style={{ fontSize: 8, fill: { type: 'solid', color: '#FFFFFF' } }}>Hi</Text>;
+  }
+  export default function Root() {
+    return <Composition width={320} height={180} fps={30} durationInFrames={60} chapters={chapters}>
+      <Rect width={320} height={180} fill="#0F2A3D" />
+      <Text id="title" x={160} y={90} style={{ fontSize: 8, fill: { type: 'solid', color: '#1F4A6D' } }}>Hello</Text>
+      <Text id="readable" x={160} y={40} style={{ fontSize: 8, fill: { type: 'solid', color: '#EAF4F2' } }}>Readable</Text>
+      <Fading />
+    </Composition>;
+  }
+`;
+
+test('the layer checks report low-contrast text and short scenes with their frames', () => {
+  withEntry('celesta-inspect-quality-', ({ write, inspect }) => {
+    write(lowContrast);
+    const json = inspect('--every', '1', '--json');
+    assert.equal(json.status, 0, json.stderr);
+    const { quality } = JSON.parse(json.stdout) as { quality: QualityIssue[] };
+    assert.deepEqual(quality.map((issue) => issue.code), ['low-contrast-text', 'short-scene']);
+    const [contrast, short] = quality as [QualityIssue, QualityIssue];
+    assert.equal(contrast.layer, 'title');
+    assert.equal(contrast.measured, 'layers');
+    assert.equal(contrast.limit, 3);
+    assert.deepEqual(contrast.frames, [{ from: 0, to: 60, start: 0, end: 2 }]);
+    assert.match(contrast.message, /^text layer "title" \("Hello"\) is #1F4A6D on #0F2A3D behind it: 1\.\d\d:1, below 3:1, at frames 0–59/);
+    assert.equal(short.value, 0.333);
+    assert.match(short.message, /^chapter "intro" lasts 0\.33 s \(frames 0–9 \(0\.00–0\.33 s\)\), under 1 s/);
+
+    const text = inspect('--frames', '0,30');
+    assert.equal(text.status, 0, text.stderr);
+    assert.match(text.stdout, /warning: low-contrast-text: text layer "title"/);
+    assert.match(text.stdout, /warning: short-scene: chapter "intro"/);
+  });
+});
+
+test('a first frame of nothing but solid rectangles is blank', () => {
+  withEntry('celesta-inspect-blank-', ({ write, inspect }) => {
+    write(`
+      import { Composition, Rect, Text, useCurrentFrame } from '@celesta.studio/react';
+      export default function Root() {
+        const frame = useCurrentFrame();
+        return <Composition width={320} height={180} fps={30} durationInFrames={60}>
+          <Rect width={320} height={180} fill="#101018" />
+          <Text x={160} y={90} opacity={frame === 0 ? 0 : 1} style={{ fontSize: 24 }}>Title</Text>
+        </Composition>;
+      }
+    `);
+    const { quality } = JSON.parse(inspect('--json').stdout) as { quality: QualityIssue[] };
+    assert.deepEqual(quality.map((issue) => [issue.code, issue.frames?.[0]?.from]), [['blank-first-frame', 0]]);
+    assert.match(quality[0]!.message, /^frame 0 shows only solid rectangles/);
+    // Frame 0 not inspected: nothing to say about it.
+    const later = JSON.parse(inspect('--frames', '1,2', '--json').stdout) as { quality: QualityIssue[] };
+    assert.deepEqual(later.quality, []);
+  });
+});

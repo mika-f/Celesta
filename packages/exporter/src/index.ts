@@ -70,6 +70,7 @@ function result(report: ExportReport): ExportResult {
     outputs: report.outputs ?? [],
     warnings: report.warnings ?? [],
     codedWarnings: report.codedWarnings ?? [],
+    quality: report.quality ?? [],
     stats: report.stats ?? { elapsedSeconds: 0 },
   };
 }

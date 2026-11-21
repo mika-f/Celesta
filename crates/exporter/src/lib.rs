@@ -1,5 +1,6 @@
 //! Frame-exact project export through the shared evaluator and renderers.
 
+mod check;
 pub mod components;
 mod control;
 mod encode;
@@ -13,6 +14,7 @@ mod options;
 mod output;
 pub mod presets;
 mod project;
+pub mod quality;
 mod range;
 mod react;
 mod react_entry;

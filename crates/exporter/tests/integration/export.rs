@@ -1381,6 +1381,7 @@ export default function Root() {
         props: None,
         output: None,
         stills: None,
+        check: false,
         options: ExportOptions {
             subtitles: vec![per_language("srt"), per_language("vtt")],
             ..ExportOptions::default()

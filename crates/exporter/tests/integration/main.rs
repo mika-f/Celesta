@@ -4,6 +4,7 @@ mod cli_formats;
 mod export;
 mod inspect;
 mod plugins_lock;
+mod quality;
 mod stills;
 
 use std::sync::{Arc, OnceLock};
