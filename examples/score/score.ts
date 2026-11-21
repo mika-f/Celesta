@@ -9,7 +9,7 @@ import { SCENES, sceneStart } from './timeline';
 // is a file; prepare() renders it to .celesta/score/<hash>.wav.
 export const score = defineScore({ fps: FPS, durationInFrames: SCENES.durationInFrames }, s => {
   s.tempo(GRID);
-  s.master({ gain: 0.85, fadeOut: 1.2 });
+  s.master({ gain: 0.6, fadeOut: 1.2 });
   s.program('keys', 'ep', { gain: 0.5, reverb: 0.3 });
   s.program('mallet', 'marimba', { gain: 0.55, pan: -0.25, bright: 0.7 });
   s.program('bass', 'bass', { gain: 0.6 });
@@ -24,15 +24,16 @@ export const score = defineScore({ fps: FPS, durationInFrames: SCENES.durationIn
   // Into every later scene: a whoosh that lands on its first frame, and a thud there.
   for (const scene of SCENES.scenes.slice(1)) {
     s.fx('whoosh', { frame: scene.from, reverse: true, dur: 0.7, vel: 0.6 });
-    s.drum('kick', { frame: scene.from, vel: 0.9 });
+    s.fx('thud', { frame: scene.from, vel: 0.7 });
   }
 
-  // Beat: two bars of groove; the squares bump on the same beats (useBeat(GRID)).
+  // Beat: two bars of groove (each line is one bar, so repeat 2), and the
+  // squares bump on the same beats (useBeat(GRID)).
   const beat = sceneStart('beat');
   const from = { frame: beat };
-  s.drums({ kick: 'x...x...', hat: '.x.x.x.X', clap: '....x...' }, { ...from, repeat: 4 });
-  s.pattern('bass', 'x.xx.x.x', { ...from, repeat: 4, pitch: ['D2', 'D2', 'F2', 'A1', 'C2'] });
-  s.pattern('mallet', 'x.x.x.xX', { ...from, repeat: 4, pitch: ['D5', 'F5', 'A5', 'C6', 'A5', 'F5', 'E5', 'D5'], vel: 0.6 });
+  s.drums({ kick: 'x...x...', hat: '.x.x.x.X', clap: '....x...' }, { ...from, repeat: 2 });
+  s.pattern('bass', 'x.xx.x.x', { ...from, repeat: 2, pitch: ['D2', 'D2', 'F2', 'A1', 'C2'] });
+  s.pattern('mallet', 'x.x.x.xX', { ...from, repeat: 2, pitch: ['D5', 'F5', 'A5', 'C6', 'A5', 'F5', 'E5', 'D5'], vel: 0.6 });
   s.chord('keys', ['D4', 'F4', 'A4', 'C5'], { ...from, frames: BAR });
   s.chord('keys', ['Bb3', 'D4', 'F4', 'A4'], { frame: beat + BAR, frames: BAR });
 

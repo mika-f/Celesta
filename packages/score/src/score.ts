@@ -291,7 +291,10 @@ export function buildScore(options: ScoreOptions, build: (s: ScoreBuilder) => vo
       dropped.push(time);
       return;
     }
-    events.push({ ...event, time, frame: time * fps });
+    // A time given in frames comes back as that frame, not as 31.000000000000004.
+    const frame = time * fps;
+    const whole = Math.round(frame);
+    events.push({ ...event, time, frame: Math.abs(frame - whole) < 1e-9 ? whole : frame });
   };
 
   const run = <A extends unknown[]>(name: string, describe: (...args: A) => string, body: (...args: A) => void) => (...args: A): void => {
