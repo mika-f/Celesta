@@ -339,3 +339,21 @@ test('a cut between frames moves whole-second keyframes by exactly the cut', () 
   assert.deepEqual(volume.keyframes.map(({ time }) => time.value / time.timescale), [-0.4, 0.6]);
   composition.dispose();
 });
+
+test('a cut clip resumes past a rate that steps at one time', () => {
+  function Step(): React.ReactElement {
+    const frame = useCurrentFrame();
+    if (frame >= 30 && frame < 60) throw new Error('step broke');
+    return h(Audio, {
+      src: 'step.wav',
+      // 1x until 1 s, then 2x at once (two keys at 1 s): 1 + 2 = 3 s of source by 2 s.
+      playbackRate: keyframesAt([[0, 1, 1], [1, 1, 1], [1, 1, 2]]),
+    });
+  }
+  const scenes = defineScenes([{ id: 'step', durationInFrames: 90, Scene: Step }]);
+  const composition = mount(() => h(Composition, { width: 100, height: 100, fps: 30, durationInFrames: 90 }, h(Scenes, { scenes })));
+  const [, resumed] = composition.collectAudio({ preview: true });
+  assert.ok(Math.abs(resumed.start - 2) < 1e-9);
+  assert.ok(Math.abs(resumed.sourceStart - 3) < 1e-9, `${resumed.sourceStart}`);
+  composition.dispose();
+});

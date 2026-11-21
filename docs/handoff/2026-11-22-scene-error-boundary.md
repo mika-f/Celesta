@@ -105,7 +105,7 @@ frame 105):
   frame (the sink gets the boundary with each report), then cuts each clip
   where one of its boundaries failed (`cutAudioClip` in `audio-cut.ts`). A
   cut piece starts its source at the playback rate integrated from the
-  clip's start (`integrateAnimated`: Simpson's rule between keyframes, with
+  clip's start (`integrateAnimated`, as `integrate_f64` does: each segment over its eased progress, cuts of length 0 adding nothing, with
   the keyframe easings of `Easings`), moves its curves earlier by exactly
   the cut (re-timed in microseconds, so keyframes in whole seconds follow a
   cut between frames), and keeps a fade only at the clip's own edge.

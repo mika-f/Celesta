@@ -24,29 +24,7 @@ function easingCurve(easing: Easing | null | undefined): (t: number) => number {
   return curve;
 }
 
-/**
- * The value at clip-local `time` seconds: held before the first and after the
- * last keyframe, eased by the destination keyframe's easing between them.
- */
-function evaluate(value: AnimatedNumber, time: number): number {
-  if (typeof value === 'number') return value;
-  const keys = value.keyframes;
-  if (keys.length === 0) return 0;
-  if (time <= secondsOf(keys[0])) return keys[0].value;
-  for (let index = 1; index < keys.length; index++) {
-    const from = keys[index - 1];
-    const to = keys[index];
-    if (time <= secondsOf(to)) {
-      const duration = secondsOf(to) - secondsOf(from);
-      if (duration <= 0) return to.value;
-      const progress = Math.min(1, Math.max(0, (time - secondsOf(from)) / duration));
-      return from.value + (to.value - from.value) * easingCurve(to.easing)(progress);
-    }
-  }
-  return keys[keys.length - 1].value;
-}
-
-/** Composite Simpson's rule for ∫ₐᵇ f, as the native mixer integrates eased segments. */
+/** Composite Simpson's rule for ∫ₐᵇ f, with the native mixer's step count. */
 function simpson(f: (t: number) => number, a: number, b: number): number {
   if (b <= a) return 0;
   const steps = 128;
@@ -58,18 +36,36 @@ function simpson(f: (t: number) => number, a: number, b: number): number {
 
 /**
  * ∫₀ᵗ of `value` over clip-local seconds: how far into its source a clip
- * has played after `time` at an animated rate. Integrated piece by piece
- * between keyframes, where the curve is smooth.
+ * has played after `time` at an animated rate. As `integrate_f64` in
+ * `crates/composition/src/animation.rs` (and `@celesta.studio/web`'s port)
+ * does it: the first value holds before the first keyframe and the last
+ * after the last, each segment is integrated over its own eased progress,
+ * and a segment of length 0 (a cut between two keys at one time) adds
+ * nothing, so neither side of a cut leaks into the other.
  */
 export function integrateAnimated(value: AnimatedNumber, time: number): number {
-  if (time <= 0) return 0;
-  if (typeof value === 'number') return value * time;
-  const breaks = [0, ...value.keyframes.map(secondsOf).filter((at) => at > 0 && at < time), time];
-  let integral = 0;
-  for (let index = 1; index < breaks.length; index++) {
-    integral += simpson((at) => evaluate(value, at), breaks[index - 1], breaks[index]);
+  const end = Math.max(0, time);
+  if (typeof value === 'number') return value * end;
+  const keys = value.keyframes;
+  if (keys.length === 0) return 0;
+  const firstTime = Math.max(0, secondsOf(keys[0]));
+  let integral = keys[0].value * Math.min(end, firstTime);
+  if (end <= firstTime) return integral;
+  for (let index = 1; index < keys.length; index++) {
+    const from = keys[index - 1];
+    const to = keys[index];
+    const start = secondsOf(from);
+    const finish = secondsOf(to);
+    const duration = finish - start;
+    if (duration <= 0) continue;
+    // Only the part of the segment from clip-local 0 to `end`.
+    const a = Math.min(1, Math.max(0, -start / duration));
+    const b = Math.min(1, Math.max(0, (end - start) / duration));
+    integral += duration * ((b - a) * from.value + (to.value - from.value) * simpson(easingCurve(to.easing), a, b));
+    if (end <= finish) return integral;
   }
-  return integral;
+  const last = keys[keys.length - 1];
+  return integral + last.value * Math.max(0, end - Math.max(0, secondsOf(last)));
 }
 
 /**
