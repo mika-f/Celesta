@@ -162,6 +162,221 @@ fn frames_through_shared_memory_are_the_frames_through_the_pipe() {
 }
 
 #[test]
+fn sequential_prefetch_matches_disabled_decoding() {
+    let directory = tempfile::tempdir().unwrap();
+    let video = directory.path().join("prefetch.ctst");
+    let frames: Vec<_> = (0..24).map(|index| vec![index; 64 * 36 * 4]).collect();
+    write_rgba_video(&video, 64, 36, Rational::new(24, 1), &frames).unwrap();
+    let other_video = directory.path().join("other.ctst");
+    let frames: Vec<_> = (0..24)
+        .map(|index| vec![255 - index; 64 * 36 * 4])
+        .collect();
+    write_rgba_video(&other_video, 64, 36, Rational::new(24, 1), &frames).unwrap();
+    let sequences = [
+        (0..12).map(|index| ("a", index)).collect::<Vec<_>>(),
+        (0..12).map(|index| ("a", index * 2)).collect(),
+        (0..12)
+            .flat_map(|index| [("a", index), ("b", index + 4)])
+            .collect(),
+        (0..6)
+            .flat_map(|index| ["a", "b", "c", "d", "e", "f"].map(|session| (session, index)))
+            .collect(),
+        [0, 1, 2, 2, 2, 3, 4, 5, 0, 1, 2, 23, 24, 25, 48]
+            .map(|index| ("a", index))
+            .to_vec(),
+        [0, 1, 2, 4, 6, 8, 11, 14, 17]
+            .map(|index| ("a", index))
+            .to_vec(),
+    ];
+    for transport in [FrameTransport::SharedMemory, FrameTransport::Pipe] {
+        for sequence in &sequences {
+            let mut enabled = program_with(transport, ProviderUse::Decode);
+            enabled.set_decode_prefetch(true);
+            let mut disabled = program_with(transport, ProviderUse::Decode);
+            disabled.set_decode_prefetch(false);
+            for &(session, index) in sequence {
+                let request = VideoRequest {
+                    path: if session == "b" { &other_video } else { &video },
+                    time: f64::from(index) / 24.0,
+                    sequential: Some(Sequential {
+                        session,
+                        frame_rate: Rational::new(24, 1),
+                    }),
+                };
+                assert_eq!(
+                    enabled.decode_video(DECODER_ID, &request).unwrap(),
+                    disabled.decode_video(DECODER_ID, &request).unwrap(),
+                    "{transport:?}, {session}, {index}"
+                );
+                if index == 2 {
+                    let voice = Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("../../examples/assets/voices/001.wav");
+                    assert_eq!(
+                        enabled.decode_audio(DECODER_ID, &voice, 44_100, 1).unwrap(),
+                        disabled
+                            .decode_audio(DECODER_ID, &voice, 44_100, 1)
+                            .unwrap()
+                    );
+                }
+                if index == 3 {
+                    assert_eq!(
+                        enabled.probe(DECODER_ID, &video).unwrap(),
+                        disabled.probe(DECODER_ID, &video).unwrap()
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn prefetch_predicts_constant_steps_but_not_pauses_seeks_or_changing_steps() {
+    for (times, expected, sequential, enabled) in [
+        (vec![0, 1, 2, 3, 4], vec![0, 1, 2, 3, 4, 5], true, true),
+        (vec![0, 2, 4, 6, 8], vec![0, 2, 4, 6, 8, 10], true, true),
+        (vec![0, 1, 2, 2, 0], vec![0, 1, 2, 3, 2, 0], true, true),
+        (vec![0, 1, 3, 6], vec![0, 1, 3, 6], true, true),
+        (vec![0, 1, 2, 3, 4], vec![0, 1, 2, 3, 4], false, true),
+        (vec![0, 1, 2, 3, 4], vec![0, 1, 2, 3, 4], true, false),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let video = directory.path().join("video.ctst");
+        write_rgba_video(
+            &video,
+            2,
+            2,
+            Rational::new(24, 1),
+            &(0..24).map(|index| vec![index; 16]).collect::<Vec<_>>(),
+        )
+        .unwrap();
+        let (program, log) = logged_program(directory.path());
+        let mut process =
+            MediaProcess::start(&program, directory.path(), &Default::default()).unwrap();
+        process.set_decode_prefetch(enabled);
+        for time in times {
+            process
+                .decode_video(
+                    DECODER_ID,
+                    &VideoRequest {
+                        path: &video,
+                        time: f64::from(time) / 24.0,
+                        sequential: sequential.then_some(Sequential {
+                            session: "layer",
+                            frame_rate: Rational::new(24, 1),
+                        }),
+                    },
+                )
+                .unwrap();
+        }
+        process.probe(DECODER_ID, &video).unwrap();
+        let actual: Vec<_> = headers(&std::fs::read(log).unwrap())
+            .into_iter()
+            .filter(|header| header["type"] == "decodeVideo")
+            .map(|header| (header["time"].as_f64().unwrap() * 24.0).round() as i32)
+            .collect();
+        assert_eq!(actual, expected);
+    }
+}
+
+/// Relays the real test codec, but refuses or hangs on decode number four,
+/// the first predicted request. The marker proves that request was sent.
+#[cfg(unix)]
+fn speculative_program(directory: &Path, mode: &str) -> (PathBuf, PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let program = directory.join("speculative.sh");
+    let marker = directory.join("speculative");
+    std::fs::write(
+        &program,
+        format!(
+            "#!/bin/sh\nexec {:?} {:?} {:?} {:?}\n",
+            env!("CARGO_BIN_EXE_decode-prefetch-relay"),
+            env!("CARGO_BIN_EXE_celesta-codec-test"),
+            marker,
+            mode,
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    (program, marker)
+}
+
+#[cfg(unix)]
+#[test]
+fn speculative_errors_are_discarded_but_killed_hangs_surface_and_drop_is_safe() {
+    use std::time::{Duration, Instant};
+    for mode in ["error", "hang", "drop"] {
+        let directory = tempfile::tempdir().unwrap();
+        let video = directory.path().join("video.ctst");
+        write_rgba_video(
+            &video,
+            2,
+            2,
+            Rational::new(24, 1),
+            &(0..8).map(|index| vec![index; 16]).collect::<Vec<_>>(),
+        )
+        .unwrap();
+        let (program, marker) =
+            speculative_program(directory.path(), if mode == "drop" { "hang" } else { mode });
+        let kill = celesta_plugin_host::PluginKillSwitch::new();
+        let mut process = MediaProcess::start(&program, directory.path(), &kill).unwrap();
+        process.set_decode_prefetch(true);
+        for index in 0..3 {
+            process
+                .decode_video(
+                    DECODER_ID,
+                    &VideoRequest {
+                        path: &video,
+                        time: f64::from(index) / 24.0,
+                        sequential: Some(Sequential {
+                            session: "layer",
+                            frame_rate: Rational::new(24, 1),
+                        }),
+                    },
+                )
+                .unwrap();
+        }
+        let started = Instant::now();
+        while !marker.exists() && started.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(marker.exists(), "no speculative request");
+        let started = Instant::now();
+        match mode {
+            "error" => {
+                process.probe(DECODER_ID, &video).unwrap();
+                let frame = process
+                    .decode_video(
+                        DECODER_ID,
+                        &VideoRequest {
+                            path: &video,
+                            time: 3.0 / 24.0,
+                            sequential: Some(Sequential {
+                                session: "layer",
+                                frame_rate: Rational::new(24, 1),
+                            }),
+                        },
+                    )
+                    .unwrap();
+                assert_eq!(frame.pixels.as_slice(), &[3; 16]);
+            }
+            "hang" => {
+                kill.kill();
+                assert!(matches!(
+                    process.probe(DECODER_ID, &video),
+                    Err(MediaError::CodecStopped(_))
+                ));
+            }
+            "drop" => {
+                drop(process);
+            }
+            _ => unreachable!(),
+        }
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
+}
+
+#[test]
 fn the_program_answers_decoding_as_the_codec_in_process_does() {
     let mut provider = program();
     let process = provider.decoder().expect("a decoder");

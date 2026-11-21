@@ -6,7 +6,7 @@ use crate::provider::{
     Answered, AudioEncoder, AudioEncoderOpened, AudioEncoderRequest, ComponentDescription, Decoder,
     Encoded, MediaProvider, Muxer, MuxerRequest, PIPE_WINDOW, Pipeline, ProviderFactory,
     ProviderUse, SessionId, TrackPacket, VideoEncoder, VideoEncoderOpened, VideoEncoderRequest,
-    VideoRequest,
+    VideoRequest, timestamps_match,
 };
 use crate::ring::pipe_depth;
 use crate::types::{AudioBuffer, MediaProbe, VideoFrame};
@@ -49,6 +49,9 @@ pub const SHARED_FRAME_BYTES: usize = celesta_plugin::shared::SLOT_HEADER + (40 
 /// pipe: no codec process is offered shared memory.
 pub const SHARED_MEMORY_VARIABLE: &str = "CELESTA_CODEC_SHARED_MEMORY";
 
+/// Set to `0` to disable sequential video decode prefetch in new processes.
+pub const DECODE_PREFETCH_VARIABLE: &str = "CELESTA_DECODE_PREFETCH";
+
 /// How a codec process's decoded frames reach Celesta.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FrameTransport {
@@ -72,7 +75,9 @@ impl FrameTransport {
 /// A running media plugin (see [`PluginChild`] for its window, deadlines,
 /// and stderr). Its encode and write requests may go several at a time
 /// through its [`Pipeline`]; every other request is sent only when none is
-/// in flight, and refused otherwise. Dropping it stops the process before
+/// in flight, and refused otherwise. One speculative sequential decode may
+/// overlap host work; it is received and copied before any other request.
+/// Dropping it stops the process before
 /// it unmaps the memory shared with it, so the process never writes into
 /// memory being unmapped.
 pub struct MediaProcess {
@@ -97,6 +102,29 @@ pub struct MediaProcess {
     /// The channels of each open audio encoder session, which its
     /// `encodeAudio` counts frames by.
     audio_channels: HashMap<SessionId, u16>,
+    prefetch_enabled: bool,
+    prediction: VecDeque<DecodeHistory>,
+    speculative: Option<DecodeKey>,
+    decoded: VecDeque<(DecodeKey, VideoFrame)>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct DecodeSession {
+    decoder: String,
+    session: String,
+    path: PathBuf,
+    frame_rate: celesta_composition::Rational,
+}
+
+struct DecodeKey {
+    session: DecodeSession,
+    time: f64,
+}
+
+struct DecodeHistory {
+    session: DecodeSession,
+    time: f64,
+    step: f64,
 }
 
 /// A request the [`Pipeline`] sent: what its answer is, and the ring slot
@@ -297,7 +325,75 @@ impl MediaProcess {
             pipe_depth: PIPE_WINDOW,
             pending: VecDeque::new(),
             audio_channels: HashMap::new(),
+            prefetch_enabled: std::env::var_os(DECODE_PREFETCH_VARIABLE)
+                .is_none_or(|value| value != "0"),
+            prediction: VecDeque::new(),
+            speculative: None,
+            decoded: VecDeque::new(),
         })
+    }
+
+    /// Enables or disables sequential decode prefetch. Any already-sent
+    /// request is still drained before the next operation on this process.
+    pub fn set_decode_prefetch(&mut self, enabled: bool) {
+        self.prefetch_enabled = enabled;
+        self.prediction.clear();
+        self.decoded.clear();
+    }
+
+    fn drain_prefetch(&mut self) -> Result<(), MediaError> {
+        let Some(key) = self.speculative.take() else {
+            return Ok(());
+        };
+        let answer = self
+            .child
+            .receive()
+            .map_err(media_error)
+            .and_then(|answer| protocol::decode_video_frame(answer, self.frames.as_mut()));
+        match answer {
+            Ok(frame) => {
+                if self.prefetch_enabled {
+                    if self.decoded.len() == 4 {
+                        self.decoded.pop_front();
+                    }
+                    self.decoded.push_back((key, frame));
+                }
+                Ok(())
+            }
+            Err(error @ (MediaError::CodecUnavailable(_) | MediaError::CodecStopped(_))) => {
+                Err(error)
+            }
+            Err(_) => Ok(()),
+        }
+    }
+
+    fn predict(&mut self, session: DecodeSession, time: f64) -> Option<f64> {
+        let previous = self
+            .prediction
+            .iter()
+            .position(|entry| entry.session == session)
+            .and_then(|index| self.prediction.remove(index));
+        let step = previous
+            .as_ref()
+            .map_or(0.0, |previous| time - previous.time);
+        let predicted = previous
+            .filter(|previous| {
+                step > 0.0
+                    && step.is_finite()
+                    && previous.step > 0.0
+                    && timestamps_match(step, previous.step)
+                    && (time + step).is_finite()
+            })
+            .map(|_| time + step);
+        if self.prediction.len() == 16 {
+            self.prediction.pop_front();
+        }
+        self.prediction.push_back(DecodeHistory {
+            session,
+            time,
+            step,
+        });
+        predicted
     }
 
     /// Makes a [`ProviderFactory`] that starts `executable` in `directory`
@@ -345,7 +441,8 @@ impl MediaProcess {
     }
 
     /// Refuses `kind` while pipelined requests are in flight.
-    fn idle(&self, kind: &str) -> Result<(), MediaError> {
+    fn idle(&mut self, kind: &str) -> Result<(), MediaError> {
+        self.drain_prefetch()?;
         match self.pending.len() {
             0 => Ok(()),
             in_flight => Err(MediaError::Codec(format!(
@@ -364,6 +461,10 @@ impl MediaProcess {
         kind: PendingKind,
         slot: Option<usize>,
     ) -> Result<(), MediaError> {
+        if let Err(error) = self.drain_prefetch() {
+            self.release(slot);
+            return Err(error);
+        }
         match self.child.send(
             request,
             expected,
@@ -572,6 +673,34 @@ impl Decoder for MediaProcess {
             ));
         }
         let path = absolute(request.path);
+        self.idle("decodeVideo")?;
+        let session = request
+            .sequential
+            .filter(|_| self.prefetch_enabled)
+            .map(|sequential| DecodeSession {
+                decoder: decoder.to_owned(),
+                session: sequential.session.to_owned(),
+                path: path.clone(),
+                frame_rate: sequential.frame_rate,
+            });
+        let predicted = session
+            .as_ref()
+            .and_then(|session| self.predict(session.clone(), request.time));
+        if let Some(session) = &session {
+            self.decoded.retain(|(key, _)| {
+                key.session.session != session.session
+                    || (key.session == *session && timestamps_match(key.time, request.time))
+            });
+        }
+        let cached = session.as_ref().and_then(|session| {
+            self.decoded
+                .iter()
+                .position(|(key, _)| {
+                    key.session == *session && timestamps_match(key.time, request.time)
+                })
+                .and_then(|index| self.decoded.remove(index))
+                .map(|(_, frame)| frame)
+        });
         let message = protocol::decode_video_request(
             decoder,
             &VideoRequest {
@@ -579,11 +708,40 @@ impl Decoder for MediaProcess {
                 ..*request
             },
         )?;
-        let answer = self.request(message, "videoFrame", DECODE_VIDEO_TIMEOUT);
-        named(
+        let frame = named(
             request.path,
-            answer.and_then(|answer| protocol::decode_video_frame(answer, self.frames.as_mut())),
-        )
+            match cached {
+                Some(frame) => Ok(frame),
+                None => self
+                    .request(message, "videoFrame", DECODE_VIDEO_TIMEOUT)
+                    .and_then(|answer| protocol::decode_video_frame(answer, self.frames.as_mut())),
+            },
+        )?;
+        if let (Some(time), Some(session)) = (predicted, session) {
+            let message = protocol::decode_video_request(
+                decoder,
+                &VideoRequest {
+                    path: &path,
+                    time,
+                    ..*request
+                },
+            )?;
+            // A failed send leaves the decoded frame valid; the process's
+            // failure surfaces on the next request instead.
+            if self
+                .child
+                .send(
+                    message,
+                    "videoFrame",
+                    DECODE_VIDEO_TIMEOUT,
+                    DeadlineFrom::Sent,
+                )
+                .is_ok()
+            {
+                self.speculative = Some(DecodeKey { session, time });
+            }
+        }
+        Ok(frame)
     }
 
     fn decode_audio(
