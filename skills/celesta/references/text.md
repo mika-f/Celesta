@@ -13,6 +13,7 @@ Syntax-highlighted code is in [code.md](code.md).
 
 - [The Text layer](#the-text-layer)
 - [Shorthand props and `<Theme>`](#shorthand-props-and-theme)
+- [Palettes](#palettes): definePalettes, mix, alpha, `<Theme palette>`
 - [Rich text with `<Span>`](#rich-text-with-span)
 - [Emphasis ranges](#emphasis-ranges): emphasisContent, resolveEmphasis, graphemes
 - [Timed ranges](#timed-ranges): resolveTimedRanges, timedRangeAt
@@ -124,6 +125,74 @@ palette and type live in one place instead of a `Label` wrapper:
 
 See [`packages/cli/examples/with-theme.tsx`](../../../packages/cli/examples/with-theme.tsx)
 and [`examples/reel`](../../../examples/reel/film.tsx).
+
+## Palettes
+
+A palette gives every color of the film one of four roles, so another
+palette recolors all of it: `ground` (behind everything), `main` (the chief
+color), `second` (ink for words, at least 4.5:1 on `ground`), and `accent`
+(a touch here and there). Blends of them are named once in `derived`, and
+each palette makes its own. Several palettes per film are picked by a
+project property, so the Properties panel, `props.json`, and `--props`
+switch them without editing code.
+
+```tsx
+import { Theme, alpha, defineProjectProperties, definePalettes, getProjectProperty, mix } from '@celesta.studio/react';
+
+const palettes = definePalettes({
+  harbor: { ground: '#0F2A3D', main: '#5FD3B5', second: '#EAF4F2', accent: '#F2B544' },
+  paper:  { ground: '#F4F1EA', main: '#1F4E79', second: '#111111', accent: '#D93A12' },
+}, {
+  derived: {
+    card: mix('ground', 'main', 0.14),   // color-mix(in srgb, ground 86%, main)
+    veil: alpha('second', 0.2),          // color-mix(in srgb, second 20%, transparent)
+    edge: mix('card', '#000000', 0.3),   // a name defined above, or a hex color
+  },
+  default: 'harbor',                     // the first palette when omitted
+});
+defineProjectProperties({ palette: palettes.property({ label: 'Palette' }) });
+
+export default function Film() {
+  return <Composition width={1920} height={1080} fps={30} durationInFrames={90}>
+    <Theme fonts={FONTS} palette={palettes.get(getProjectProperty('palette'))}>
+      <Rect width={1920} height={1080} fill="ground" />
+      <Rect x={160} y={160} width={1600} height={760} fill="card" stroke="veil" strokeWidth={2} />
+      <Text x={240} y={240} fontSize={96} color="second">Harbor <Span color="accent">report</Span></Text>
+    </Theme>
+  </Composition>;
+}
+```
+
+```sh
+Celesta-export --react film.tsx paper.mp4 --props '{"palette":"paper"}'
+```
+
+- The roles and derived names are `<Theme>` color names, so they work
+  everywhere the list above says. `colors` given with `palette` win over
+  it; a nested `<Theme colors>` adds to it; an inner `palette` replaces the
+  outer one's names. `useTheme().palette` is the palette in effect
+  (`.name`, `.roles`, `.colors`), for `interpolateColor()` and the like.
+- Draw with role and derived names only. A hex color written in a scene
+  does not follow the palette.
+- `mix(a, b, t)` blends premultiplied in sRGB, as CSS `color-mix` does;
+  `alpha(c, t)` multiplies `c`'s opacity by `t`. `t` is 0 to 1. Derived
+  colors are `#RRGGBB` (or `#RRGGBBAA` when see-through), computed once.
+- `palettes.property()` is a plain `select` field (`options` = the palette
+  names, `defaultValue` = the default palette), so the CLI refuses another
+  name with `invalid_properties` before `prepare()`. `palettes.get(name)`
+  throws on a name it does not know and returns the default for
+  `undefined`; `palettes.names` and `palettes.palettes` list them.
+- `definePalettes()` throws when a role is missing or not a hex color, a
+  key is not a role, a derived color names something undefined above it,
+  or an amount is outside 0 to 1. It warns on stderr
+  (`Celesta: palette "dim": second #999999 on ground #F4F1EA has 2.52:1
+  contrast, below 4.5:1 for text`) for each palette whose `second` fails
+  4.5:1; `palettes.check()` returns those findings, and
+  `contrastRatio(fg, bg)` computes the WCAG ratio for any two hex colors.
+  This checks the palette only; it does not see what a frame draws.
+
+[`packages/cli/examples/with-theme.tsx`](../../../packages/cli/examples/with-theme.tsx)
+uses two palettes.
 
 ## Rich text with `<Span>`
 

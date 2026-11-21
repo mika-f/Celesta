@@ -22,6 +22,7 @@ export { frameKeyframes, keyframes } from './keyframes';
 export { measureText, textCaret, useTextMetrics } from './text-measure';
 export { Span } from './rich-text';
 export { Theme, useTheme } from './theme';
+export { MIN_TEXT_CONTRAST, PALETTE_ROLES, alpha, contrastRatio, definePalettes, mix } from './palette';
 export { Subtitles, formatSubtitles, parseSubtitles } from './subtitles';
 export { registerComponent, getComponentSchema } from './registry';
 export { defineProjectProperties, getProjectProperty, listProjectProperties } from './properties';
