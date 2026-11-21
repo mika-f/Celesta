@@ -312,12 +312,6 @@ impl Compositor<'_> {
             self.effects.recycle(std::mem::replace(&mut canvas, shaded));
             content = written;
         }
-        let result = self.effects.take_canvas(
-            self.device,
-            self.texture_layout,
-            region.width,
-            region.height,
-        );
         let mut filtered = Vec::new();
         for shadow in [effects.shadow, effects.glow].into_iter().flatten() {
             filtered.push(self.effects.apply(
@@ -343,6 +337,21 @@ impl Compositor<'_> {
                 None,
             )
         });
+        // The inner instance draws a canvas onto one of its size unchanged,
+        // so a lone texture is already the result.
+        if filtered.is_empty() {
+            if let Some(blurred) = blurred {
+                self.effects.recycle(canvas);
+                return Some(blurred);
+            }
+            return Some(canvas);
+        }
+        let result = self.effects.take_canvas(
+            self.device,
+            self.texture_layout,
+            region.width,
+            region.height,
+        );
         // Shadows, then the glow, then the (blurred) layers on top.
         let mut pass = begin_pass(
             encoder,
