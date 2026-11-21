@@ -88,11 +88,12 @@ function SeriesRoot({ children }: SeriesProps): React.ReactElement {
     null,
     items.map((item, index) => {
       const { durationInFrames: _duration, offset: _offset, name, children: inner, ...props } = item.props;
-      const sceneId = props.id ?? `series-${index + 1}`;
+      // An empty `id` is no id, as for layer ids.
+      const sceneId = props.id || `series-${index + 1}`;
       const sequence = React.createElement(
         Sequence,
         { key: item.key ?? index, ...props, ...sequences[index] },
-        React.createElement(SceneBoundary, { id: sceneId, name: name ?? props.id ?? `Series item ${index + 1}` }, inner),
+        React.createElement(SceneBoundary, { id: sceneId, name: name || props.id || `Series item ${index + 1}` }, inner),
       );
       // `createElement` copies the config into a props object of its own.
       copySourcePosition(item.props, sequence.props);

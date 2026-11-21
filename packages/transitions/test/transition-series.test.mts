@@ -247,7 +247,7 @@ test('a scene that throws draws its error card through the transition in the pre
   const unnamed = mount(() => h(Composition, { width: 100, height: 50, fps: FPS, durationInFrames: 20 },
     h(TransitionSeries, null,
       h(TransitionSeries.Sequence, { durationInFrames: 10 }, h(Scene, { name: 'a' })),
-      h(TransitionSeries.Sequence, { durationInFrames: 10 }, h(Throws)),
+      h(TransitionSeries.Sequence, { durationInFrames: 10, id: '' }, h(Throws)),
     ),
   ));
   assert.deepEqual(unnamed.renderAt({ value: 12, timescale: FPS }, null, { preview: true }).sceneErrors?.map(({ id, name }) => [id, name]), [['scene-2', 'Scene 2']]);

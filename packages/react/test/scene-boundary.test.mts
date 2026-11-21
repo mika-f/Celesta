@@ -181,19 +181,45 @@ test('a scene list inside a scene reports the innermost scene that threw', () =>
   composition.dispose();
 });
 
-test('the preview audio sweep skips a failing scene instead of failing', () => {
+test('the preview audio sweep silences a failing scene on its broken frames only', () => {
   function Loud(): React.ReactElement {
     const frame = useCurrentFrame();
-    if (frame >= 2) throw new Error('loud broke');
-    return h(Audio, { src: 'loud.wav' });
+    if (frame >= 2 && frame < 4) throw new Error('loud broke');
+    return h(Audio, { src: 'loud.wav', volume: { type: 'keyframes', keyframes: [
+      { time: { value: 0, timescale: 30 }, value: 0 },
+      { time: { value: 6, timescale: 30 }, value: 1 },
+    ] }, fadeIn: 0.01, fadeOut: 0.02 });
   }
   const scenes = defineScenes([
-    { id: 'loud', durationInFrames: 4, Scene: Loud },
+    { id: 'loud', durationInFrames: 6, Scene: Loud },
     { id: 'quiet', durationInFrames: 4, Scene: () => h(Audio, { src: 'quiet.wav' }) },
   ]);
-  const composition = mount(() => h(Composition, { width: 100, height: 100, fps: 30, durationInFrames: 8 }, h(Scenes, { scenes })));
-  const sources = composition.collectAudio({ preview: true }).map(({ src }) => src);
-  assert.deepEqual(sources, ['loud.wav', 'loud.wav', 'quiet.wav', 'quiet.wav', 'quiet.wav', 'quiet.wav']);
+  // A sound beside the scenes plays throughout, broken frames included.
+  const composition = mount(() => h(Composition, { width: 100, height: 100, fps: 30, durationInFrames: 10 },
+    h(Scenes, { scenes }), h(Audio, { src: 'bed.wav' })));
+  const clips = composition.collectAudio({ preview: true });
+  const loud = clips.filter(({ src }) => src === 'loud.wav');
+  const close = (actual: number, expected: number) => assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} ≉ ${expected}`);
+  // Frames 0–1 and 4–5 of the scene are heard, each once; 2–3 are cut.
+  assert.equal(loud.length, 2);
+  close(loud[0].start, 0);
+  close(loud[0].duration, 2 / 30);
+  assert.equal(loud[0].fadeIn, 0.01);
+  assert.equal(loud[0].fadeOut, undefined);
+  close(loud[1].start, 4 / 30);
+  close(loud[1].duration, 2 / 30);
+  close(loud[1].sourceStart, 4 / 30);
+  assert.equal(loud[1].fadeIn, undefined);
+  assert.equal(loud[1].fadeOut, 0.02);
+  // The volume curve keeps its place in the composition.
+  const volume = loud[1].volume;
+  assert.ok(typeof volume !== 'number');
+  assert.equal(volume.keyframes[0].time.value, -4);
+  // The other scene and the sound beside them are reported as before.
+  assert.equal(clips.filter(({ src }) => src === 'quiet.wav').length, 4);
+  const bed = clips.filter(({ src }) => src === 'bed.wav');
+  assert.equal(bed.length, 10);
+  close(bed[0].duration, 10 / 30);
   assert.throws(() => composition.collectAudio(), /scene "loud" threw while rendering: loud broke/);
   composition.dispose();
 });
@@ -212,5 +238,33 @@ test('two scenes with the same default id are both reported', () => {
     h(Series, null, h(Series.Sequence, { durationInFrames: 10 }, h(Throws))),
     h(Series, null, h(Series.Sequence, { durationInFrames: 10 }, h(Throws)))));
   assert.deepEqual(preview(composition, 0).sceneErrors?.map(({ id }) => id), ['series-1', 'series-1']);
+  composition.dispose();
+});
+
+test('the card cuts a long message between code points', () => {
+  const message = `${'x'.repeat(398)}🎬!!`;
+  function Throws(): React.ReactElement {
+    throw new Error(message);
+  }
+  const composition = mount(() => h(Composition, { width: 100, height: 100, fps: 30, durationInFrames: 1 },
+    h(Series, null, h(Series.Sequence, { durationInFrames: 1 }, h(Throws)))));
+  const { scene, sceneErrors } = preview(composition, 0);
+  const shown = texts(scene.layers).find((text) => text.startsWith('xxx'));
+  assert.equal(shown, `${'x'.repeat(398)}🎬…`);
+  assert.doesNotMatch(JSON.stringify(scene), /\\ud83c/i);
+  assert.equal(sceneErrors?.[0].message, message);
+  composition.dispose();
+});
+
+test('an empty series id is no id', () => {
+  function Throws(): React.ReactElement {
+    throw new Error('second');
+  }
+  const composition = mount(() => h(Composition, { width: 100, height: 100, fps: 30, durationInFrames: 2 },
+    h(Series, null,
+      h(Series.Sequence, { durationInFrames: 1, id: '' }, h(Label, { text: 'ok' })),
+      h(Series.Sequence, { durationInFrames: 1, id: '', name: '' }, h(Throws)))));
+  assert.deepEqual(texts(exported(composition, 0).scene.layers), ['ok:0']);
+  assert.deepEqual(preview(composition, 1).sceneErrors?.map(({ id, name }) => [id, name]), [['series-2', 'Series item 2']]);
   composition.dispose();
 });

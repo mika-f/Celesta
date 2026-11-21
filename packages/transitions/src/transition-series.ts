@@ -409,7 +409,8 @@ function TransitionSeriesRoot({ width, height, children }: TransitionSeriesProps
     const enter = edgeAt(index - 1);
     const exit = edgeAt(index + 1);
     const { durationInFrames, name, children: inner, ...props } = element.props as TransitionSeriesSequenceProps;
-    const sceneId = props.id ?? `scene-${sceneIndex + 1}`;
+    // An empty `id` is no id, as for layer ids.
+    const sceneId = props.id || `scene-${sceneIndex + 1}`;
     const scene: TransitionSeriesScene = {
       index: sceneIndex,
       enter: described(enter),
@@ -425,7 +426,7 @@ function TransitionSeriesRoot({ width, height, children }: TransitionSeriesProps
           React.createElement(
             SceneFrame,
             { enter, exit, durationInFrames, ...size },
-            React.createElement(SceneBoundary, { id: sceneId, name: name ?? props.id ?? `Scene ${sceneIndex + 1}` }, inner),
+            React.createElement(SceneBoundary, { id: sceneId, name: name || props.id || `Scene ${sceneIndex + 1}` }, inner),
           ),
         ),
       ),

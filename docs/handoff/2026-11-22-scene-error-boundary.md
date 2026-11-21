@@ -97,6 +97,25 @@ frame 105):
   found. …`), so `misplacedImportError` reads both. 150 preview frames of
   `examples/afterimage` took 3.84–3.88 s with and without source maps.
 - `collectAudio({ preview })`; the CLI passes the request's `preview`.
+  Every frame reports a clip for the whole window it plays in, so a scene
+  that fails only on some frames would still be heard on them. The preview
+  sweep notes, for each clip, the boundaries around the node that reported
+  it (`sceneBoundariesOf`, up the node's fiber; `walkNode` keeps the node
+  being walked while the sweep runs), and which boundaries failed on each
+  frame (the sink gets the boundary with each report), then cuts each clip
+  where one of its boundaries failed (`cutAudioClip`). A cut piece starts
+  its source and curves where the clip had got to, earlier by the cut, and
+  keeps a fade only at the clip's own edge. Clips of other scenes are left
+  as they were.
+- Found while doing that: the walker shifts a head-clipped clip's
+  keyframes later (`shiftAnimated(volume, -clipped)`), though the mix reads
+  them on clip-local time and `2026-08-26-sequence-audio-react-preview.md`
+  says they shift earlier. Not changed here.
+- The card cuts a message by code points: half a surrogate pair in a text
+  layer is JSON Rust refuses, which would stop the preview's runtime.
+- An empty `id` on a series item is no id, as it is for layer ids.
+- The preview worker holds the scene errors with the scene it reuses for
+  inline text edits, so Problems keeps them while a text is edited.
 - `celesta-react-bridge`: `SceneError` (with `label()` and `detail()`),
   `FrameEvaluation::scene_errors`, `Response::Ok`'s `scene_errors`,
   `evaluate_with_overrides()` (what `scene_at_with_overrides()` now wraps),

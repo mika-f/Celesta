@@ -554,9 +554,11 @@ pub(crate) struct ReactPreviewBridge {
 pub(crate) fn spawn_preview(mut renderer: GpuRenderer) -> anyhow::Result<PreviewWorker> {
     let mut react_bridge: Option<ReactPreviewBridge> = None;
     let mut react_reload = 0u64;
-    // The scene the runtime last evaluated, and what for: a keystroke's
-    // request draws it again with its text replaced, without evaluating.
-    let mut held: Option<(HeldKey, Scene)> = None;
+    // The scene the runtime last evaluated, what for, and the scenes that
+    // drew their error card in it: a keystroke's request draws it again
+    // with its text replaced, without evaluating, and reports the same
+    // scene errors.
+    let mut held: Option<(HeldKey, Scene, Vec<SceneError>)> = None;
     LatestWorker::spawn("preview", move |request: PreviewRequest, _| {
         renderer.set_asset_root(&request.asset_root);
         renderer.set_render_quality(request.render_quality);
@@ -570,12 +572,16 @@ pub(crate) fn spawn_preview(mut renderer: GpuRenderer) -> anyhow::Result<Preview
             request.react.as_ref(),
         ));
         let time = request.scene.time;
-        let source = scene_source(&request, held.as_ref().map(|(key, _)| key));
+        let source = scene_source(&request, held.as_ref().map(|(key, _, _)| key));
         let key = HeldKey::of(&request);
         let mut warnings = Vec::new();
         let mut scene_errors = Vec::new();
         let evaluated = match source {
-            SceneSource::Held => Ok(&held.as_ref().expect("scene_source found it held").1),
+            SceneSource::Held => {
+                let (_, scene, errors) = held.as_ref().expect("scene_source found it held");
+                scene_errors.clone_from(errors);
+                Ok(scene)
+            }
             SceneSource::Evaluate => {
                 // A failed evaluation is not held, so no
                 // keystroke draws a scene the runtime refused.
@@ -602,7 +608,7 @@ pub(crate) fn spawn_preview(mut renderer: GpuRenderer) -> anyhow::Result<Preview
                     }
                 };
                 match evaluated {
-                    Ok(()) => Ok(&held.insert((key, scene)).1),
+                    Ok(()) => Ok(&held.insert((key, scene, scene_errors.clone())).1),
                     Err(error) => Err(error),
                 }
             }

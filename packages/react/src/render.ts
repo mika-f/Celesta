@@ -21,7 +21,7 @@ import { type PropOverride, PropOverridesContext, clearPropOverrides, setPropOve
 import { type StaticsFrame, StaticSubtrees } from './static';
 import { resolveComponent } from './registry';
 import { type HostNode, type RootContainer, createRoot } from './reconciler';
-import { type SceneErrorReport, type SceneErrorSink, SceneErrorSinkContext } from './scene-boundary';
+import { type SceneErrorReport, type SceneErrorSink, SceneErrorSinkContext, sceneBoundariesOf } from './scene-boundary';
 import { type LayerSourceReport, type SourcePos, layerSourceReport, occurrenceKeys } from './source-chain';
 import { checkCue } from './subtitles';
 import { evaluateDeterministically } from './determinism';
@@ -1323,7 +1323,7 @@ function collectAudioClip(
   // source position and any animation keyframes shift by the clipped
   // amount so the curve stays aligned with what is actually heard.
   const clipped = startSec - context.originSec;
-  results.push({
+  const clip: AudioClipDescriptor = {
     src: source.location.type === 'file' ? source.location.path : source.location.url,
     sourceStart: startFrom + clipped * firstAnimatedValue(playbackRate),
     playbackRate: shiftAnimated(playbackRate, -clipped),
@@ -1343,7 +1343,47 @@ function collectAudioClip(
     // defaults and the rules.
     ...duckGroupProp(props.duckGroup),
     ...duckProp(props.duck),
-  });
+  };
+  results.push(clip);
+  if (audioBoundaries !== null && walkingNode !== null) {
+    audioBoundaries.set(clip, sceneBoundariesOf(walkingNode.fiber));
+  }
+}
+
+/**
+ * The parts of `clip` outside `cuts` (composition seconds, sorted and not
+ * overlapping), each starting its source and curves where the clip had got
+ * to, as a window that clips a clip's head does. A fade stays at the edge
+ * of the clip it was on.
+ */
+function cutAudioClip(clip: AudioClipDescriptor, cuts: readonly [number, number][]): AudioClipDescriptor[] {
+  const end = clip.start + clip.duration;
+  const pieces: AudioClipDescriptor[] = [];
+  let at = clip.start;
+  const keep = (from: number, to: number) => {
+    if (to <= from) return;
+    const offset = from - clip.start;
+    const { fadeIn, fadeOut, ...rest } = clip;
+    pieces.push({
+      ...rest,
+      start: from,
+      duration: to - from,
+      sourceStart: clip.sourceStart + offset * firstAnimatedValue(clip.playbackRate),
+      // Curves are timed from the clip's start, so they move earlier.
+      playbackRate: shiftAnimated(clip.playbackRate, offset),
+      volume: shiftAnimated(clip.volume, offset),
+      ...(clip.pitch !== undefined ? { pitch: shiftAnimated(clip.pitch, offset) } : {}),
+      ...(fadeIn !== undefined && from === clip.start ? { fadeIn } : {}),
+      ...(fadeOut !== undefined && to === end ? { fadeOut } : {}),
+    });
+  };
+  for (const [from, to] of cuts) {
+    if (to <= at || from >= end) continue;
+    keep(at, Math.min(from, end));
+    at = Math.max(at, to);
+  }
+  keep(at, end);
+  return pieces;
 }
 
 /** `duckGroup`, when set; `null` (a dialogue voice in no group) is unset. */
@@ -1431,12 +1471,35 @@ function collectSubtitleCues(props: Record<string, unknown>, context: WalkContex
   });
 }
 
+// While the preview's audio sweep runs (`collectAudio({ preview })`), the
+// scene boundaries around each clip it reports, and the node being walked,
+// whose fiber they are found from.
+let audioBoundaries: WeakMap<AudioClipDescriptor, object[]> | null = null;
+let walkingNode: HostNode | null = null;
+
 function walkNode(
   node: HostNode,
   path: string,
   context: WalkContext,
   audio: AudioClipDescriptor[],
   audioOnly = false,
+): Layer[] {
+  if (audioBoundaries === null) return walkHostNode(node, path, context, audio, audioOnly);
+  const outer = walkingNode;
+  walkingNode = node;
+  try {
+    return walkHostNode(node, path, context, audio, audioOnly);
+  } finally {
+    walkingNode = outer;
+  }
+}
+
+function walkHostNode(
+  node: HostNode,
+  path: string,
+  context: WalkContext,
+  audio: AudioClipDescriptor[],
+  audioOnly: boolean,
 ): Layer[] {
   const element = hostElement(node.type);
   if (context.insideStatic && (element || TIME_DEPENDENT_TYPES.has(node.type))) {
@@ -1684,6 +1747,8 @@ export function mount(defaultExport: EntryComponent, compositionId?: string): Mo
   // Each pass gets a new sink, which also makes every boundary render its
   // children again.
   let sceneErrors: SceneErrorReport[] = [];
+  // The boundaries behind `sceneErrors`.
+  let failedBoundaries: object[] = [];
   let mounting = true;
 
   const renderTree = (
@@ -1706,12 +1771,17 @@ export function mount(defaultExport: EntryComponent, compositionId?: string): Mo
       openEnd,
     };
     const caught: SceneErrorReport[] = [];
+    const failed: object[] = [];
     sceneErrors = caught;
+    failedBoundaries = failed;
     const sink: SceneErrorSink = {
       // Mounting's passes only discover the compositions and their fonts: a
       // scene that throws there fails the frames it is in, not the mount.
       catches: preview || mounting,
-      report: (report) => { caught.push(report); },
+      report: (report, boundary) => {
+        caught.push(report);
+        failed.push(boundary);
+      },
     };
     const element = runtimeTree(
       { layers: project?.layers ?? null, tracks: project?.tracks ?? null, runtime: runtimeValue, fonts, requestRerender, sceneErrors: sink },
@@ -1912,11 +1982,54 @@ export function mount(defaultExport: EntryComponent, compositionId?: string): Mo
     collectAudio(options) {
       const audio: AudioClipDescriptor[] = [];
       const preview = options?.preview === true;
-      for (let frame = 0; frame < config.durationInFrames; frame++) {
-        const time = { value: frame * config.frameRate.denominator, timescale: config.frameRate.numerator };
-        for (const clip of renderFrame(time, null, { audioOnly: true, preview }).audio) audio.push(clip);
+      const frameTime = (frame: number) => ({ value: frame * config.frameRate.denominator, timescale: config.frameRate.numerator });
+      if (!preview) {
+        for (let frame = 0; frame < config.durationInFrames; frame++) {
+          for (const clip of renderFrame(frameTime(frame), null, { audioOnly: true }).audio) audio.push(clip);
+        }
+        return audio;
       }
-      return audio;
+      // Each frame reports a clip for the whole window it plays in, so a
+      // scene that fails on some frames would still be heard on them: cut
+      // its clips (and those of the scenes inside it) where it failed.
+      const boundaries = new WeakMap<AudioClipDescriptor, object[]>();
+      const failedFrames = new Map<object, number[]>();
+      audioBoundaries = boundaries;
+      try {
+        for (let frame = 0; frame < config.durationInFrames; frame++) {
+          for (const clip of renderFrame(frameTime(frame), null, { audioOnly: true, preview }).audio) audio.push(clip);
+          for (const boundary of failedBoundaries) {
+            const frames = failedFrames.get(boundary) ?? [];
+            if (frames[frames.length - 1] !== frame) frames.push(frame);
+            failedFrames.set(boundary, frames);
+          }
+        }
+      } finally {
+        audioBoundaries = null;
+        walkingNode = null;
+      }
+      if (failedFrames.size === 0) return audio;
+      const seconds = (frame: number) => secondsFromTime(frameTime(frame));
+      const cutsOf = (clip: AudioClipDescriptor): [number, number][] => {
+        const frames = new Set((boundaries.get(clip) ?? []).flatMap((boundary) => failedFrames.get(boundary) ?? []));
+        const cuts: [number, number][] = [];
+        for (const frame of [...frames].sort((a, b) => a - b)) {
+          const last = cuts[cuts.length - 1];
+          if (last && last[1] === seconds(frame)) last[1] = seconds(frame + 1);
+          else cuts.push([seconds(frame), seconds(frame + 1)]);
+        }
+        return cuts;
+      };
+      // A clip reported on many frames is cut once.
+      const cut = new Set<string>();
+      return audio.flatMap((clip) => {
+        const cuts = cutsOf(clip);
+        if (cuts.length === 0) return [clip];
+        const key = JSON.stringify([clip, cuts]);
+        if (cut.has(key)) return [];
+        cut.add(key);
+        return cutAudioClip(clip, cuts);
+      });
     },
     collectSubtitles(from, frames) {
       const seen = new Set<string>();

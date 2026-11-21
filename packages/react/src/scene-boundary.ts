@@ -39,7 +39,8 @@ export interface SceneErrorSink {
    * scene is discarded. Otherwise the frame fails.
    */
   catches: boolean;
-  report(error: SceneErrorReport): void;
+  /** `boundary` is the instance that caught it, which `sceneBoundariesOf` finds. */
+  report(error: SceneErrorReport, boundary: object): void;
 }
 
 /** @internal */
@@ -143,7 +144,7 @@ class Boundary extends React.Component<BoundaryProps, BoundaryState> {
       message: messageOf(error),
       ...(stack !== undefined ? { stack: withoutReact(stack) } : {}),
       ...(componentStack !== '' ? { componentStack } : {}),
-    });
+    }, this);
   }
 
   render(): ReactNode {
@@ -158,6 +159,23 @@ class Boundary extends React.Component<BoundaryProps, BoundaryState> {
   }
 }
 markQuietBoundary(Boundary);
+
+interface BoundaryFiber {
+  stateNode?: unknown;
+  return?: BoundaryFiber | null;
+}
+
+/**
+ * @internal The scene boundaries around a host node's fiber, innermost
+ * first: what a failed scene's audio is cut by (see `collectAudio`).
+ */
+export function sceneBoundariesOf(fiber: unknown): object[] {
+  const boundaries: object[] = [];
+  for (let current = fiber as BoundaryFiber | null | undefined; current; current = current.return) {
+    if (current.stateNode instanceof Boundary) boundaries.push(current.stateNode);
+  }
+  return boundaries;
+}
 
 /**
  * Isolates a scene: in the editor preview, an error its children throw while
@@ -193,7 +211,7 @@ const CARD_BACKGROUND = '#17191d';
 const CARD_ACCENT = '#e5484d';
 const CARD_TEXT = '#f2f3f5';
 const CARD_MUTED = '#9aa0a8';
-/** The longest message the card draws; Problems has the whole error. */
+/** The most code points of a message the card draws; Problems has the whole error. */
 const CARD_MESSAGE_LIMIT = 400;
 
 /** The card a failed scene draws in the preview. */
@@ -209,7 +227,11 @@ function SceneErrorCard({ id, name, message }: { id: string; name: string; messa
     fontWeight: weight,
     color,
   });
-  const shown = message.length > CARD_MESSAGE_LIMIT ? `${message.slice(0, CARD_MESSAGE_LIMIT - 1)}…` : message;
+  // Cut by code points: half a surrogate pair is no string Rust can read.
+  const characters = Array.from(message);
+  const shown = characters.length > CARD_MESSAGE_LIMIT
+    ? `${characters.slice(0, CARD_MESSAGE_LIMIT - 1).join('')}…`
+    : message;
   return React.createElement(
     Group,
     null,
