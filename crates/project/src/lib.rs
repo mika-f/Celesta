@@ -6,6 +6,7 @@ mod asset;
 mod character;
 mod document;
 mod error;
+pub mod review;
 #[cfg(test)]
 mod tests;
 mod timeline;

@@ -1,0 +1,250 @@
+use std::path::Path;
+
+use super::*;
+
+fn chapters() -> Vec<ChapterSpan<'static>> {
+    vec![
+        ChapterSpan {
+            id: "intro",
+            name: "Intro",
+            from: 0,
+        },
+        ChapterSpan {
+            id: "demo",
+            name: "Demo",
+            from: 120,
+        },
+    ]
+}
+
+fn on_demo(from: u64, to: Option<u64>) -> Comment {
+    Comment::new(
+        "film.tsx".to_owned(),
+        Anchor {
+            chapter: Some("demo".to_owned()),
+            from,
+            to,
+            ..Anchor::default()
+        },
+        "Kanon".to_owned(),
+        "Slower here".to_owned(),
+    )
+}
+
+#[test]
+fn frames_count_from_the_chapter() {
+    let comment = on_demo(15, Some(45));
+    assert_eq!(
+        comment.place(&chapters()),
+        Placement::Placed {
+            from: 135,
+            to: Some(165),
+            chapter_name: Some("Demo".to_owned()),
+        }
+    );
+}
+
+#[test]
+fn a_moved_chapter_moves_its_comments() {
+    let comment = on_demo(15, None);
+    let mut moved = chapters();
+    moved[1].from = 300;
+    assert_eq!(comment.place(&moved).frame(), Some(315));
+}
+
+#[test]
+fn without_a_chapter_frames_are_absolute() {
+    let mut comment = on_demo(15, None);
+    comment.anchor.chapter = None;
+    assert_eq!(comment.place(&[]).frame(), Some(15));
+}
+
+#[test]
+fn a_gone_chapter_orphans_the_comment_at_its_last_place() {
+    let mut comment = on_demo(15, None);
+    comment.remember(&chapters());
+    let placement = comment.place(&chapters()[..1]);
+    assert!(placement.is_orphaned());
+    assert_eq!(placement.frame(), Some(135));
+    assert_eq!(
+        placement,
+        Placement::Orphaned {
+            last_seen: Some(LastSeen {
+                frame: 135,
+                chapter_name: Some("Demo".to_owned()),
+            }),
+        }
+    );
+    // Remembering while orphaned keeps the old place.
+    comment.remember(&chapters()[..1]);
+    assert_eq!(comment.last_seen.as_ref().map(|seen| seen.frame), Some(135));
+}
+
+#[test]
+fn a_span_covers_its_frames_and_a_moment_only_itself() {
+    let span = on_demo(0, Some(10)).place(&chapters());
+    assert!(span.covers(120) && span.covers(129));
+    assert!(!span.covers(130) && !span.covers(119));
+    let moment = on_demo(5, None).place(&chapters());
+    assert!(moment.covers(125) && !moment.covers(126));
+}
+
+#[test]
+fn compositions_filter_only_when_both_name_one() {
+    let mut comment = on_demo(0, None);
+    assert!(comment.is_on("film.tsx", Some("main")));
+    assert!(comment.is_on("film.tsx", None));
+    assert!(!comment.is_on("other.tsx", None));
+    comment.composition = Some("teaser".to_owned());
+    assert!(!comment.is_on("film.tsx", Some("main")));
+    assert!(comment.is_on("film.tsx", Some("teaser")));
+}
+
+#[test]
+fn replies_and_resolution() {
+    let mut comment = on_demo(0, None);
+    let reply = comment
+        .reply("claude".to_owned(), "Done".to_owned())
+        .clone();
+    assert!(reply.id.starts_with("r-"));
+    assert!(comment.is_open());
+    comment.resolve("claude".to_owned());
+    let first = comment.resolved.clone();
+    comment.resolve("someone".to_owned());
+    assert_eq!(comment.resolved, first);
+    comment.reopen();
+    assert!(comment.is_open());
+}
+
+#[test]
+fn utc_times_format_as_rfc_3339() {
+    assert_eq!(format_utc(0), "1970-01-01T00:00:00Z");
+    assert_eq!(format_utc(951_782_400), "2000-02-29T00:00:00Z");
+    assert_eq!(format_utc(1_795_341_600), "2026-11-22T10:00:00Z");
+}
+
+#[test]
+fn ids_are_file_names() {
+    let id = new_id("c");
+    assert_eq!(id.len(), 12);
+    assert!(check_id(&id).is_ok());
+    assert_ne!(id, new_id("c"));
+    for bad in ["", "../x", "A1", "-x", "a b", "a/b"] {
+        assert!(check_id(bad).is_err(), "{bad:?}");
+    }
+}
+
+#[test]
+fn validation_rejects_bad_anchors_and_newer_versions() {
+    let mut comment = on_demo(10, Some(10));
+    assert!(comment.validate().is_err());
+    comment.anchor.to = None;
+    comment.anchor.point = Some(Point { x: 1.5, y: 0.0 });
+    assert!(comment.validate().is_err());
+    comment.anchor.point = Some(Point { x: 1.0, y: 0.0 });
+    assert!(comment.validate().is_ok());
+    comment.version = FORMAT_VERSION + 1;
+    assert!(comment.validate().unwrap_err().contains("update Celesta"));
+}
+
+fn store() -> (tempfile::TempDir, CommentStore) {
+    let dir = tempfile::tempdir().expect("a temporary folder");
+    let store = CommentStore::new(dir.path());
+    (dir, store)
+}
+
+#[test]
+fn a_project_without_the_folder_has_no_comments() {
+    let (_dir, store) = store();
+    let loaded = store.load();
+    assert!(loaded.comments.is_empty() && loaded.problems.is_empty());
+}
+
+#[test]
+fn comments_round_trip_through_their_files() {
+    let (_dir, store) = store();
+    let mut first = on_demo(15, Some(45));
+    first.created_at = "2026-11-22T10:00:00Z".to_owned();
+    first.anchor.layer = Some("title".to_owned());
+    first.anchor.point = Some(Point { x: 0.25, y: 0.5 });
+    let mut second = on_demo(0, None);
+    second.created_at = "2026-11-22T09:00:00Z".to_owned();
+    let path = store.save(&first).expect("saved");
+    store.save(&second).expect("saved");
+    assert_eq!(path, store.dir().join(format!("{}.json", first.id)));
+    let text = std::fs::read_to_string(&path).expect("written");
+    assert!(text.ends_with("}\n"));
+    assert!(text.contains("\"createdAt\""));
+    assert!(!text.contains("\"replies\""), "empty lists are left out");
+    let loaded = store.load();
+    assert!(loaded.problems.is_empty());
+    assert_eq!(loaded.comments, vec![second, first.clone()]);
+    assert_eq!(store.get(&first.id).expect("found"), first);
+}
+
+#[test]
+fn unknown_fields_survive_a_rewrite() {
+    let (_dir, store) = store();
+    let comment = on_demo(0, None);
+    store.save(&comment).expect("saved");
+    let path = store.path(&comment.id);
+    let mut value: Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("json");
+    value["reactions"] = serde_json::json!({ "+1": ["kanon"] });
+    std::fs::write(&path, value.to_string()).expect("written");
+    store
+        .update(&comment.id, |comment| comment.resolve("claude".to_owned()))
+        .expect("updated");
+    let text = std::fs::read_to_string(&path).expect("read");
+    assert!(text.contains("\"reactions\""));
+    assert!(text.contains("\"resolved\""));
+}
+
+#[test]
+fn a_broken_file_is_a_problem_and_the_rest_load() {
+    let (_dir, store) = store();
+    let comment = on_demo(0, None);
+    store.save(&comment).expect("saved");
+    std::fs::write(store.dir().join("c-broken.json"), "{ not json").expect("written");
+    std::fs::write(store.dir().join("notes.txt"), "ignored").expect("written");
+    let mut renamed = comment.clone();
+    renamed.id = "c-other".to_owned();
+    std::fs::write(
+        store.dir().join("c-mismatch.json"),
+        serde_json::to_string(&renamed).expect("json"),
+    )
+    .expect("written");
+    let loaded = store.load();
+    assert_eq!(loaded.comments, vec![comment]);
+    assert_eq!(loaded.problems.len(), 2);
+    assert!(
+        loaded
+            .problems
+            .iter()
+            .any(|problem| problem.message.contains("does not match the file name"))
+    );
+}
+
+#[test]
+fn get_refuses_paths_and_reports_missing_ids() {
+    let (_dir, store) = store();
+    assert!(matches!(store.get("../secret"), Err(ReviewError::BadId(_))));
+    assert!(matches!(store.get("c-none"), Err(ReviewError::NotFound(_))));
+}
+
+#[test]
+fn entries_are_named_from_the_root() {
+    let store = CommentStore::new(Path::new("/projects/film"));
+    assert_eq!(
+        store.entry_key(Path::new("/projects/film/scenes/intro.tsx")),
+        "scenes/intro.tsx"
+    );
+    assert_eq!(store.entry_key(Path::new("/elsewhere/a.tsx")), "a.tsx");
+}
+
+#[test]
+fn the_author_can_be_set_by_environment() {
+    // Only checks that some name comes back; the variable itself is not
+    // set here, since tests run in parallel in one process.
+    assert!(!default_author(Path::new(".")).is_empty());
+}
