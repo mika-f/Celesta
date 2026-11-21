@@ -83,7 +83,13 @@ produces a video that differs between preview and export.
    `Date.now()`, timers, `useEffect`, or state that accumulates across
    renders: frames are rendered out of order when scrubbing and exporting. For
    "random" values, use `random(seed)` and `noise(seed, t)` from
-   `@celesta.studio/math` (not `@celesta.studio/react`).
+   `@celesta.studio/math` (not `@celesta.studio/react`). Celesta enforces
+   this while a frame renders: `Math.random()` is reseeded from the frame's
+   time, and `Date.now()`, `performance.now()`, and `new Date()` read the
+   frame's time (frame 45 at 30 fps is `1500`), so a "random" value changes
+   every frame and the clock is never today's. Any such call warns
+   `nondeterministic_render` ([errors.md](references/errors.md#entry-and-components-react)).
+   Module scope and `prepare()` keep the real clock and `Math.random()`.
 6. **Async work goes in `prepare()`.** Rendering is synchronous. Fetching,
    file reads, `preloadMedia()`, `loadAudioSpectrum()`, `measureText()`,
    `fitText()`, `planDialogue()`, `loadLipSync()`, and `loadPsdPreset()` belong in

@@ -865,7 +865,7 @@ impl Exporter {
             }
         };
         let project_asset_root = project.map(|(_, asset_root)| asset_root);
-        render_stills(
+        let rendered = render_stills(
             &frames,
             destination,
             &mut renderer,
@@ -908,7 +908,9 @@ impl Exporter {
                 scene.fonts.extend(project_fonts.iter().cloned());
                 Ok(scene)
             },
-        )
+        );
+        crate::react_entry::report_nondeterminism(&bridge, &mut progress);
+        rendered
     }
 }
 

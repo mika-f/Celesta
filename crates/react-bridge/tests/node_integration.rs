@@ -694,6 +694,96 @@ fn a_runtime_stop_ends_a_prepare_that_never_resolves_when_node_is_available() {
 }
 
 #[test]
+fn frames_are_deterministic_whatever_their_order_when_node_is_available() {
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+    let dir = tempfile::tempdir_in(&package_root).unwrap();
+    let entry = dir.path().join("random.tsx");
+    std::fs::write(
+        &entry,
+        "import { Composition, Text } from '@celesta.studio/react';\n\
+         const startedAt = Date.now();\n\
+         export async function prepare() { if (Date.now() < 1e12) throw new Error('prepare reads the real clock'); }\n\
+         function Values() {\n\
+           const values = [Math.random(), Math.random(), Date.now(), performance.now(), new Date().getTime()];\n\
+           return <Text>{values.join(' ')}</Text>;\n\
+         }\n\
+         export default () => (\n\
+           <Composition width={8} height={8} fps={30} durationInFrames={90}>\n\
+             <Text>{String(startedAt > 1e12)}</Text>\n\
+             <Values />\n\
+           </Composition>\n\
+         );\n",
+    )
+    .unwrap();
+    let text_of = |bridge: &mut ReactBridge, frame: i64| {
+        let scene = bridge
+            .scene_at(Time::frames(frame, Rational::new(30, 1)).unwrap())
+            .unwrap();
+        scene
+            .layers
+            .iter()
+            .map(|layer| match &layer.content {
+                LayerContent::Text { text, .. } => text.clone(),
+                other => panic!("expected text, got {other:?}"),
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let mut forward = Bridge::spawn(&node, &cli_script, &entry).unwrap();
+    let frame_10 = text_of(&mut forward, 10);
+    let frame_45 = text_of(&mut forward, 45);
+    // Module scope ran with the real clock.
+    assert_eq!(frame_10[0], "true");
+    let values: Vec<f64> = frame_45[1]
+        .split(' ')
+        .map(|value| value.parse().unwrap())
+        .collect();
+    assert!(values[0] != values[1] && (0.0..1.0).contains(&values[0]));
+    // 1.5 s: the clock is the frame's time.
+    assert_eq!(&values[2..], [1500.0, 1500.0, 1500.0]);
+    assert_ne!(frame_10, frame_45);
+    let calls = forward.nondeterministic_calls().apis().to_vec();
+    assert_eq!(
+        calls,
+        [
+            "Math.random()",
+            "Date.now()",
+            "performance.now()",
+            "new Date()"
+        ]
+    );
+    let warning = forward.nondeterministic_calls().warning().unwrap();
+    assert!(
+        warning.starts_with("nondeterministic_render: the entry calls Math.random(), "),
+        "{warning}"
+    );
+
+    // Another runtime, another order, the same frames.
+    let mut backward = Bridge::spawn(&node, &cli_script, &entry).unwrap();
+    assert_eq!(text_of(&mut backward, 45), frame_45);
+    assert_eq!(text_of(&mut backward, 3), text_of(&mut forward, 3));
+    assert_eq!(text_of(&mut backward, 10), frame_10);
+    assert_eq!(text_of(&mut backward, 10), frame_10);
+}
+
+#[test]
+fn an_entry_that_reads_no_clock_reports_nothing_when_node_is_available() {
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+    let mut bridge =
+        Bridge::spawn(&node, &cli_script, package_root.join("examples/title.tsx")).unwrap();
+    for frame in [0, 30, 60] {
+        bridge
+            .scene_at(Time::frames(frame, Rational::new(30, 1)).unwrap())
+            .unwrap();
+    }
+    assert!(bridge.nondeterministic_calls().is_empty());
+}
+
+#[test]
 fn a_stray_stdout_write_is_a_protocol_error_when_node_is_available() {
     let Some((node, cli_script, _)) = live_react_runtime() else {
         return;

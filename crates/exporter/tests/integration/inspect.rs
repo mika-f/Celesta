@@ -479,3 +479,39 @@ export default () => <>
             .contains("unknown composition id: missing")
     );
 }
+
+#[test]
+fn native_inspection_reports_nondeterministic_calls_once() {
+    let Some(_) = runtime() else { return };
+    let (_dir, entry) = entry(
+        r#"
+import { Composition, Text, useCurrentFrame } from '@celesta.studio/react';
+function Value() {
+  return <Text>{String(useCurrentFrame() > 1 ? performance.now() : Math.random())}</Text>;
+}
+export default () => <Composition width={64} height={64} fps={30} durationInFrames={30}><Value /></Composition>;
+"#,
+    );
+    let requests = [request(3), request(4)].concat();
+    let (code, lines) = inspect_exporter(&entry, &[], &requests);
+    assert_eq!(code, Some(0), "{lines:?}");
+    // Mounting renders frame 0 (Math.random), frame 3 reads the clock.
+    assert_eq!(
+        lines[0]["nondeterministic"],
+        serde_json::json!(["Math.random()"])
+    );
+    assert_eq!(
+        lines[1]["nondeterministic"],
+        serde_json::json!(["performance.now()"])
+    );
+    assert!(lines[2].get("nondeterministic").is_none(), "{}", lines[2]);
+
+    let output = inspect_mjs(&entry, &["--frames", "0,5"]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains(
+            "warning: nondeterministic_render: the entry calls Math.random() and performance.now() while rendering;"
+        ),
+        "{stdout}"
+    );
+}

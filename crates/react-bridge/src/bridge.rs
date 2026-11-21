@@ -3,11 +3,12 @@ use crate::audio::{react_audio_clips, react_video_clip_ids};
 use crate::decode::{DecodedAudioFiles, decode_audio_response};
 use crate::error::ReactBridgeError;
 use crate::measure::measure_text_response;
+use crate::nondeterminism::NondeterministicCalls;
 use crate::occurrences::OccurrenceIndex;
 use crate::probe::{MediaProbeResponse, animation_probe_payload, media_probe_payload};
 use crate::properties::PropertyInputs;
 use crate::protocol::{
-    ComponentRequest, ProjectPayload, PropertyInputsMessage, ReadyMessage, Request,
+    Answer, ComponentRequest, ProjectPayload, PropertyInputsMessage, ReadyMessage, Request,
     ResolutionRuntime, Response, StaticsRequest,
 };
 use crate::statics::StaticCache;
@@ -50,6 +51,8 @@ pub struct ReactBridge {
     pub(crate) debug_guides: bool,
     /// Whether frame requests are evaluated as the editor preview.
     pub(crate) preview: bool,
+    /// The clock and random APIs the entry called while rendering.
+    pub(crate) nondeterministic: NondeterministicCalls,
 }
 
 impl Drop for ReactBridge {
@@ -170,6 +173,7 @@ impl ReactBridge {
         // Created on the first `measureText`: it scans the system fonts.
         let mut text_measurer: Option<TextRasterizer> = None;
         let mut decoded_audio = DecodedAudioFiles::default();
+        let mut mounted_nondeterministic = NondeterministicCalls::default();
         let mut handshake = || -> Result<ReactCompositionMetadata, ReactBridgeError> {
             loop {
                 read_message(&mut stdout, &mut message)?;
@@ -188,7 +192,9 @@ impl ReactBridge {
                         project_property_order,
                         dependencies,
                         legacy_imports,
+                        nondeterministic,
                     } => {
+                        mounted_nondeterministic.add(nondeterministic);
                         let composition_id = composition_id.unwrap_or_else(|| "default".to_owned());
                         if compositions.is_empty() {
                             compositions.push(ReactCompositionInfo {
@@ -289,11 +295,21 @@ impl ReactBridge {
             animated_images: AnimatedImages::new(asset_root),
             debug_guides: false,
             preview: false,
+            nondeterministic: mounted_nondeterministic,
         })
     }
 
     pub const fn metadata(&self) -> &ReactCompositionMetadata {
         &self.metadata
+    }
+
+    /// The clock and random APIs (`Math.random()`, `Date.now()`, …) the
+    /// entry called while this runtime evaluated a frame, so far: each once,
+    /// whichever request first ran into it. Their values were already made
+    /// deterministic; [`NondeterministicCalls::warning`] is the warning that
+    /// says so. `prepare()` and module scope are not watched.
+    pub const fn nondeterministic_calls(&self) -> &NondeterministicCalls {
+        &self.nondeterministic
     }
 
     /// Makes later frame requests draw debug guides: `<DebugOverlay>`,
@@ -469,12 +485,12 @@ impl ReactBridge {
     }
 
     fn decode_response(&mut self, frame: PendingFrame) -> Result<Response, ReactBridgeError> {
-        let response = serde_json::from_slice(&frame.0).map_err(ReactBridgeError::Protocol);
+        let answer = serde_json::from_slice(&frame.0).map_err(ReactBridgeError::Protocol);
         // Keep the larger allocation for the next message.
         if frame.0.capacity() > self.message.capacity() {
             self.message = frame.0;
         }
-        let mut response = response?;
+        let mut response = self.take_answer(answer?);
         // A frame's `<Static>` references become the layers they stand for
         // before anything else sees the scene.
         if let Response::Ok {
@@ -679,7 +695,14 @@ impl ReactBridge {
     ) -> Result<Response, ReactBridgeError> {
         self.write_request(request)?;
         self.receive_message()?;
-        serde_json::from_slice(&self.message).map_err(ReactBridgeError::Protocol)
+        let answer = serde_json::from_slice(&self.message).map_err(ReactBridgeError::Protocol)?;
+        Ok(self.take_answer(answer))
+    }
+
+    /// Notes what `answer` reports the entry called and returns its response.
+    fn take_answer(&mut self, answer: Answer) -> Response {
+        self.nondeterministic.add(answer.nondeterministic);
+        answer.response
     }
 
     fn write_request<R: Serialize>(&mut self, request: R) -> Result<(), ReactBridgeError> {
@@ -708,8 +731,10 @@ impl ReactBridge {
             if !self.message.starts_with(br#"{"measureText":"#) {
                 return Ok(());
             }
-            let Response::MeasureText { measure_text } =
-                serde_json::from_slice(&self.message).map_err(ReactBridgeError::Protocol)?
+            let Answer {
+                response: Response::MeasureText { measure_text },
+                ..
+            } = serde_json::from_slice(&self.message).map_err(ReactBridgeError::Protocol)?
             else {
                 return Err(ReactBridgeError::UnexpectedResponse);
             };

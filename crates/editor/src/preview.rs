@@ -601,7 +601,9 @@ pub(crate) fn spawn_preview(mut renderer: GpuRenderer) -> anyhow::Result<Preview
                 }
             }
         };
-        // Imports by the names before `@celesta.studio`, which still resolve.
+        // Imports by the names before `@celesta.studio`, which still resolve,
+        // and the clock and random APIs the entry called while rendering:
+        // the bridge keeps them for as long as it runs the entry.
         if let Some(bridge) = react_bridge
             .as_ref()
             .and_then(|react| react.bridge.as_ref())
@@ -613,6 +615,7 @@ pub(crate) fn spawn_preview(mut renderer: GpuRenderer) -> anyhow::Result<Preview
                     .iter()
                     .map(ToString::to_string),
             );
+            warnings.extend(bridge.nondeterministic_calls().warning());
         }
         // The edited text is drawn on a copy: the held scene
         // stays as the runtime evaluated it.

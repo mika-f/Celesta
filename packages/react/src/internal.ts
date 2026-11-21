@@ -2,6 +2,14 @@
 // the Celesta CLI build on. Not for compositions; nothing here is stable.
 
 export { createResolver, mount } from './render';
+export {
+  FROZEN_EPOCH_MS,
+  evaluateDeterministically,
+  resetNondeterministicCalls,
+  setNondeterminismSource,
+  takeNondeterministicCalls,
+} from './determinism';
+export type { NondeterminismSource, NondeterministicApi } from './determinism';
 export type {
   AudioClipDescriptor,
   ComponentResolution,

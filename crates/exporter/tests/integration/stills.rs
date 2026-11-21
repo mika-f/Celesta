@@ -1585,3 +1585,58 @@ fn percent_signs_in_the_output_name_are_literal() {
     assert_eq!(names, ["c%06d-000000.png", "c%06d-000001.png"]);
     assert_eq!(pixels(&folder.join("c%06d-000001.png")).len(), 36);
 }
+
+#[test]
+fn json_reports_warn_about_math_random_and_the_clock_in_stills_and_video() {
+    if !root().join("packages/cli/dist/cli.js").exists() {
+        eprintln!("skipping React determinism warning test: build packages/cli first");
+        return;
+    }
+    let dir = tempfile::tempdir_in(root().join("packages/cli")).unwrap();
+    let entry = dir.path().join("random.tsx");
+    std::fs::write(
+        &entry,
+        r##"
+import { Composition, Rect } from '@celesta.studio/react';
+function Square() {
+  const shade = Math.floor(Math.random() * 255);
+  return <Rect width={8} height={8} fill={`#${shade.toString(16).padStart(2, '0')}0000`} x={Date.now() % 2} />;
+}
+export default () => <Composition width={16} height={16} fps={4} durationInFrames={4}><Square /></Composition>;
+"##,
+    )
+    .unwrap();
+    let expected =
+        "nondeterministic_render: the entry calls Math.random() and Date.now() while rendering;";
+    let warnings = |result: &std::process::Output| -> Vec<String> {
+        assert!(result.status.success(), "{}", stderr(result));
+        json(result)["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|warning| warning.as_str().unwrap().to_owned())
+            .collect()
+    };
+
+    let still = dir.path().join("frame.png");
+    let first = react_export(&entry, &["--json", "--frame", "2"], &still);
+    let found = warnings(&first);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].starts_with(expected), "{found:?}");
+    // The same frame again: the same pixels.
+    let pixels_once = decode(&still);
+    let again = react_export(&entry, &["--json", "--overwrite", "--frame", "2"], &still);
+    assert_eq!(warnings(&again).len(), 1);
+    assert_eq!(decode(&still), pixels_once);
+
+    let video = dir.path().join("film.mov");
+    let found = warnings(&react_export(&entry, &["--json"], &video));
+    assert!(
+        found
+            .iter()
+            .filter(|warning| warning.starts_with(expected))
+            .count()
+            == 1,
+        "{found:?}"
+    );
+}

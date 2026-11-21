@@ -243,6 +243,10 @@ pub fn inspect(args: InspectArgs, stop: &Stop, media: &SharedMedia) -> CallToolR
                 (halt, doing)
             })
     };
+    // The clock and random APIs the entry called while rendering.
+    inspection
+        .warnings
+        .extend(bridge.nondeterministic_calls().warning());
     match finished {
         Ok(()) => inspection.finish(),
         Err((halt, doing)) => stop.result(halt, &doing),

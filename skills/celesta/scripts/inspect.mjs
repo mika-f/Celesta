@@ -25,6 +25,9 @@
 // (measureText(), useTextMetrics(), <TextBox>, @celesta-plugin/code, …) and media
 // probing, still without rendering pixels. --native <Celesta-export> picks the
 // exporter; --no-native evaluates in Node only, which cannot shape text.
+// Math.random(), Date.now(), performance.now() and new Date() called while
+// rendering are reported as a `nondeterministic_render` warning (the runtime
+// reseeds and freezes them per frame); --json lists it in `warnings`.
 // Exit code 1 means the entry failed to load, a frame failed, or a
 // referenced local file is missing. Exit code 2 means only that text had to
 // be measured, which needs the exporter or a PNG export.
@@ -392,6 +395,7 @@ async function inspectEntry(options) {
         continue;
       }
       if (message.error?.includes(TEXT_UNSUPPORTED)) message.status = 'unsupported';
+      for (const api of message.nondeterministic ?? []) nondeterministic.add(api);
       return message;
     }
   };
@@ -450,7 +454,7 @@ async function inspectEntry(options) {
       results.push({ frame, ...response });
       if (response.fatal) break;
     }
-    console.log(JSON.stringify({ ready, frames: results }, null, 2));
+    console.log(JSON.stringify({ ready, frames: results, warnings: [...new Set([...warnings, ...nondeterminismWarnings()])] }, null, 2));
     problems += results.filter((result) => result.error && result.status !== 'unsupported').length;
     unsupported += results.filter((result) => result.status === 'unsupported').length;
   } else {
@@ -504,7 +508,7 @@ async function inspectEntry(options) {
     }
     problems += missing.size;
     console.log('');
-    for (const warning of new Set(warnings)) console.log(`warning: ${warning}`);
+    for (const warning of new Set([...warnings, ...nondeterminismWarnings()])) console.log(`warning: ${warning}`);
     for (const src of missing) console.log(`missing: ${src} (relative paths resolve from ${entryDir})`);
     if (problems) console.log(`${problems} problem(s) found`);
     else if (unsupported) console.log(`${unsupported} frame(s) measure text and could not be inspected; use --native <Celesta-export> or a PNG export`);
@@ -512,6 +516,30 @@ async function inspectEntry(options) {
   }
 
   await finish(problems ? 1 : unsupported ? 2 : 0);
+}
+
+// ------------------------------------------------------------ determinism
+
+/** The clock and random APIs the entry called while rendering, as the runtime reported them. */
+const nondeterministic = new Set();
+const NONDETERMINISTIC_ORDER = ['Math.random()', 'Date.now()', 'performance.now()', 'new Date()'];
+
+/**
+ * The `nondeterministic_render` warning, worded as Celesta-export words it;
+ * empty when the entry called none of them.
+ */
+function nondeterminismWarnings() {
+  if (nondeterministic.size === 0) return [];
+  const rank = (api) => (NONDETERMINISTIC_ORDER.includes(api) ? NONDETERMINISTIC_ORDER.indexOf(api) : NONDETERMINISTIC_ORDER.length);
+  const apis = [...nondeterministic].sort((a, b) => rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0));
+  const listed = apis.length === 1 ? apis[0]
+    : apis.length === 2 ? `${apis[0]} and ${apis[1]}`
+    : `${apis.slice(0, -1).join(', ')}, and ${apis.at(-1)}`;
+  return [
+    `nondeterministic_render: the entry calls ${listed} while rendering; Celesta reseeds Math.random() for every frame ` +
+      "and freezes the clock at the frame's time, so these values follow the frame and not the run. " +
+      'Use random(seed) from @celesta.studio/math, and useCurrentFrame() or useCurrentTime()',
+  ];
 }
 
 // ------------------------------------------------------------ loop check
@@ -567,7 +595,7 @@ async function checkLoop(config, send, receive, options, ready) {
 
   const code = problems ? 1 : unsupported ? 2 : 0;
   if (options.json) {
-    console.log(JSON.stringify({ ready, loop: pairs }, null, 2));
+    console.log(JSON.stringify({ ready, loop: pairs, warnings: nondeterminismWarnings() }, null, 2));
     return code;
   }
   console.log(`composition: ${config.width}×${config.height} @ ${fmt(fps)} fps, ${total} frames (${fmt(total / fps)} s)`);
@@ -589,6 +617,7 @@ async function checkLoop(config, send, receive, options, ready) {
     }
   }
   console.log('');
+  for (const warning of nondeterminismWarnings()) console.log(`warning: ${warning}`);
   if (pairs.some((pair) => pair.error && pair.status !== 'unsupported')) console.log(`${problems} problem(s) found`);
   else if (problems) console.log('The loop has a seam: the frames above should match. Sound is not compared; see loops.md.');
   else if (unsupported) console.log('These frames measure text, so the loop could not be checked; compare the seam in a contact sheet instead (loops.md)');

@@ -12,6 +12,7 @@ mod bridge;
 mod decode;
 mod error;
 mod measure;
+mod nondeterminism;
 mod occurrences;
 mod probe;
 mod properties;
@@ -26,6 +27,7 @@ mod types;
 pub use audio::{merge_react_audio_clips, react_audio_clips, react_ducking, react_video_clip_ids};
 pub use bridge::{PendingFrame, ReactBridge, ReactMedia};
 pub use error::ReactBridgeError;
+pub use nondeterminism::{NONDETERMINISTIC_RENDER, NondeterministicCalls};
 pub use occurrences::{
     ElementOccurrences, InstanceOccurrences, OccurrenceIndex, outermost_chapter_at, scenes_of,
 };
