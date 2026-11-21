@@ -350,6 +350,15 @@ impl VideoEncoder for FfmpegCodec {
         self.video_session(session)?.encode(pts, &frame)
     }
 
+    fn encode_video_slot(
+        &mut self,
+        session: SessionId,
+        pts: i64,
+        frame: celesta_media::VideoFrameSlot<'_>,
+    ) -> Result<Encoded, MediaError> {
+        self.video_session(session)?.encode_slot(pts, frame)
+    }
+
     fn finish_video(&mut self, session: SessionId) -> Result<Encoded, MediaError> {
         let mut state = self
             .video

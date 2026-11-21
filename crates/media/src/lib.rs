@@ -42,7 +42,7 @@ pub use provider::{
     ComponentKind, Decoder, Encoded, MediaProvider, Muxer, MuxerRequest, PIPE_WINDOW, Packet,
     Pipeline, PixelFormat, ProviderFactory, ProviderUse, SampleRates, Sequential, SessionId,
     SideData, Track, TrackConfig, TrackPacket, VideoEncoder, VideoEncoderOpened,
-    VideoEncoderRequest, VideoRequest, timestamps_match,
+    VideoEncoderRequest, VideoFrameSlot, VideoRequest, timestamps_match,
 };
 pub use registry::{
     ComponentEntry, ComponentRef, DecoderUse, InvalidComponentRef, MediaComponentInfo,

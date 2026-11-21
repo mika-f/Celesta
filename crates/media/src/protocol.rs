@@ -15,7 +15,8 @@ use crate::mix::frame_byte_len;
 use crate::provider::{
     AudioEncoder, AudioEncoderOpened, AudioEncoderRequest, Color, ComponentDescription, Encoded,
     MediaProvider, Muxer, MuxerRequest, Packet, PixelFormat, Sequential, SessionId, SideData,
-    Track, TrackPacket, VideoEncoder, VideoEncoderOpened, VideoEncoderRequest, VideoRequest,
+    Track, TrackPacket, VideoEncoder, VideoEncoderOpened, VideoEncoderRequest, VideoFrameSlot,
+    VideoRequest,
 };
 use crate::settings::Settings;
 use crate::types::{AudioBuffer, MediaProbe, VideoFrame};
@@ -339,8 +340,10 @@ fn answer_video(
         }
         "encodeVideoFrame" => {
             let slot: Option<WireFrameSlot> = field(request, "slot")?;
-            let frame = match slot {
-                None => std::mem::take(&mut request.payload),
+            let session = field(request, "session")?;
+            let pts = field(request, "pts")?;
+            let encoded = match slot {
+                None => encoder.encode_video(session, pts, std::mem::take(&mut request.payload))?,
                 Some(slot) => {
                     let ring = segment
                         .and_then(|segment| Some((segment.ring?, &segment.memory)))
@@ -348,17 +351,18 @@ fn answer_video(
                         .ok_or_else(|| {
                             MediaError::Codec("a slot was named but no ring was opened".to_owned())
                         })?;
-                    ring.read_slot(slot.index, slot.bytes, slot.generation)
-                        .ok_or_else(|| {
-                            MediaError::Codec(format!(
-                                "slot {} does not hold the frame under generation {}",
-                                slot.index, slot.generation
-                            ))
-                        })?
+                    encoder.encode_video_slot(
+                        session,
+                        pts,
+                        VideoFrameSlot {
+                            ring,
+                            index: slot.index,
+                            bytes: slot.bytes,
+                            generation: slot.generation,
+                        },
+                    )?
                 }
             };
-            let encoded =
-                encoder.encode_video(field(request, "session")?, field(request, "pts")?, frame)?;
             encoded_answer("videoFrameAccepted", &encoded)?
         }
         _ => {
@@ -1958,6 +1962,30 @@ mod tests {
         ring.write_slot(0, &a, 2).unwrap();
         ring.write_slot(1, &b, 2).unwrap();
         (memory, a, b)
+    }
+
+    #[test]
+    fn copying_a_changed_slot_keeps_the_generation_error() {
+        let (memory, _, _) = ring_with_frames();
+        let slot = VideoFrameSlot {
+            ring: memory.ring(TWO_SLOTS).unwrap(),
+            index: 0,
+            bytes: 64,
+            generation: 2,
+        };
+        let mut copied = [0; 64];
+        // SAFETY: copies only the declared bytes into owned memory, then
+        // simulates a writer invalidating them before the generation check.
+        let error = unsafe {
+            slot.copy_with(|source| {
+                std::ptr::copy_nonoverlapping(source, copied.as_mut_ptr(), copied.len());
+                slot.ring.write_slot(0, &[0xC; 64], 4).unwrap();
+            })
+        }
+        .unwrap_err();
+        assert_eq!(error.to_string(), slot.read().unwrap_err().to_string());
+        assert!(matches!(error, MediaError::Codec(message)
+            if message == "slot 0 does not hold the frame under generation 2"));
     }
 
     fn slot(index: usize, generation: u64, bytes: usize) -> FrameLocation {

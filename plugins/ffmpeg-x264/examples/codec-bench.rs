@@ -21,7 +21,8 @@
 //! plugin accepts it; `CELESTA_CODEC_SHARED_MEMORY=0` keeps them in the
 //! pipe, to compare the two. Encoded frames go the same way, through the
 //! export ring and pipelined three deep; the same variable compares the
-//! pipe, pipelined.
+//! pipe, pipelined. Set `CELESTA_BENCH_INPUT=yuv420p` to measure the
+//! same-format encoder input instead of RGBA's conversion path.
 
 use celesta_composition::Rational;
 use celesta_media::{
@@ -209,7 +210,12 @@ fn encode(
     // Taken once the probing plugin has exited, so that the plugin's CPU
     // time is the export process's alone.
     let opened = cpu();
-    let ring = ring_layout(&[PixelFormat::Rgba8], width, height);
+    let input = match env::var("CELESTA_BENCH_INPUT").as_deref() {
+        Ok("yuv420p") => PixelFormat::Yuv420p,
+        Ok("rgba8") | Err(_) => PixelFormat::Rgba8,
+        Ok(other) => panic!("unsupported CELESTA_BENCH_INPUT {other:?}"),
+    };
+    let ring = ring_layout(&[input], width, height);
     let export = ProviderUse::Export { ring };
     // The plugin's process is started here, so that its pipeline says,
     // once the encoder is open, whether frames go through the ring.
@@ -243,12 +249,20 @@ fn encode(
             height,
             frame_rate: Rational::new(30, 1),
             timescale: 30,
-            offered: &[PixelFormat::Rgba8],
+            offered: &[input],
             color: &color,
         })
         .expect("the encoder opens")
         .session;
     let frame = |index: u32| -> Vec<u8> {
+        if input == PixelFormat::Yuv420p {
+            let pixels = (width as usize) * (height as usize);
+            let mut bytes = vec![128; pixels * 3 / 2];
+            for (offset, luma) in bytes[..pixels].iter_mut().enumerate() {
+                *luma = 16 + ((offset as u32).wrapping_add(index * 7) % 220) as u8;
+            }
+            return bytes;
+        }
         let mut pixels = vec![0u8; width as usize * height as usize * 4];
         for (offset, pixel) in pixels.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             let value = (offset as u32).wrapping_add(index * 7) as u8;
@@ -262,7 +276,8 @@ fn encode(
     let how = match provider.pipeline() {
         None => "in process".to_owned(),
         Some(pipeline) => format!(
-            "{}, {} deep",
+            "{:?}, {}, {} deep",
+            input,
             if pipeline.frames_in_ring() {
                 "ring"
             } else {

@@ -421,3 +421,107 @@ fn frames_reach_the_encoder_through_the_ring() {
         assert_eq!((decoded.width, decoded.height), size, "{frame}");
     }
 }
+
+#[test]
+fn slot_direct_yuv_packets_match_the_owned_path() {
+    for format in [
+        PixelFormat::Yuv420p,
+        PixelFormat::Yuv420p10,
+        PixelFormat::Nv12,
+        PixelFormat::P010,
+        PixelFormat::Rgba8,
+        PixelFormat::Rgba16,
+    ] {
+        let given = settings(&[
+            ("preset", text("ultrafast")),
+            (
+                "bitDepth",
+                text(
+                    if matches!(
+                        format,
+                        PixelFormat::Yuv420p10 | PixelFormat::P010 | PixelFormat::Rgba16
+                    ) {
+                        "10"
+                    } else {
+                        "8"
+                    },
+                ),
+            ),
+        ]);
+        let encode = |transport| {
+            let export = ProviderUse::Export {
+                ring: ring_layout(&[format], encoding::WIDTH, encoding::HEIGHT),
+            };
+            let mut program = program_with(transport, export);
+            let opened = encoding::open(&mut program, "libx264", &given, &[format]).unwrap();
+            assert_eq!(opened.input, format);
+            let pipeline = program.pipeline().unwrap();
+            assert_eq!(
+                pipeline.frames_in_ring(),
+                transport == FrameTransport::SharedMemory
+            );
+            let mut answers = Vec::new();
+            for index in 0..encoding::FRAMES {
+                if pipeline.in_flight() == pipeline.depth() {
+                    let Answered::VideoFrame(answer) = pipeline.receive().unwrap() else {
+                        panic!("not a frame answer");
+                    };
+                    answers.push(answer);
+                }
+                pipeline
+                    .send_video_frame(opened.session, index, encoding::frame(format, index))
+                    .unwrap();
+            }
+            while pipeline.in_flight() > 0 {
+                let Answered::VideoFrame(answer) = pipeline.receive().unwrap() else {
+                    panic!("not a frame answer");
+                };
+                answers.push(answer);
+            }
+            answers.push(
+                program
+                    .video_encoder()
+                    .unwrap()
+                    .finish_video(opened.session)
+                    .unwrap(),
+            );
+            gathered(answers)
+        };
+        let direct = encode(FrameTransport::SharedMemory);
+        assert_eq!(direct.0.len(), encoding::FRAMES as usize);
+        assert_eq!(direct, encode(FrameTransport::Pipe), "{format:?}");
+    }
+}
+
+#[test]
+fn empty_slot_frame_is_refused_without_consuming_an_encoder_frame() {
+    let format = PixelFormat::Yuv420p;
+    let mut program = program_with(
+        FrameTransport::SharedMemory,
+        ProviderUse::Export {
+            ring: ring_layout(&[format], encoding::WIDTH, encoding::HEIGHT),
+        },
+    );
+    let opened = encoding::open(
+        &mut program,
+        "libx264",
+        &settings(&[("preset", text("ultrafast"))]),
+        &[format],
+    )
+    .unwrap();
+    let encoder = program.video_encoder().unwrap();
+    let error = encoder
+        .encode_video(opened.session, 0, Vec::new())
+        .unwrap_err();
+    assert!(matches!(error, MediaError::Codec(message) if message.contains("not 0")));
+    let mut answers = Vec::new();
+    for index in 0..encoding::FRAMES {
+        answers.push(
+            encoder
+                .encode_video(opened.session, index, encoding::frame(format, index))
+                .unwrap(),
+        );
+    }
+    answers.push(encoder.finish_video(opened.session).unwrap());
+    assert_eq!(gathered(answers).0.len(), encoding::FRAMES as usize);
+}

@@ -16,7 +16,7 @@ use crate::error::MediaError;
 use crate::settings::{SettingField, Settings};
 use crate::types::{AudioBuffer, MediaProbe, VideoFrame};
 use celesta_composition::Rational;
-use celesta_plugin::shared::RingLayout;
+use celesta_plugin::shared::{Ring, RingLayout};
 use celesta_plugin_host::PluginKillSwitch;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -184,11 +184,61 @@ pub trait VideoEncoder {
         frame: Vec<u8>,
     ) -> Result<Encoded, MediaError>;
 
+    /// Encodes a shared-memory frame. Encoders that can copy directly into
+    /// their native buffers may override this; others keep the owned path.
+    fn encode_video_slot(
+        &mut self,
+        session: SessionId,
+        pts: i64,
+        frame: VideoFrameSlot<'_>,
+    ) -> Result<Encoded, MediaError> {
+        self.encode_video(session, pts, frame.read()?)
+    }
+
     /// Flushes the encoder: its last packets. The session ends.
     fn finish_video(&mut self, session: SessionId) -> Result<Encoded, MediaError>;
 
     /// Ends the session, if it is one of this kind's, with no more packets.
     fn abort_video(&mut self, session: SessionId);
+}
+
+/// A packed input frame in a reserved encode-ring slot. The host keeps it
+/// reserved until this request is answered; readers still validate generation.
+pub struct VideoFrameSlot<'a> {
+    pub ring: Ring<'a>,
+    pub index: usize,
+    pub bytes: usize,
+    pub generation: u64,
+}
+
+impl VideoFrameSlot<'_> {
+    /// Materializes the frame, preserving the generation error of the wire path.
+    pub fn read(&self) -> Result<Vec<u8>, MediaError> {
+        self.ring
+            .read_slot(self.index, self.bytes, self.generation)
+            .ok_or_else(|| self.invalid())
+    }
+
+    fn invalid(&self) -> MediaError {
+        MediaError::Codec(format!(
+            "slot {} does not hold the frame under generation {}",
+            self.index, self.generation
+        ))
+    }
+
+    /// Copies into an encoder's owned frame, then validates the generation.
+    ///
+    /// # Safety
+    ///
+    /// The callback must satisfy [`Ring::copy_slot_with`]'s safety contract.
+    pub unsafe fn copy_with<T>(&self, copy: impl FnOnce(*const u8) -> T) -> Result<T, MediaError> {
+        // SAFETY: the caller supplies the raw-copy-only callback.
+        unsafe {
+            self.ring
+                .copy_slot_with(self.index, self.bytes, self.generation, copy)
+        }
+        .ok_or_else(|| self.invalid())
+    }
 }
 
 /// A plugin's audio encoder components, by session; its sessions share the

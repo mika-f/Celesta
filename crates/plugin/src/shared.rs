@@ -344,6 +344,39 @@ impl Ring<'_> {
         )
     }
 
+    /// Copies a slot through `copy`, checking its length and generation
+    /// before the copy and its generation again afterwards, as [`Self::read_slot`].
+    /// A failed check returns `None`; the destination must then be discarded.
+    ///
+    /// # Safety
+    ///
+    /// `copy` may only copy from the first `len` bytes of its raw pointer
+    /// into owned memory. It must not create references into the mapping,
+    /// retain the pointer, or consume the copied data before this returns
+    /// `Some`: a concurrent writer may invalidate it during the copy.
+    pub unsafe fn copy_slot_with<T>(
+        &self,
+        slot: usize,
+        len: usize,
+        generation: u64,
+        copy: impl FnOnce(*const u8) -> T,
+    ) -> Option<T> {
+        if slot >= self.layout.slots || len > self.layout.slot_bytes || generation % 2 == 1 {
+            return None;
+        }
+        let offset = self.layout.offset(slot);
+        if self.memory.generation_at(offset).load(Ordering::Acquire) != generation
+            || self.memory.length_at(offset).load(Ordering::Relaxed) != len as u64
+        {
+            return None;
+        }
+        // SAFETY: this ring's validated layout and the bounds above put
+        // all `len` bytes within the mapping. The caller only copies them.
+        let result = copy(unsafe { self.memory.ptr.add(offset + SLOT_HEADER) });
+        fence(Ordering::Acquire);
+        (self.memory.generation_at(offset).load(Ordering::Relaxed) == generation).then_some(result)
+    }
+
     #[cfg(test)]
     fn slot_generation(&self, slot: usize) -> &AtomicU64 {
         self.memory.generation_at(self.layout.offset(slot))
@@ -909,6 +942,49 @@ mod tests {
         let ring = host.ring(layout).unwrap();
         assert!(ring.write_slot(3, &[1], 2).is_err());
         assert_eq!(ring.read_slot(3, 1, 2), None);
+    }
+
+    #[test]
+    fn direct_slot_copy_matches_owned_reads_and_rechecks_generation() {
+        let layout = RingLayout {
+            slots: 2,
+            slot_bytes: 64,
+        };
+        let memory = SharedMemory::create(layout.segment_bytes().unwrap()).unwrap();
+        let ring = memory.ring(layout).unwrap();
+        for (slot, bytes) in [vec![], (0..64).collect()].into_iter().enumerate() {
+            ring.write_slot(slot, &bytes, 2).unwrap();
+            let mut copied = vec![0; bytes.len()];
+            // SAFETY: only copying the declared bytes into owned memory.
+            let result = unsafe {
+                ring.copy_slot_with(slot, bytes.len(), 2, |source| {
+                    std::ptr::copy_nonoverlapping(source, copied.as_mut_ptr(), copied.len());
+                })
+            };
+            assert_eq!(result, Some(()));
+            assert_eq!(Some(copied), ring.read_slot(slot, bytes.len(), 2));
+        }
+        for (slot, len, generation) in [(2, 64, 2), (1, 65, 2), (1, 63, 2), (1, 64, 3), (1, 64, 4)]
+        {
+            // SAFETY: this callback never accesses the pointer.
+            assert_eq!(
+                unsafe {
+                    ring.copy_slot_with(slot, len, generation, |_| panic!("invalid slot copied"))
+                },
+                None::<()>
+            );
+        }
+        let mut copied = [0u8; 64];
+        // SAFETY: only copies the declared bytes. Rewriting the slot after
+        // the copy deterministically exercises the second generation check.
+        let result = unsafe {
+            ring.copy_slot_with(1, 64, 2, |source| {
+                std::ptr::copy_nonoverlapping(source, copied.as_mut_ptr(), copied.len());
+                ring.write_slot(1, &[9; 64], 4).unwrap();
+            })
+        };
+        assert_eq!(result, None);
+        assert_eq!(copied.as_slice(), (0..64).collect::<Vec<u8>>());
     }
 
     #[test]

@@ -20,7 +20,7 @@ use crate::h264::{annexb_to_avc, avcc_codec_string, avcc_from_annexb};
 use crate::tags::AvColor;
 use celesta_media::{
     Encoded, InvalidSetting, MediaError, Packet, PixelFormat, SettingValue, Settings, SideData,
-    TrackConfig, VideoEncoderRequest, settings::validate,
+    TrackConfig, VideoEncoderRequest, VideoFrameSlot, settings::validate,
 };
 use ffmpeg_sys_next::{
     AV_CODEC_FLAG_GLOBAL_HEADER, AV_NOPTS_VALUE, AV_PKT_FLAG_KEY, AVDictionary, AVERROR,
@@ -453,49 +453,84 @@ impl VideoSession {
     /// Encodes `pixels`, a tightly packed frame of the session's input, at
     /// `pts`.
     pub(crate) fn encode(&mut self, pts: i64, pixels: &[u8]) -> Result<Encoded, MediaError> {
-        if pixels.len() != self.input_bytes {
-            return Err(MediaError::Codec(format!(
-                "a {}x{} {:?} frame is {} bytes, not {}",
-                self.width,
-                self.height,
-                self.input,
-                self.input_bytes,
-                pixels.len()
-            )));
-        }
+        self.check_size(pixels.len())?;
         let frame = self.writable_frame()?;
-        // SAFETY: `pixels` holds a whole frame of `self.input` (checked
-        // above), and nothing else references the frame's buffers; the
-        // encoder takes its own reference to what it keeps.
+        // SAFETY: `pixels` holds a whole input frame, and the destination
+        // buffers are writable and owned by this session.
         unsafe {
             match &self.scaler {
                 Some(scaler) => scaler.convert(frame, pixels)?,
-                None => {
-                    let mut source = [null_mut::<u8>(); 4];
-                    let mut strides = [0 as c_int; 4];
-                    let result = av_image_fill_arrays(
-                        source.as_mut_ptr(),
-                        strides.as_mut_ptr(),
-                        pixels.as_ptr(),
-                        self.input,
-                        self.width,
-                        self.height,
-                        1,
-                    );
-                    if result < 0 {
-                        return Err(av_error(result, "read the frame"));
-                    }
-                    av_image_copy(
-                        (*frame).data.as_mut_ptr(),
-                        (*frame).linesize.as_ptr(),
-                        source.as_ptr().cast(),
-                        strides.as_ptr(),
-                        self.input,
-                        self.width,
-                        self.height,
-                    );
-                }
+                None => self.copy_frame(frame, pixels.as_ptr())?,
             }
+        }
+        self.submit(pts, frame)
+    }
+
+    pub(crate) fn encode_slot(
+        &mut self,
+        pts: i64,
+        slot: VideoFrameSlot<'_>,
+    ) -> Result<Encoded, MediaError> {
+        if self.scaler.is_some() {
+            return self.encode(pts, &slot.read()?);
+        }
+        self.check_size(slot.bytes)?;
+        let frame = self.writable_frame()?;
+        // SAFETY: copy_frame reads only the checked input frame's bytes
+        // through raw pointers into our writable AVFrame. No source pointer
+        // or reference is retained. Only submit after the generation check.
+        unsafe { slot.copy_with(|pixels| self.copy_frame(frame, pixels))?? };
+        self.submit(pts, frame)
+    }
+
+    fn check_size(&self, bytes: usize) -> Result<(), MediaError> {
+        if bytes != self.input_bytes {
+            return Err(MediaError::Codec(format!(
+                "a {}x{} {:?} frame is {} bytes, not {}",
+                self.width, self.height, self.input, self.input_bytes, bytes
+            )));
+        }
+        Ok(())
+    }
+
+    /// Copies a complete packed input frame into a writable AVFrame.
+    /// `pixels` must hold `input_bytes` readable bytes without references
+    /// into shared memory; neither FFmpeg call retains the source pointer.
+    unsafe fn copy_frame(&self, frame: *mut AVFrame, pixels: *const u8) -> Result<(), MediaError> {
+        // SAFETY: the caller supplies the complete source and a writable
+        // destination of the same format. fill_arrays only computes planes.
+        unsafe {
+            let mut source = [null_mut::<u8>(); 4];
+            let mut strides = [0 as c_int; 4];
+            let result = av_image_fill_arrays(
+                source.as_mut_ptr(),
+                strides.as_mut_ptr(),
+                pixels,
+                self.input,
+                self.width,
+                self.height,
+                1,
+            );
+            if result < 0 {
+                return Err(av_error(result, "read the frame"));
+            }
+            av_image_copy(
+                (*frame).data.as_mut_ptr(),
+                (*frame).linesize.as_ptr(),
+                source.as_ptr().cast(),
+                strides.as_ptr(),
+                self.input,
+                self.width,
+                self.height,
+            );
+        }
+        Ok(())
+    }
+
+    fn submit(&mut self, pts: i64, frame: *mut AVFrame) -> Result<Encoded, MediaError> {
+        // SAFETY: this session owns the populated frame; the encoder takes
+        // its own reference to the buffers it keeps.
+        unsafe {
             (*frame).pts = av_rescale_q(pts, self.track_base, self.frame_base);
             (*frame).duration = 1;
             self.color.apply_to_frame(frame);
