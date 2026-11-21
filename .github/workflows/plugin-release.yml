@@ -130,7 +130,7 @@ jobs:
       # entries no later tag could restore.
 
       # Node.js and pnpm as mise.lock pins them; build.mts runs on Node.js.
-      - uses: jdx/mise-action@v5.2.7
+      - uses: jdx/mise-action@v5.2.10
         with:
           version: 2026.11.9
           cache_save: false
@@ -226,7 +226,7 @@ jobs:
         with:
           toolchain: 1.99.1
 
-      - uses: jdx/mise-action@v5.2.7
+      - uses: jdx/mise-action@v5.2.10
         with:
           version: 2026.11.9
           cache_save: false

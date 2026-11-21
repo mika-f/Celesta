@@ -67,7 +67,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
 
       # Node.js as mise.lock pins it, which runs TypeScript as it is.
-      - uses: jdx/mise-action@v5.2.7
+      - uses: jdx/mise-action@v5.2.10
         with:
           version: 2026.11.9
           cache_save: ${{ github.ref == 'refs/heads/main' }}
@@ -150,7 +150,7 @@ jobs:
       # No pnpm store cache: an install without one takes under 20 seconds,
       # less than restoring and saving the store, and a pull request that
       # changes the lockfile would save its own store on every OS.
-      - uses: jdx/mise-action@v5.2.7
+      - uses: jdx/mise-action@v5.2.10
         with:
           version: 2026.11.9
           cache_save: ${{ github.ref == 'refs/heads/main' }}
@@ -322,7 +322,7 @@ jobs:
 
       # Node.js and pnpm as mise.lock pins them, for the scripts, <Vrm>, and
       # the build.
-      - uses: jdx/mise-action@v5.2.7
+      - uses: jdx/mise-action@v5.2.10
         with:
           version: 2026.11.9
           cache_save: ${{ github.ref == 'refs/heads/main' }}
