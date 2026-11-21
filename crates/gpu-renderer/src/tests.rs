@@ -6966,3 +6966,63 @@ fn set_background_clears_later_frames_to_the_new_color() {
     let after = renderer.render(&empty_scene(4, 2)).unwrap();
     assert_eq!(after.pixels(), [0; 4].repeat(8));
 }
+
+/// A layer with only a blur, or only filters, hands its last canvas to its
+/// parent as is, without copying it onto one more canvas.
+#[test]
+fn lone_effect_results_are_not_copied() {
+    use celesta_composition::{LayerEffects, LayerFilter};
+
+    for (effects, canvases, on_cpu) in [
+        (
+            LayerEffects {
+                blur: 2.0,
+                ..LayerEffects::default()
+            },
+            // The group, then the blur's two passes.
+            3,
+            true,
+        ),
+        (
+            LayerEffects {
+                filters: vec![LayerFilter::Saturation { amount: 0.4 }],
+                ..LayerEffects::default()
+            },
+            // The group, then the filter's pass. The CPU renderer has no
+            // color filters; `tests/color_filter.rs` checks their pixels.
+            2,
+            false,
+        ),
+    ] {
+        let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+            return;
+        };
+        let mut scene = empty_scene(64, 48);
+        scene.layers = vec![
+            corner_rect("backdrop", 0.0, 0.0, 64.0, 48.0, "#203040"),
+            Layer {
+                id: "effect".to_owned(),
+                transform: EvaluatedTransform::default(),
+                opacity: 0.8,
+                blend_mode: BlendMode::Normal,
+                effects,
+                content: LayerContent::Group {
+                    layers: vec![corner_rect("child", 12.0, 10.0, 30.0, 20.0, "#ff8040")],
+                    clip: None,
+                    mask: None,
+                    motion_blur: false,
+                },
+            },
+        ];
+        let gpu = renderer.render(&scene).unwrap();
+        assert_eq!(renderer.effects.pool.len(), canvases);
+        if !on_cpu {
+            continue;
+        }
+        let cpu = celesta_renderer::CpuRenderer::default()
+            .render(&scene)
+            .unwrap();
+        let difference = max_channel_difference(&gpu, &cpu);
+        assert!(difference <= 5, "channels differ by up to {difference}");
+    }
+}
