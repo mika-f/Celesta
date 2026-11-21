@@ -14,7 +14,7 @@ const opacity = interpolate(frame, [0, 30], [0, 1], {
 
 結果を `<Text opacity={opacity} … />` に渡します。入力範囲は単調増加で、出力範囲と要素数が同じ必要があります。入力値と範囲の各要素は有限の数値でなければなりません。綴りを誤ったフィールドなどから生じた `NaN` は、`NaN` を返さずにエラーになります。外挿の既定値は `extend` です。最初と最後の値を保持するには `clamp` を使います。
 
-`Easings` は easings.net の曲線に対応します。`linear` と、`Sine`、`Quad`、`Cubic`、`Quart`、`Quint`、`Expo`、`Circ`、`Back`、`Elastic`、`Bounce` の `easeIn` / `easeOut` / `easeInOut`（例：`Easings.easeOutBack`）が使えます。
+`Easings` は easings.net の曲線に対応します。`linear` と、`Sine`、`Quad`、`Cubic`、`Quart`、`Quint`、`Expo`、`Circ`、`Back`、`Elastic`、`Bounce` の `easeIn` / `easeOut` / `easeInOut`（例：`Easings.easeOutBack`）が使えます。ホイップパン向けには `Easings.whip` もあります。両端ではほとんど動かず、動きの 98% を中央の3分の1で、平均の最大7倍の速さで進みます（JSON のキーフレームでは `'whip'`）。
 
 名前付きの曲線では合わないときは、数値から曲線を作れます。
 
@@ -45,6 +45,23 @@ const cam = keyframes(frame, [
 ```
 
 最初のキーより前は最初のキーの値、最後のキーより後は最後のキーの値になります。同じフレームにキーを2つ置くとカットになり、そのフレームから2つ目のキーの値になります。`easing` には関数か、JSON のキーフレームと同じ書き方の曲線名（`'ease-out-back'`）を指定します。キーは `frame` の順に並べ、`value` のフィールドはすべてのキーで揃えます。`<Audio>` の音量のようにキーフレームそのものを受け取るプロパティには、`frameKeyframes` を使います。[メディア](/ja/docs/media/)を参照してください。
+
+### ホールド中のドリフト
+
+ぴたりと止まったホールドは、映像が固まったように見えることがあります。キーに `drift` を指定すると、そのキーの後で値がホールドしている間、値が少しずつ動き続けます。速さは1秒あたりで指定するので、コンポジションの `fps` を渡します。
+
+```tsx title="ドリフトするホールドからホイップパンへ"
+const { fps } = useVideoConfig();
+const cam = keyframes(frame, [
+  { frame: 0,   value: { x: 960, y: 540, zoom: 1 } },
+  { frame: 100, value: { x: 880, y: 520, zoom: 1.12 }, easing: Easings.easeInOutCubic,
+    drift: { x: -4, zoom: { log: 0.006 } } },
+  { frame: 160, value: { x: 880, y: 520, zoom: 1.12 } },  // ここまでドリフトする
+  { frame: 180, value: { x: 300, y: 400, zoom: 1 }, easing: Easings.whip },
+], { fps });
+```
+
+値がオブジェクトなら、`drift` には動かしたいフィールドごとに速さを指定します（`x: -4` は毎秒4ピクセル左へ）。値が数値なら速さを1つだけ指定します。`{ log: r }` は足すのではなく掛け、毎秒およそ `1 + r` 倍にするので、ズームが一定のペースで進みます。ドリフトするのはそのフィールドがホールドしている間だけです。次のキーがそのフィールドに同じ値を持つならそのキーまで、最後のキーなら以降ずっと動きます。ホールドの後の動きはドリフトで到達した値から始まるので、値は飛びません。カットは自分のキーの値から始まります。どのフレームの値も、フレーム番号だけから計算されます。
 
 ## 色を補間する
 

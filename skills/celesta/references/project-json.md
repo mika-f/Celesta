@@ -327,8 +327,9 @@ A slide-in from the left over half a second:
 `linear`, `ease-in`, `ease-out`, `ease-in-out` (quadratic), and
 `ease-in-X`, `ease-out-X`, `ease-in-out-X` for X in `sine`, `quad`,
 `cubic`, `quart`, `quint`, `expo`, `circ`, `back`, `elastic`, `bounce`
-(for example `ease-in-out-cubic`, `ease-out-back`). These match React's
-`Easings` in kebab case.
+(for example `ease-in-out-cubic`, `ease-out-back`), and `whip`, a whip for
+fast moves (barely moving at both ends, 98% of the move in the middle
+third). These match React's `Easings` in kebab case.
 
 ## Validation rules
 

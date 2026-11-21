@@ -136,7 +136,8 @@ export type KeyframeEasing =
   | 'ease-in-circ' | 'ease-out-circ' | 'ease-in-out-circ'
   | 'ease-in-back' | 'ease-out-back' | 'ease-in-out-back'
   | 'ease-in-elastic' | 'ease-out-elastic' | 'ease-in-out-elastic'
-  | 'ease-in-bounce' | 'ease-out-bounce' | 'ease-in-out-bounce';
+  | 'ease-in-bounce' | 'ease-out-bounce' | 'ease-in-out-bounce'
+  | 'whip';
 /** `easing` absent or `null` is linear, as in the generated `Keyframe`. */
 export type Keyframe = { time: { value: number; timescale: number }; value: number; easing?: KeyframeEasing | null };
 /** A static value or keyframes over clip-local time, as Rust's `Animatable<f64>`. */

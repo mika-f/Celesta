@@ -128,7 +128,15 @@ export type {
 } from './animation';
 
 export { frameKeyframes, keyframes } from './keyframes';
-export type { FrameKeyframe, FrameKeyframesOptions, KeyframeValue, ValueKeyframe } from './keyframes';
+export type {
+  DriftRate,
+  FrameKeyframe,
+  FrameKeyframesOptions,
+  KeyframeDrift,
+  KeyframesOptions,
+  KeyframeValue,
+  ValueKeyframe,
+} from './keyframes';
 
 export { measureText, textCaret, useTextMetrics } from './text-measure';
 export type { GlyphMetrics, MeasureTextOptions, TextMetrics } from './text-measure';

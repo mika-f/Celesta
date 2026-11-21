@@ -43,9 +43,9 @@ Celesta is split into packages, like Remotion. The core APIs come from `@celesta
 | `Circle` / `Ellipse` / `Arrow` | `@celesta.studio/shapes` | Diagram shapes: a circle is a rounded `Rect`, ellipses and arrows are `Path`s; circles and ellipses are placed like a `Rect`. |
 | `Triangle` / `Polygon` / `Star` / `Pie` / `Heart` | `@celesta.studio/shapes` | Closed shapes drawn as `Path`s, with optional rounded corners; pie angles animate. |
 | `trianglePath` / `polygonPath` / `starPath` / `piePath` / `heartPath` | `@celesta.studio/shapes` | The same shapes as path commands, to pass to a `Path` or reshape. |
-| `interpolate` / `Easings` | `@celesta.studio/react` | Map a frame to a value, with easing and extrapolation. |
+| `interpolate` / `Easings` | `@celesta.studio/react` | Map a frame to a value, with easing and extrapolation. `Easings.whip` is a whip for fast camera moves. |
 | `interpolateColor` | `@celesta.studio/react` | Map a frame to a `#RRGGBBAA` color, blending with premultiplied alpha. |
-| `keyframes` | `@celesta.studio/react` | keyframes(frame, keys) returns the value at a frame of keys `{ frame, value, easing? }`: a number or an object of numbers, each segment eased by the key it ends on. Two keys on one frame cut. See [Animation](/en/docs/animation/). |
+| `keyframes` | `@celesta.studio/react` | keyframes(frame, keys, { fps? }) returns the value at a frame of keys `{ frame, value, easing?, drift? }`: a number or an object of numbers, each segment eased by the key it ends on. Two keys on one frame cut. `drift` creeps a held value at a rate per second (`{ log }` multiplies) and needs `fps`. See [Animation](/en/docs/animation/). |
 | `frameKeyframes` | `@celesta.studio/react` | frameKeyframes(keys, { fps, origin? }) builds volume, playbackRate, or pitch keyframes from frame numbers. Times are (frame - origin) / fps on the enclosing sequence’s clock; origin defaults to 0. Use it for audio fades. The browser exporter supports keyframed volume and playback rate, but not pitch. |
 | `spring` | `@celesta.studio/react` | A physics-based value that settles from 0 to 1. |
 | `useCurrentFrame()` / `useCurrentTime()` | `@celesta.studio/react` | The current frame, or the exact time, local to an enclosing sequence. |
