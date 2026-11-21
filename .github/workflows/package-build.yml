@@ -70,7 +70,7 @@ jobs:
         uses: actions/cache@v6.1.0
         with:
           path: target/package-downloads
-          key: windows-node-runtime-v26.13.0
+          key: windows-node-runtime-v26.13.1
 
       - name: Install Inno Setup
         shell: pwsh
