@@ -89,5 +89,8 @@ another shape, `Easings.cubicBezier` covers it.
 - `node skills/celesta/scripts/inspect.mjs packages/cli/examples/with-keyframes.tsx --frames 0,45,60,74,75,85,95,119,120,179 --no-native`:
   the camera's scale is 2.2 on 45, 2.29 on 75 (the drift's `e^0.04`), 2
   after the whip on 95, 1.8 on the cut at 120, and 1.986 on 179.
-- `celesta-exporter --react packages/cli/examples/with-keyframes.tsx --frames 45,74,85,120,179`,
-  looked at before and after the change.
+- `celesta-exporter --react packages/cli/examples/with-keyframes.tsx --frames 45,74,85,120,179 --contact-sheet sheet.png`
+  (a release build from source), before and after, looked at: on 74 the
+  harbor sits left of center by the drift (about 24 world px), 85 is in
+  the middle of the whip pan with the harbor and the market both in view,
+  120 shows the observatory, and 179 has drifted on from it.
