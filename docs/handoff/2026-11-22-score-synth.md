@@ -119,11 +119,23 @@ measuring each voice's peak at velocity 1 (about 0.5 for drums and effects,
   placement from frames, seconds, and beats, agreement with `beatAt()`,
   scene starts, patterns, runs, the reversed whoosh's end, trimming, the
   fade, every error, the warnings and `strict`, the cache, `<ScoreAudio>`).
-- `pnpm --dir scripts/plugins test` (bump-version and inputs list `score`),
-  `python3 -m unittest scripts/test_package_media_plugins.py`,
-  `node scripts/typecheck-examples.mjs score`,
-  `pnpm --dir packages/website test`.
-- EXPORT-CHECK
+- `pnpm --dir scripts/plugins test`: bump-version and inputs (which list
+  `score`) pass. Locally, the two native FFmpeg rebuild tests in
+  `ffmpeg.test.mts` timed out (60 s) while another Cargo build held the
+  machine; this change does not touch them.
+- `python3 -m unittest scripts/test_package_media_plugins.py`,
+  `node scripts/typecheck-examples.mjs score`, the website's content test and
+  `pnpm check`.
+- `celesta-exporter` (release build) on `examples/score`, with
+  `plugins/dist/score` and, for the encoders, the FFmpeg and AVFoundation
+  plugins of an installed Celesta 0.10.0-alpha.4 (a FFmpeg plugin built here
+  from Claude's shell hung before answering `hello`, as dev executables
+  started from it do): MP4 with H.264 and AAC, 12 s, -19.5 LUFS integrated,
+  -2.25 dBTP true peak. `prepare()` wrote one WAV whose SHA-256 equals the
+  one an in-process render of the same `score.ts` gives, so the bundled
+  plugin, the CLI's bundle, and a second process all produce the same bytes;
+  a second export reused the file without writing it (same mtime). Frames
+  0–359 every 30 checked in a contact sheet.
 
 ## Not done
 

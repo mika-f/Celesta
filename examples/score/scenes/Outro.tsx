@@ -14,8 +14,10 @@ export function Outro() {
         return (
           <Text
             key={word}
-            x={260 + i * 300}
-            y={320 - 20 * (1 - t)}
+            x={WIDTH / 2 + (i - 1) * 300}
+            y={400 - 20 * (1 - t)}
+            anchorX={0.5}
+            anchorY="baseline"
             opacity={t}
             style={{ fontSize: 96, fontWeight: 700, fill: { type: 'solid', color: i === 2 ? ACCENT : PAPER } }}
           >
