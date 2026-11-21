@@ -59,14 +59,17 @@ var<storage, read> paints: array<vec4<f32>>;
 
 // The edges of every path of the frame. Each path starts with
 //   inverse matrix (a, b, c, d) from its region's pixels to its own coordinates
-//   inverse translation, tile columns, entries per tile drawn
+//   inverse translation, tile columns, entries per tile drawn (one per
+//     outline, then its bounds)
 //   which entry of a tile is the fill's, the stroke's (-1 without one), the
 //     index of the first tile's, unused
 // then has, for each `PATH_TILE_COLUMNS`x`PATH_TILE_ROWS` tile drawn, an entry
 // per outline
 //   the tile's index in its region (row by row), index of the first of the
 //   outline's edges there, edge count, backdrop winding
-// and its edges, (x0, y0, x1, y1) in its region's pixels. Mirrors
+// and the part of the tile its quad covers, in pixels from the tile's
+// top-left corner (left, top, right, bottom; see `TileBounds`); then its
+// edges, (x0, y0, x1, y1) in its region's pixels. Mirrors
 // `ShadedPath` and `bin_tiles` in lib.rs.
 @group(2) @binding(2)
 var<storage, read> paths: array<vec4<f32>>;
@@ -148,16 +151,20 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32, layer: LayerInstance) -> Ve
             rect_coverage_cap(inner_half_size, inverse),
         );
     } else if layer.anchor_opacity_kind.w == 2.0 {
-        // A path draws a quad over each tile it lists, skipping the tiles
-        // nothing covers. It is never filtered.
+        // A path draws a quad over the bounds of each tile it lists,
+        // skipping the tiles and the parts of them nothing covers. It is
+        // never filtered.
         let base = u32(layer.rect.x);
         let header = paths[base + 1u];
         path_tile = u32(paths[base + 2u].z) + vertex_index / 6u * u32(header.w);
         let tile = u32(paths[path_tile].x);
+        let bounds = paths[path_tile + u32(header.w) - 1u];
         let columns = u32(header.z);
         let extent = vec2<f32>(f32(PATH_TILE_COLUMNS), f32(PATH_TILE_ROWS));
         let origin = vec2<f32>(f32(tile % columns), f32(tile / columns)) * extent;
-        uv = (origin + corner * (min(origin + extent, size) - origin)) / size;
+        let low = origin + bounds.xy;
+        let high = max(min(origin + bounds.zw, size), low);
+        uv = (low + corner * (high - low)) / size;
     } else {
         // A filtered layer's edge texels blend with the transparent texels
         // around it, so its quad grows by one texel on every side to draw
