@@ -22,6 +22,7 @@ import { type StaticsFrame, StaticSubtrees } from './static';
 import { resolveComponent } from './registry';
 import { type HostNode, type RootContainer, createRoot } from './reconciler';
 import { type SceneErrorReport, type SceneErrorSink, SceneErrorSinkContext, sceneBoundariesOf } from './scene-boundary';
+import { cutAudioClip } from './audio-cut';
 import { type LayerSourceReport, type SourcePos, layerSourceReport, occurrenceKeys } from './source-chain';
 import { checkCue } from './subtitles';
 import { evaluateDeterministically } from './determinism';
@@ -1350,42 +1351,6 @@ function collectAudioClip(
   }
 }
 
-/**
- * The parts of `clip` outside `cuts` (composition seconds, sorted and not
- * overlapping), each starting its source and curves where the clip had got
- * to, as a window that clips a clip's head does. A fade stays at the edge
- * of the clip it was on.
- */
-function cutAudioClip(clip: AudioClipDescriptor, cuts: readonly [number, number][]): AudioClipDescriptor[] {
-  const end = clip.start + clip.duration;
-  const pieces: AudioClipDescriptor[] = [];
-  let at = clip.start;
-  const keep = (from: number, to: number) => {
-    if (to <= from) return;
-    const offset = from - clip.start;
-    const { fadeIn, fadeOut, ...rest } = clip;
-    pieces.push({
-      ...rest,
-      start: from,
-      duration: to - from,
-      sourceStart: clip.sourceStart + offset * firstAnimatedValue(clip.playbackRate),
-      // Curves are timed from the clip's start, so they move earlier.
-      playbackRate: shiftAnimated(clip.playbackRate, offset),
-      volume: shiftAnimated(clip.volume, offset),
-      ...(clip.pitch !== undefined ? { pitch: shiftAnimated(clip.pitch, offset) } : {}),
-      ...(fadeIn !== undefined && from === clip.start ? { fadeIn } : {}),
-      ...(fadeOut !== undefined && to === end ? { fadeOut } : {}),
-    });
-  };
-  for (const [from, to] of cuts) {
-    if (to <= at || from >= end) continue;
-    keep(at, Math.min(from, end));
-    at = Math.max(at, to);
-  }
-  keep(at, end);
-  return pieces;
-}
-
 /** `duckGroup`, when set; `null` (a dialogue voice in no group) is unset. */
 function duckGroupProp(value: unknown): { duckGroup?: string } {
   if (value === undefined || value === null) return {};
@@ -2009,26 +1974,31 @@ export function mount(defaultExport: EntryComponent, compositionId?: string): Mo
         walkingNode = null;
       }
       if (failedFrames.size === 0) return audio;
-      const seconds = (frame: number) => secondsFromTime(frameTime(frame));
-      const cutsOf = (clip: AudioClipDescriptor): [number, number][] => {
+      // Identical declarations are one sound (the mix plays them once), so
+      // a sound is cut only where every report of it is: one in a scene
+      // that played keeps it whole.
+      const groups = new Map<string, { clips: AudioClipDescriptor[]; cut: Set<number> }>();
+      for (const clip of audio) {
         const frames = new Set((boundaries.get(clip) ?? []).flatMap((boundary) => failedFrames.get(boundary) ?? []));
-        const cuts: [number, number][] = [];
-        for (const frame of [...frames].sort((a, b) => a - b)) {
-          const last = cuts[cuts.length - 1];
-          if (last && last[1] === seconds(frame)) last[1] = seconds(frame + 1);
-          else cuts.push([seconds(frame), seconds(frame + 1)]);
+        const key = JSON.stringify(clip);
+        const group = groups.get(key);
+        if (group) {
+          group.clips.push(clip);
+          for (const frame of group.cut) if (!frames.has(frame)) group.cut.delete(frame);
+        } else {
+          groups.set(key, { clips: [clip], cut: frames });
         }
-        return cuts;
-      };
-      // A clip reported on many frames is cut once.
-      const cut = new Set<string>();
-      return audio.flatMap((clip) => {
-        const cuts = cutsOf(clip);
-        if (cuts.length === 0) return [clip];
-        const key = JSON.stringify([clip, cuts]);
-        if (cut.has(key)) return [];
-        cut.add(key);
-        return cutAudioClip(clip, cuts);
+      }
+      const seconds = (frame: number) => secondsFromTime(frameTime(frame));
+      return [...groups.values()].flatMap(({ clips, cut }) => {
+        if (cut.size === 0) return clips;
+        const spans: [number, number][] = [];
+        for (const frame of [...cut].sort((a, b) => a - b)) {
+          const last = spans[spans.length - 1];
+          if (last && last[1] === seconds(frame)) last[1] = seconds(frame + 1);
+          else spans.push([seconds(frame), seconds(frame + 1)]);
+        }
+        return cutAudioClip(clips[0], spans);
       });
     },
     collectSubtitles(from, frames) {

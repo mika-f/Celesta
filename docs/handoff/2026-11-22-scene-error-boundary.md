@@ -103,10 +103,16 @@ frame 105):
   it (`sceneBoundariesOf`, up the node's fiber; `walkNode` keeps the node
   being walked while the sweep runs), and which boundaries failed on each
   frame (the sink gets the boundary with each report), then cuts each clip
-  where one of its boundaries failed (`cutAudioClip`). A cut piece starts
-  its source and curves where the clip had got to, earlier by the cut, and
-  keeps a fade only at the clip's own edge. Clips of other scenes are left
-  as they were.
+  where one of its boundaries failed (`cutAudioClip` in `audio-cut.ts`). A
+  cut piece starts its source at the playback rate integrated from the
+  clip's start (`integrateAnimated`: Simpson's rule between keyframes, with
+  the keyframe easings of `Easings`), moves its curves earlier by exactly
+  the cut (re-timed in microseconds, so keyframes in whole seconds follow a
+  cut between frames), and keeps a fade only at the clip's own edge.
+  Reports of the same declaration are one sound, as the mix merges them: a
+  sound is cut only on frames where every report of it is, so the same
+  `<Audio>` in a scene that played stays whole. Clips of other scenes are
+  left as they were.
 - Found while doing that: the walker shifts a head-clipped clip's
   keyframes later (`shiftAnimated(volume, -clipped)`), though the mix reads
   them on clip-local time and `2026-08-26-sequence-audio-react-preview.md`

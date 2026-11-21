@@ -214,7 +214,7 @@ test('the preview audio sweep silences a failing scene on its broken frames only
   // The volume curve keeps its place in the composition.
   const volume = loud[1].volume;
   assert.ok(typeof volume !== 'number');
-  assert.equal(volume.keyframes[0].time.value, -4);
+  assert.ok(Math.abs(volume.keyframes[0].time.value / volume.keyframes[0].time.timescale + 4 / 30) < 1e-6);
   // The other scene and the sound beside them are reported as before.
   assert.equal(clips.filter(({ src }) => src === 'quiet.wav').length, 4);
   const bed = clips.filter(({ src }) => src === 'bed.wav');
@@ -266,5 +266,58 @@ test('an empty series id is no id', () => {
       h(Series.Sequence, { durationInFrames: 1, id: '', name: '' }, h(Throws)))));
   assert.deepEqual(texts(exported(composition, 0).scene.layers), ['ok:0']);
   assert.deepEqual(preview(composition, 1).sceneErrors?.map(({ id, name }) => [id, name]), [['series-2', 'Series item 2']]);
+  composition.dispose();
+});
+
+const keyframesAt = (pairs: [number, number, number][]) => ({
+  type: 'keyframes' as const,
+  keyframes: pairs.map(([value, timescale, at]) => ({ time: { value, timescale }, value: at })),
+});
+
+test('a cut clip resumes its source where an animated rate has got to, and moves curves exactly', () => {
+  function Ramp(): React.ReactElement {
+    const frame = useCurrentFrame();
+    // Broken from 0.4 s to 2 s into the scene.
+    if (frame >= 12 && frame < 60) throw new Error('ramp broke');
+    return h(Audio, {
+      src: 'ramp.wav',
+      // 1x at 0 s rising to 2x at 2 s: 3 s of source by 2 s.
+      playbackRate: keyframesAt([[0, 1, 1], [2, 1, 2]]),
+      // Full at 1 s, in whole seconds.
+      volume: keyframesAt([[0, 1, 0], [1, 1, 1]]),
+    });
+  }
+  const scenes = defineScenes([{ id: 'ramp', durationInFrames: 90, Scene: Ramp }]);
+  const composition = mount(() => h(Composition, { width: 100, height: 100, fps: 30, durationInFrames: 90 }, h(Scenes, { scenes })));
+  const [first, second] = composition.collectAudio({ preview: true });
+  const close = (actual: number, expected: number, what: string) => assert.ok(Math.abs(actual - expected) < 1e-6, `${what}: ${actual} ≉ ${expected}`);
+  close(first.sourceStart, 0, 'first source');
+  close(first.duration, 0.4, 'first length');
+  close(second.start, 2, 'second start');
+  close(second.sourceStart, 3, 'second source');
+  const volume = second.volume;
+  assert.ok(typeof volume !== 'number');
+  // 1 s on the composition is 1 s before the piece.
+  assert.deepEqual(volume.keyframes.map(({ time }) => time.value / time.timescale), [-2, -1]);
+  composition.dispose();
+});
+
+test('a sound declared the same in a scene that played is not cut', () => {
+  function Breaks2(): React.ReactElement | null {
+    const frame = useCurrentFrame();
+    if (frame >= 2 && frame < 4) throw new Error('broke');
+    return null;
+  }
+  const bed = () => h(Audio, { src: 'bed.wav' });
+  const composition = mount(() => h(Composition, { width: 100, height: 100, fps: 30, durationInFrames: 6 },
+    h(Sequence, { durationInFrames: 6 },
+      h(SceneBoundary, { id: 'broken' }, bed(), h(Breaks2)),
+      h(SceneBoundary, { id: 'fine' }, bed()))));
+  const clips = composition.collectAudio({ preview: true });
+  assert.ok(clips.length > 0);
+  for (const clip of clips) {
+    assert.equal(clip.start, 0);
+    assert.ok(Math.abs(clip.duration - 6 / 30) < 1e-9);
+  }
   composition.dispose();
 });
