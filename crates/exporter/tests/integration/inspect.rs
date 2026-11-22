@@ -220,7 +220,7 @@ export default function Root() {
     let output = String::from_utf8_lossy(&text.stdout);
     assert_eq!(text.status.code(), Some(0), "{output}");
     assert!(
-        output.contains("chapters (1 of 2 rough):\n  Open [0, 30): The title fades in.\n  The card [30, 60) rough: A card slides in.\n"),
+        output.contains("chapters (1 of 2 rough):\n  Open (open) [0, 30): The title fades in.\n  The card (card) [30, 60) rough: A card slides in.\n"),
         "{output}"
     );
     assert!(output.contains(r#"text "The card""#), "{output}");
