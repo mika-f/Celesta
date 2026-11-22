@@ -234,6 +234,20 @@ const hostConfig: Reconciler.HostConfig<
 
 const HostReconciler = Reconciler(hostConfig);
 
+// Error boundary classes that report what they catch themselves, so the
+// root does not also log it: a `<SceneBoundary>` hands its error to the
+// preview frame, which would otherwise print it on every frame.
+const quietBoundaries = new WeakSet<object>();
+
+/** Stops the root from logging the errors instances of `boundary` catch. */
+export function markQuietBoundary(boundary: object): void {
+  quietBoundaries.add(boundary);
+}
+
+function isQuietBoundary(instance: unknown): boolean {
+  return typeof instance === 'object' && instance !== null && quietBoundaries.has(instance.constructor);
+}
+
 export interface HostRoot {
   container: RootContainer;
   /**
@@ -260,8 +274,8 @@ export function createRoot(): HostRoot {
     (error) => {
       uncaught.push(error);
     },
-    (error) => {
-      console.error(error);
+    (error, info) => {
+      if (!isQuietBoundary(info.errorBoundary)) console.error(error);
     },
     (error) => {
       console.error(error);

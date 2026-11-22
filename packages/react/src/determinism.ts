@@ -210,17 +210,26 @@ function record(api: NondeterministicApi, replacement: Function): void {
   if (source === null || reported.has(api)) return;
   const capture = (Error as { captureStackTrace?: (target: object, constructor?: Function) => void }).captureStackTrace;
   if (!capture) return;
-  const holder: { stack?: string } = {};
+  const holder: { stack?: unknown } = {};
+  const ErrorWithHooks = Error as { prepareStackTrace?: (error: Error, sites: unknown[]) => unknown };
   const limit = Error.stackTraceLimit;
+  const prepare = ErrorWithHooks.prepareStackTrace;
+  let stack: unknown;
   // A few frames, past a built-in such as `Array.prototype.map(Math.random)`.
   Error.stackTraceLimit = 4;
+  // V8's own call sites, as `    at fn (file:///…/entry.mjs:12:5)` lines:
+  // with source maps on (the CLI turns them on for readable errors), the
+  // stack string names the entry's original files, not the bundle.
+  ErrorWithHooks.prepareStackTrace = (_, sites) => ['', ...sites.map((site) => `    at ${String(site)}`)].join('\n');
   try {
     capture(holder, replacement);
+    stack = holder.stack;
   } finally {
     Error.stackTraceLimit = limit;
+    ErrorWithHooks.prepareStackTrace = prepare;
   }
   // The first frame with a file position: built-ins have none.
-  const caller = (holder.stack ?? '')
+  const caller = (typeof stack === 'string' ? stack : '')
     .split('\n')
     .slice(1)
     .find((line) => /:\d+:\d+\)?$/.test(line));

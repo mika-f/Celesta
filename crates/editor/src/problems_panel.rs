@@ -92,7 +92,8 @@ impl EditorView {
             .map(|(source, active)| (source, active.clone()))
             .collect();
         let warnings = self.problems.preview_warnings().to_vec();
-        let nothing_active = active.is_empty() && warnings.is_empty();
+        let scene_errors = self.problems.scene_errors().to_vec();
+        let nothing_active = active.is_empty() && warnings.is_empty() && scene_errors.is_empty();
         let has_history = self.problems.history().next().is_some();
         div()
             .id("problems-scroll")
@@ -128,6 +129,20 @@ impl EditorView {
                     cx,
                 )
             }))
+            .children(
+                scene_errors
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, problem)| {
+                        problem_block(
+                            format!("scene-error-{index}").into(),
+                            severity_icon(Severity::Error, cx),
+                            format!("{} · {}", problem.title, Source::Preview.label()),
+                            &problem.detail,
+                            cx,
+                        )
+                    }),
+            )
             .children(warnings.into_iter().enumerate().map(|(index, warning)| {
                 problem_block(
                     format!("preview-warning-{index}").into(),

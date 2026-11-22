@@ -15,8 +15,8 @@ use crate::statics::StaticCache;
 use crate::stderr::StderrCapture;
 use crate::types::{
     ComponentResolutionRequest, ComponentResolutions, FrameEvaluation, LayerSourceReport,
-    ProjectFrame, PropOverride, ReactCompositionInfo, ReactCompositionMetadata,
-    ReactSubtitleDescriptor, SpawnOptions,
+    ProjectFrame, PropOverride, ReactAudioClipDescriptor, ReactCompositionInfo,
+    ReactCompositionMetadata, ReactSubtitleDescriptor, SceneError, SpawnOptions,
 };
 use celesta_composition::{AudioGraph, Scene, Time};
 use celesta_media::MediaBackend;
@@ -387,13 +387,10 @@ impl ReactBridge {
                 scene,
                 audio,
                 subtitles,
+                scene_errors,
                 open_end: true,
                 ..
-            } => Ok(FrameEvaluation {
-                scene,
-                audio,
-                subtitles,
-            }),
+            } => self.evaluation(scene, audio, subtitles, scene_errors),
             Response::Ok { .. } => Err(ReactBridgeError::OpenEndUnsupported),
             response => Err(Self::unexpected_frame_response(response)),
         }
@@ -427,9 +424,20 @@ impl ReactBridge {
         time: Time,
         prop_overrides: &[PropOverride],
     ) -> Result<Scene, ReactBridgeError> {
+        Ok(self.evaluate_with_overrides(time, prop_overrides)?.scene)
+    }
+
+    /// The full evaluation behind [`Self::scene_at_with_overrides`]: in the
+    /// preview, it also says which scenes drew their error card (see
+    /// [`FrameEvaluation::scene_errors`]).
+    pub fn evaluate_with_overrides(
+        &mut self,
+        time: Time,
+        prop_overrides: &[PropOverride],
+    ) -> Result<FrameEvaluation, ReactBridgeError> {
         self.submit(time, None, prop_overrides)?;
         let frame = self.receive_frame()?;
-        Ok(self.decode_frame(frame)?.scene)
+        self.decode_frame(frame)
     }
 
     fn submit(
@@ -474,14 +482,39 @@ impl ReactBridge {
                 scene,
                 audio,
                 subtitles,
+                scene_errors,
                 ..
-            } => Ok(FrameEvaluation {
-                scene,
-                audio,
-                subtitles,
-            }),
+            } => self.evaluation(scene, audio, subtitles, scene_errors),
             response => Err(Self::unexpected_frame_response(response)),
         }
+    }
+
+    /// A frame's evaluation. Scene errors outside the preview fail it, so
+    /// no export or inspection ever takes an error card for a scene: the
+    /// runtime fails such a frame itself, and this holds even for one that
+    /// does not.
+    fn evaluation(
+        &self,
+        scene: Scene,
+        audio: Vec<ReactAudioClipDescriptor>,
+        subtitles: Vec<ReactSubtitleDescriptor>,
+        scene_errors: Vec<SceneError>,
+    ) -> Result<FrameEvaluation, ReactBridgeError> {
+        if !self.preview
+            && let Some(error) = scene_errors.first()
+        {
+            return Err(ReactBridgeError::Render(format!(
+                "{} threw while rendering: {}",
+                error.label(),
+                error.message
+            )));
+        }
+        Ok(FrameEvaluation {
+            scene,
+            audio,
+            subtitles,
+            scene_errors,
+        })
     }
 
     fn decode_response(&mut self, frame: PendingFrame) -> Result<Response, ReactBridgeError> {
@@ -629,7 +662,14 @@ impl ReactBridge {
         master_volume: f64,
         entry_dir: &Path,
     ) -> Result<ReactMedia, ReactBridgeError> {
-        let reports = match self.request_response(serde_json::json!({ "collectAudio": true }))? {
+        // In the preview a scene that throws contributes no audio on its
+        // frames instead of failing the sweep, as its picture does.
+        let request = if self.preview {
+            serde_json::json!({ "collectAudio": true, "preview": true })
+        } else {
+            serde_json::json!({ "collectAudio": true })
+        };
+        let reports = match self.request_response(request)? {
             Response::CollectedAudio { collected_audio } => collected_audio,
             Response::Err { error } => return Err(ReactBridgeError::Render(error)),
             _ => return Err(ReactBridgeError::UnexpectedResponse),

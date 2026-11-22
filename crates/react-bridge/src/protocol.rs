@@ -8,7 +8,7 @@ use crate::types::{
     ComponentPropertyField, ComponentPropertySchema, FrameSpan, LayerSource, LayerSourceReport,
     LegacyImport, PrepareDependency, PrimitivePropertyTable, PropOverride,
     ReactAudioClipDescriptor, ReactCompositionConfig, ReactCompositionInfo,
-    ReactSubtitleDescriptor, ReceivedProps, TimingWindow,
+    ReactSubtitleDescriptor, ReceivedProps, SceneError, TimingWindow,
 };
 use celesta_composition::{Layer, Scene, ShaderSource, Time};
 use serde::de::{Error as _, IgnoredAny, MapAccess, Visitor};
@@ -130,6 +130,8 @@ pub(crate) enum Response {
         audio: Vec<ReactAudioClipDescriptor>,
         /// Absent when the frame shows none.
         subtitles: Vec<ReactSubtitleDescriptor>,
+        /// Scenes that drew their error card; only preview frames have any.
+        scene_errors: Vec<SceneError>,
         /// The runtime's echo of an `openEnd` request; an older runtime
         /// ignores the request and leaves it out.
         open_end: bool,
@@ -212,6 +214,8 @@ pub(crate) struct RawResponse {
     pub(crate) audio: Vec<ReactAudioClipDescriptor>,
     #[serde(default)]
     pub(crate) subtitles: Vec<ReactSubtitleDescriptor>,
+    #[serde(default)]
+    pub(crate) scene_errors: Vec<SceneError>,
     pub(crate) components: Option<Vec<Option<Vec<Layer>>>>,
     pub(crate) layer_source: Option<LayerSourceReply>,
     #[serde(default)]
@@ -263,6 +267,7 @@ impl TryFrom<RawResponse> for Response {
                 scene,
                 audio: raw.audio,
                 subtitles: raw.subtitles,
+                scene_errors: raw.scene_errors,
                 open_end: raw.open_end,
                 seq: raw.seq,
                 statics: raw.statics,

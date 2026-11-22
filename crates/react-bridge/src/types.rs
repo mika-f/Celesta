@@ -699,6 +699,69 @@ pub struct FrameEvaluation {
     pub scene: Scene,
     pub audio: Vec<ReactAudioClipDescriptor>,
     pub subtitles: Vec<ReactSubtitleDescriptor>,
+    /// The scenes that threw while rendering and drew their error card
+    /// instead (`<SceneBoundary>`). Only a preview frame
+    /// ([`ReactBridge::set_preview`](crate::ReactBridge::set_preview)) has
+    /// any: elsewhere such a scene fails the frame.
+    pub scene_errors: Vec<SceneError>,
+}
+
+/// A scene of `<Scenes>`, `<Series>`, `<TransitionSeries>`, or a
+/// `<SceneBoundary>` that threw while its frame rendered in the preview and
+/// drew an error card in its place.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SceneError {
+    /// The scene's id: a `defineScenes` id, or a series item's `id`.
+    pub id: String,
+    /// The scene's label.
+    pub name: String,
+    /// What it threw.
+    pub message: String,
+    /// The error's stack, in the entry's source files, without React's own
+    /// frames; absent when the error had none.
+    #[serde(default)]
+    pub stack: Option<String>,
+    /// The components between the scene and the throw, innermost first.
+    #[serde(default)]
+    pub component_stack: Option<String>,
+}
+
+impl SceneError {
+    /// `scene "stats" (Stats)`, or `scene "stats"` when the name is the id.
+    pub fn label(&self) -> String {
+        if self.name == self.id {
+            format!("scene \"{}\"", self.id)
+        } else {
+            format!("scene \"{}\" ({})", self.id, self.name)
+        }
+    }
+
+    /// The message, then the stack and the component stack, each when there
+    /// is one: what Problems shows.
+    pub fn detail(&self) -> String {
+        let mut detail = self.message.clone();
+        if let Some(stack) = self.stack.as_deref() {
+            // A stack starts with the message, which is already there.
+            let frames = stack
+                .lines()
+                .skip_while(|line| !line.trim_start().starts_with("at "))
+                .collect::<Vec<_>>();
+            if !frames.is_empty() {
+                detail.push('\n');
+                detail.push_str(&frames.join("\n"));
+            }
+        }
+        if let Some(components) = self
+            .component_stack
+            .as_deref()
+            .filter(|stack| !stack.is_empty())
+        {
+            detail.push_str("\n\nComponents:\n");
+            detail.push_str(components);
+        }
+        detail
+    }
 }
 
 #[derive(Deserialize)]

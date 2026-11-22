@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { ReactNode } from 'react';
 
-import { Group, Sequence, frameKeyframes, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
+import { Group, SceneBoundary, Sequence, frameKeyframes, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
 import type { AnimatedNumber, CommonProps } from '@celesta.studio/react';
 import { useLayoutBounds } from '@celesta.studio/layout';
 
@@ -160,6 +160,12 @@ export function computeTransitionSeries(items: readonly TransitionSeriesItem[]):
 export interface TransitionSeriesSequenceProps extends CommonProps {
   /** Length in frames, including the frames shared with its neighbours. */
   durationInFrames: number;
+  /**
+   * The scene's label on its error card in the preview and in Problems,
+   * should it throw while rendering. Defaults to its `id`, or its place
+   * (`Scene 2`).
+   */
+  name?: string;
   children?: ReactNode;
 }
 
@@ -402,7 +408,9 @@ function TransitionSeriesRoot({ width, height, children }: TransitionSeriesProps
     const sceneIndex = scenes.length;
     const enter = edgeAt(index - 1);
     const exit = edgeAt(index + 1);
-    const { durationInFrames, children: inner, ...props } = element.props as TransitionSeriesSequenceProps;
+    const { durationInFrames, name, children: inner, ...props } = element.props as TransitionSeriesSequenceProps;
+    // An empty `id` is no id, as for layer ids.
+    const sceneId = props.id || `scene-${sceneIndex + 1}`;
     const scene: TransitionSeriesScene = {
       index: sceneIndex,
       enter: described(enter),
@@ -415,7 +423,11 @@ function TransitionSeriesRoot({ width, height, children }: TransitionSeriesProps
         React.createElement(
           SceneContext.Provider,
           { value: scene },
-          React.createElement(SceneFrame, { enter, exit, durationInFrames, ...size }, inner),
+          React.createElement(
+            SceneFrame,
+            { enter, exit, durationInFrames, ...size },
+            React.createElement(SceneBoundary, { id: sceneId, name: name || props.id || `Scene ${sceneIndex + 1}` }, inner),
+          ),
         ),
       ),
     );
@@ -435,6 +447,9 @@ function TransitionSeriesRoot({ width, height, children }: TransitionSeriesProps
  * the first frame of its transition in, and it is unmounted after its
  * transition out. Sounds of overlapping scenes play together at their own
  * volume; `useTransitionVolume()` fades a scene's `<Audio>` with its picture.
+ * Each scene is isolated by a `<SceneBoundary>`: in the editor preview one
+ * that throws draws an error card, which the transitions move like the
+ * scene, and the others still play; an export fails on its frames.
  *
  * ```tsx
  * <TransitionSeries>

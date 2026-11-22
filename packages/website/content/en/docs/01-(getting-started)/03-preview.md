@@ -40,6 +40,10 @@ Playback synchronizes the picture and audio. Use waveforms and track levels to c
 
 `<DebugOverlay />` outlines a safe area, shades the canvas outside it, and marks the center point, and `<DebugBounds>` outlines a group of layers. They appear in the Celesta preview, and in PNG frames and contact sheets exported with `--debug-guides`, but never in a video, so you can leave them in while you work. `useDebugGuides()` tells your own components when guides are drawn.
 
+## When a scene throws
+
+A scene of `<Scenes>`, `<Series>`, or `<TransitionSeries>` that throws while it renders draws an error card in the preview, with its name, id, and the error, and the rest of the composition keeps playing. **Problems** lists the error with its stack, and the status bar counts it. Exports fail on such a scene instead. See [When a scene throws](/en/docs/motion-toolkit/#when-a-scene-throws).
+
 ## Find a layer's source
 
 Turn on **Select layers** with the pointer button next to **Safe areas** below the viewer, **View → Select Layers**, or `V`. This interactive mode is available when you open a React composition. It records where each element was written and where each layer is drawn, which slows down scenes with thousands of layers, so the preview starts without it; turn it off again to play such scenes at full speed. Switching restarts the composition's runtime, which takes a moment.

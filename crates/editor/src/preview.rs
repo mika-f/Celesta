@@ -13,7 +13,8 @@ use celesta_plugin_host::RuntimePlugins;
 use celesta_react_bridge::{
     ComponentPropertyField, ComponentPropertySchema, ComponentResolutionRequest,
     ComponentResolutions, PrepareDependency, PrimitivePropertyTable, PropOverride, PropertyInputs,
-    PropertyIssue, ReactBridge, ReactChapter, ReactCompositionMetadata, SpawnOptions,
+    PropertyIssue, ReactBridge, ReactBridgeError, ReactChapter, ReactCompositionMetadata,
+    SceneError, SpawnOptions,
 };
 use gpui_kit::RenderImage;
 use rodio::Player;
@@ -336,6 +337,9 @@ pub(crate) struct PreviewResult {
     /// fallbacks, missing glyphs, and plugin notices (an info notice keeps its
     /// `note: ` prefix).
     pub(crate) warnings: Vec<String>,
+    /// The scenes that threw while this frame rendered and drew their error
+    /// card instead; whole React frames only.
+    pub(crate) scene_errors: Vec<SceneError>,
     /// Where each leaf layer was drawn, for selecting layers by clicking the
     /// preview. Recorded in interactive `WholeScene` frames only; empty
     /// otherwise.
@@ -550,9 +554,11 @@ pub(crate) struct ReactPreviewBridge {
 pub(crate) fn spawn_preview(mut renderer: GpuRenderer) -> anyhow::Result<PreviewWorker> {
     let mut react_bridge: Option<ReactPreviewBridge> = None;
     let mut react_reload = 0u64;
-    // The scene the runtime last evaluated, and what for: a keystroke's
-    // request draws it again with its text replaced, without evaluating.
-    let mut held: Option<(HeldKey, Scene)> = None;
+    // The scene the runtime last evaluated, what for, and the scenes that
+    // drew their error card in it: a keystroke's request draws it again
+    // with its text replaced, without evaluating, and reports the same
+    // scene errors.
+    let mut held: Option<(HeldKey, Scene, Vec<SceneError>)> = None;
     LatestWorker::spawn("preview", move |request: PreviewRequest, _| {
         renderer.set_asset_root(&request.asset_root);
         renderer.set_render_quality(request.render_quality);
@@ -566,11 +572,16 @@ pub(crate) fn spawn_preview(mut renderer: GpuRenderer) -> anyhow::Result<Preview
             request.react.as_ref(),
         ));
         let time = request.scene.time;
-        let source = scene_source(&request, held.as_ref().map(|(key, _)| key));
+        let source = scene_source(&request, held.as_ref().map(|(key, _, _)| key));
         let key = HeldKey::of(&request);
         let mut warnings = Vec::new();
+        let mut scene_errors = Vec::new();
         let evaluated = match source {
-            SceneSource::Held => Ok(&held.as_ref().expect("scene_source found it held").1),
+            SceneSource::Held => {
+                let (_, scene, errors) = held.as_ref().expect("scene_source found it held");
+                scene_errors.clone_from(errors);
+                Ok(scene)
+            }
             SceneSource::Evaluate => {
                 // A failed evaluation is not held, so no
                 // keystroke draws a scene the runtime refused.
@@ -585,7 +596,8 @@ pub(crate) fn spawn_preview(mut renderer: GpuRenderer) -> anyhow::Result<Preview
                         &mut react_bridge,
                         request.react.as_ref(),
                         &request.prop_overrides,
-                    ),
+                    )
+                    .map(|errors| scene_errors = errors),
                     ReactPreviewMode::ResolveComponents => {
                         warnings = resolve_preview_components(
                             &mut scene,
@@ -596,7 +608,7 @@ pub(crate) fn spawn_preview(mut renderer: GpuRenderer) -> anyhow::Result<Preview
                     }
                 };
                 match evaluated {
-                    Ok(()) => Ok(&held.insert((key, scene)).1),
+                    Ok(()) => Ok(&held.insert((key, scene, scene_errors.clone())).1),
                     Err(error) => Err(error),
                 }
             }
@@ -670,6 +682,7 @@ pub(crate) fn spawn_preview(mut renderer: GpuRenderer) -> anyhow::Result<Preview
         PreviewResult {
             frame,
             warnings,
+            scene_errors,
             hit_regions,
             layer_source,
             layer_frame,
@@ -756,26 +769,30 @@ pub(crate) fn ensure_react_bridge<'a>(
 
 /// Replaces the whole preview scene with the standalone React entry's own
 /// evaluation at `scene.time` — the editor's synthetic project has no tracks,
-/// so this is the only source of layers in `.tsx` preview mode. A bridge
-/// failure is remembered, so later frames report the same error without
-/// restarting Node, and returned as the frame's error. `prop_overrides` are
-/// a drag's values, evaluated with in this frame only.
+/// so this is the only source of layers in `.tsx` preview mode — and returns
+/// the scenes that drew their error card in it. A frame the runtime could
+/// not render is this frame's error only: the runtime is still running, and
+/// other frames draw. Any other bridge failure is remembered, so later
+/// frames report the same error without restarting Node, and returned as the
+/// frame's error. `prop_overrides` are a drag's values, evaluated with in
+/// this frame only.
 pub(crate) fn render_whole_react_scene(
     scene: &mut Scene,
     react_bridge: &mut Option<ReactPreviewBridge>,
     react: Option<&ReactPreviewContext>,
     prop_overrides: &[PropOverride],
-) -> Result<(), String> {
+) -> Result<Vec<SceneError>, String> {
     let Some(react) = react else {
         return Err("React runtime is unavailable for this preview".to_owned());
     };
     let state = ensure_react_bridge(react_bridge, react);
     match &mut state.bridge {
-        Some(bridge) => match bridge.scene_at_with_overrides(scene.time, prop_overrides) {
+        Some(bridge) => match bridge.evaluate_with_overrides(scene.time, prop_overrides) {
             Ok(evaluated) => {
-                *scene = evaluated;
-                Ok(())
+                *scene = evaluated.scene;
+                Ok(evaluated.scene_errors)
             }
+            Err(error @ ReactBridgeError::Render(_)) => Err(error_chain(&error)),
             Err(error) => {
                 let failure = error_chain(&error);
                 state.bridge = None;

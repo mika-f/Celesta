@@ -8,6 +8,7 @@ import type { ComponentType } from 'react';
 import { Sequence } from './components';
 import { CompositionRuntimeContext, RootRuntimeContext, runtimeFrame, useCurrentFrame } from './hooks';
 import { ScenePlaceholder } from './scene-placeholder';
+import { SceneBoundary } from './scene-boundary';
 import { markTransparent } from './source-chain';
 
 /**
@@ -185,7 +186,9 @@ export interface ScenesProps<T extends SceneEntry = SceneEntry> {
  * place. A scene with `status: 'rough'` or without a `Scene` plays its
  * `<ScenePlaceholder>` card: its name, `desc`, place in the list and length.
  * Inside, `useScene()` reports the current scene whatever `<Sequence>`s
- * enclose the call.
+ * enclose the call. Each scene is isolated by a `<SceneBoundary>`: in the
+ * editor preview one that throws draws an error card and the others still
+ * play; an export fails on its frames.
  *
  * ```tsx
  * const scenes = defineScenes([
@@ -208,16 +211,20 @@ export function Scenes<T extends SceneEntry>({ scenes }: ScenesProps<T>): React.
         ? React.createElement(
             Sequence,
             { key: id, from, durationInFrames },
-            Scene && status !== 'rough'
-              ? React.createElement(Scene)
-              : React.createElement(ScenePlaceholder, {
-                  name,
-                  desc,
-                  index,
-                  count: scenes.scenes.length,
-                  durationInFrames,
-                  label: status === 'rough' ? 'Rough cut' : 'No Scene yet',
-                }),
+            React.createElement(
+              SceneBoundary,
+              { id, name },
+              Scene && status !== 'rough'
+                ? React.createElement(Scene)
+                : React.createElement(ScenePlaceholder, {
+                    name,
+                    desc,
+                    index,
+                    count: scenes.scenes.length,
+                    durationInFrames,
+                    label: status === 'rough' ? 'Rough cut' : 'No Scene yet',
+                  }),
+            ),
           )
         : null,
     ),

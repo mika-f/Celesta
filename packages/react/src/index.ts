@@ -114,6 +114,8 @@ export { Scenes, defineScenes, sceneAt, useScene } from './scenes';
 export type { PlacedScene, SceneEntry, SceneList, SceneState, SceneStatus, ScenesProps, UseSceneOptions } from './scenes';
 export { ScenePlaceholder } from './scene-placeholder';
 export type { ScenePlaceholderProps } from './scene-placeholder';
+export { SceneBoundary, SceneRenderError } from './scene-boundary';
+export type { SceneBoundaryProps, SceneErrorReport } from './scene-boundary';
 
 export { listChapters } from './chapters';
 export type { Chapter, ChapterInput, ChapterSource, ListChaptersOptions } from './chapters';

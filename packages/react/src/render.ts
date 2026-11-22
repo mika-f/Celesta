@@ -21,6 +21,8 @@ import { type PropOverride, PropOverridesContext, clearPropOverrides, setPropOve
 import { type StaticsFrame, StaticSubtrees } from './static';
 import { resolveComponent } from './registry';
 import { type HostNode, type RootContainer, createRoot } from './reconciler';
+import { type SceneErrorReport, type SceneErrorSink, SceneErrorSinkContext, sceneBoundariesOf } from './scene-boundary';
+import { cutAudioClip } from './audio-cut';
 import { type LayerSourceReport, type SourcePos, layerSourceReport, occurrenceKeys } from './source-chain';
 import { checkCue } from './subtitles';
 import { evaluateDeterministically } from './determinism';
@@ -273,9 +275,25 @@ export interface MountedComposition {
     time: Time,
     project: ProjectFrame | null,
     options?: RenderAtOptions,
-  ): { scene: Scene; audio: AudioClipDescriptor[]; subtitles: SubtitleDescriptor[]; statics?: StaticsFrame };
-  /** Sweeps every frame without constructing visual layers; hooks and font measurements still run. */
-  collectAudio(): AudioClipDescriptor[];
+  ): {
+    scene: Scene;
+    audio: AudioClipDescriptor[];
+    subtitles: SubtitleDescriptor[];
+    statics?: StaticsFrame;
+    /**
+     * The scenes that threw while rendering and drew their error card
+     * instead (see `<SceneBoundary>`); only with `preview`, since
+     * elsewhere such a scene fails the frame. Absent when none did.
+     */
+    sceneErrors?: SceneErrorReport[];
+  };
+  /**
+   * Sweeps every frame without constructing visual layers; hooks and font
+   * measurements still run. With `preview`, frames are evaluated as the
+   * editor preview's are: a scene that throws contributes no audio on those
+   * frames instead of failing the sweep.
+   */
+  collectAudio(options?: { preview?: boolean }): AudioClipDescriptor[];
   /**
    * The subtitles `frames` frames from frame `from` show, each once: the
    * frames are walked as `renderAt` walks them, so the reports match a
@@ -1306,7 +1324,7 @@ function collectAudioClip(
   // source position and any animation keyframes shift by the clipped
   // amount so the curve stays aligned with what is actually heard.
   const clipped = startSec - context.originSec;
-  results.push({
+  const clip: AudioClipDescriptor = {
     src: source.location.type === 'file' ? source.location.path : source.location.url,
     sourceStart: startFrom + clipped * firstAnimatedValue(playbackRate),
     playbackRate: shiftAnimated(playbackRate, -clipped),
@@ -1326,7 +1344,11 @@ function collectAudioClip(
     // defaults and the rules.
     ...duckGroupProp(props.duckGroup),
     ...duckProp(props.duck),
-  });
+  };
+  results.push(clip);
+  if (audioBoundaries !== null && walkingNode !== null) {
+    audioBoundaries.set(clip, sceneBoundariesOf(walkingNode.fiber));
+  }
 }
 
 /** `duckGroup`, when set; `null` (a dialogue voice in no group) is unset. */
@@ -1414,12 +1436,35 @@ function collectSubtitleCues(props: Record<string, unknown>, context: WalkContex
   });
 }
 
+// While the preview's audio sweep runs (`collectAudio({ preview })`), the
+// scene boundaries around each clip it reports, and the node being walked,
+// whose fiber they are found from.
+let audioBoundaries: WeakMap<AudioClipDescriptor, object[]> | null = null;
+let walkingNode: HostNode | null = null;
+
 function walkNode(
   node: HostNode,
   path: string,
   context: WalkContext,
   audio: AudioClipDescriptor[],
   audioOnly = false,
+): Layer[] {
+  if (audioBoundaries === null) return walkHostNode(node, path, context, audio, audioOnly);
+  const outer = walkingNode;
+  walkingNode = node;
+  try {
+    return walkHostNode(node, path, context, audio, audioOnly);
+  } finally {
+    walkingNode = outer;
+  }
+}
+
+function walkHostNode(
+  node: HostNode,
+  path: string,
+  context: WalkContext,
+  audio: AudioClipDescriptor[],
+  audioOnly: boolean,
 ): Layer[] {
   const element = hostElement(node.type);
   if (context.insideStatic && (element || TIME_DEPENDENT_TYPES.has(node.type))) {
@@ -1604,6 +1649,8 @@ interface RuntimeTreeValues {
   runtime: NonNullable<React.ContextType<typeof CompositionRuntimeContext>>;
   fonts: React.ContextType<typeof TextMetricsFontsContext>;
   requestRerender: React.ContextType<typeof RerenderRequestContext>;
+  /** Where this pass's `<SceneBoundary>`s report; null where none should catch. */
+  sceneErrors?: SceneErrorSink | null;
 }
 
 /**
@@ -1612,13 +1659,14 @@ interface RuntimeTreeValues {
  * component the resolver renders sees what it would in the composition.
  */
 function runtimeTree(values: RuntimeTreeValues, child: React.ReactNode): React.ReactElement {
-  const { layers, tracks, runtime, fonts, requestRerender } = values;
+  const { layers, tracks, runtime, fonts, requestRerender, sceneErrors = null } = values;
   return React.createElement(ProjectLayersContext.Provider, { value: layers },
     React.createElement(ProjectTrackLayersContext.Provider, { value: tracks },
       React.createElement(RootRuntimeContext.Provider, { value: runtime },
         React.createElement(CompositionRuntimeContext.Provider, { value: runtime },
           React.createElement(TextMetricsFontsContext.Provider, { value: fonts },
-            React.createElement(RerenderRequestContext.Provider, { value: requestRerender }, child))))));
+            React.createElement(RerenderRequestContext.Provider, { value: requestRerender },
+              React.createElement(SceneErrorSinkContext.Provider, { value: sceneErrors }, child)))))));
 }
 
 /** Includes text supplied by a project timeline and its nested groups. */
@@ -1660,6 +1708,13 @@ export function mount(defaultExport: EntryComponent, compositionId?: string): Mo
   let committedPositions = '';
   let overridesValue: object | null = null;
   let entryKey = 0;
+  // What the `<SceneBoundary>`s of the last pass caught, in commit order.
+  // Each pass gets a new sink, which also makes every boundary render its
+  // children again.
+  let sceneErrors: SceneErrorReport[] = [];
+  // The boundaries behind `sceneErrors`.
+  let failedBoundaries: object[] = [];
+  let mounting = true;
 
   const renderTree = (
     time: Time,
@@ -1680,8 +1735,21 @@ export function mount(defaultExport: EntryComponent, compositionId?: string): Mo
       lang: config.lang,
       openEnd,
     };
+    const caught: SceneErrorReport[] = [];
+    const failed: object[] = [];
+    sceneErrors = caught;
+    failedBoundaries = failed;
+    const sink: SceneErrorSink = {
+      // Mounting's passes only discover the compositions and their fonts: a
+      // scene that throws there fails the frames it is in, not the mount.
+      catches: preview || mounting,
+      report: (report, boundary) => {
+        caught.push(report);
+        failed.push(boundary);
+      },
+    };
     const element = runtimeTree(
-      { layers: project?.layers ?? null, tracks: project?.tracks ?? null, runtime: runtimeValue, fonts, requestRerender },
+      { layers: project?.layers ?? null, tracks: project?.tracks ?? null, runtime: runtimeValue, fonts, requestRerender, sceneErrors: sink },
       React.createElement(CompositionSelectionContext.Provider, { value: selection },
         React.createElement(PropOverridesContext.Provider, { value: overridesValue },
           React.createElement(defaultExport, { key: entryKey }))),
@@ -1720,6 +1788,7 @@ export function mount(defaultExport: EntryComponent, compositionId?: string): Mo
   collectFonts(compositionInstance, initialFonts);
   fonts = initialFonts;
   const staticSubtrees = new StaticSubtrees();
+  mounting = false;
 
   /**
    * Makes the next render create elements with `propOverrides`. A component
@@ -1827,6 +1896,7 @@ export function mount(defaultExport: EntryComponent, compositionId?: string): Mo
       : undefined;
     return {
       ...(staticsFrame ? { statics: staticsFrame } : {}),
+      ...(sceneErrors.length > 0 ? { sceneErrors } : {}),
       scene: {
         width: config.width,
         height: config.height,
@@ -1874,13 +1944,62 @@ export function mount(defaultExport: EntryComponent, compositionId?: string): Mo
     compositions,
     get fonts() { return fonts; },
     renderAt: (time, project, options) => renderFrame(time, project, options),
-    collectAudio() {
+    collectAudio(options) {
       const audio: AudioClipDescriptor[] = [];
-      for (let frame = 0; frame < config.durationInFrames; frame++) {
-        const time = { value: frame * config.frameRate.denominator, timescale: config.frameRate.numerator };
-        for (const clip of renderFrame(time, null, { audioOnly: true }).audio) audio.push(clip);
+      const preview = options?.preview === true;
+      const frameTime = (frame: number) => ({ value: frame * config.frameRate.denominator, timescale: config.frameRate.numerator });
+      if (!preview) {
+        for (let frame = 0; frame < config.durationInFrames; frame++) {
+          for (const clip of renderFrame(frameTime(frame), null, { audioOnly: true }).audio) audio.push(clip);
+        }
+        return audio;
       }
-      return audio;
+      // Each frame reports a clip for the whole window it plays in, so a
+      // scene that fails on some frames would still be heard on them: cut
+      // its clips (and those of the scenes inside it) where it failed.
+      const boundaries = new WeakMap<AudioClipDescriptor, object[]>();
+      const failedFrames = new Map<object, number[]>();
+      audioBoundaries = boundaries;
+      try {
+        for (let frame = 0; frame < config.durationInFrames; frame++) {
+          for (const clip of renderFrame(frameTime(frame), null, { audioOnly: true, preview }).audio) audio.push(clip);
+          for (const boundary of failedBoundaries) {
+            const frames = failedFrames.get(boundary) ?? [];
+            if (frames[frames.length - 1] !== frame) frames.push(frame);
+            failedFrames.set(boundary, frames);
+          }
+        }
+      } finally {
+        audioBoundaries = null;
+        walkingNode = null;
+      }
+      if (failedFrames.size === 0) return audio;
+      // Identical declarations are one sound (the mix plays them once), so
+      // a sound is cut only where every report of it is: one in a scene
+      // that played keeps it whole.
+      const groups = new Map<string, { clips: AudioClipDescriptor[]; cut: Set<number> }>();
+      for (const clip of audio) {
+        const frames = new Set((boundaries.get(clip) ?? []).flatMap((boundary) => failedFrames.get(boundary) ?? []));
+        const key = JSON.stringify(clip);
+        const group = groups.get(key);
+        if (group) {
+          group.clips.push(clip);
+          for (const frame of group.cut) if (!frames.has(frame)) group.cut.delete(frame);
+        } else {
+          groups.set(key, { clips: [clip], cut: frames });
+        }
+      }
+      const seconds = (frame: number) => secondsFromTime(frameTime(frame));
+      return [...groups.values()].flatMap(({ clips, cut }) => {
+        if (cut.size === 0) return clips;
+        const spans: [number, number][] = [];
+        for (const frame of [...cut].sort((a, b) => a - b)) {
+          const last = spans[spans.length - 1];
+          if (last && last[1] === seconds(frame)) last[1] = seconds(frame + 1);
+          else spans.push([seconds(frame), seconds(frame + 1)]);
+        }
+        return cutAudioClip(clips[0], spans);
+      });
     },
     collectSubtitles(from, frames) {
       const seen = new Set<string>();

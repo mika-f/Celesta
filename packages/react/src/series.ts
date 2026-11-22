@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { Sequence } from './components';
 import type { CommonProps } from './components';
 import { copySourcePosition } from './jsx-dev-runtime';
+import { SceneBoundary } from './scene-boundary';
 import { markTransparent } from './source-chain';
 
 export interface SeriesItem {
@@ -52,6 +53,12 @@ export function computeSeries(items: readonly SeriesItem[]): SeriesTiming {
 }
 
 export interface SeriesSequenceProps extends CommonProps, SeriesItem {
+  /**
+   * The item's label on its error card in the preview and in Problems,
+   * should it throw while rendering. Defaults to its `id`, or its place
+   * (`Series item 2`).
+   */
+  name?: string;
   children?: ReactNode;
 }
 
@@ -80,11 +87,13 @@ function SeriesRoot({ children }: SeriesProps): React.ReactElement {
     React.Fragment,
     null,
     items.map((item, index) => {
-      const { durationInFrames: _duration, offset: _offset, children: inner, ...props } = item.props;
+      const { durationInFrames: _duration, offset: _offset, name, children: inner, ...props } = item.props;
+      // An empty `id` is no id, as for layer ids.
+      const sceneId = props.id || `series-${index + 1}`;
       const sequence = React.createElement(
         Sequence,
         { key: item.key ?? index, ...props, ...sequences[index] },
-        inner,
+        React.createElement(SceneBoundary, { id: sceneId, name: name || props.id || `Series item ${index + 1}` }, inner),
       );
       // `createElement` copies the config into a props object of its own.
       copySourcePosition(item.props, sequence.props);
@@ -97,7 +106,9 @@ function SeriesRoot({ children }: SeriesProps): React.ReactElement {
  * Plays its `<Series.Sequence>` children one after another, so scenes are
  * written by length instead of by start frame. Each child is an ordinary
  * `<Sequence>`: frames and media restart at 0 inside it. A negative `offset`
- * overlaps an item with the one before it.
+ * overlaps an item with the one before it. Each item is isolated by a
+ * `<SceneBoundary>`: in the editor preview one that throws draws an error
+ * card and the others still play; an export fails on its frames.
  *
  * ```tsx
  * <Series>

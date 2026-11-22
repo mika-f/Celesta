@@ -335,6 +335,7 @@ impl EditorView {
                     reuse_scene,
                 }) {
                     self.problems.set_preview_warnings(Vec::new());
+                    self.problems.set_scene_errors(Vec::new());
                     self.problems.fail(Source::Preview, error);
                     // No lookup answers again (see `poll_preview_results`).
                     self.element_edit.preview_stopped();
@@ -342,6 +343,7 @@ impl EditorView {
             }
             Err(error) => {
                 self.problems.set_preview_warnings(Vec::new());
+                self.problems.set_scene_errors(Vec::new());
                 self.problems.fail(Source::Preview, error_chain(&error));
             }
         }

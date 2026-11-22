@@ -58,6 +58,9 @@ pub(crate) fn spawn_react_audio() -> anyhow::Result<ReactAudioWorker> {
         )
         .map_err(|error| error_chain(&error))
         .and_then(|mut bridge| {
+            // As the preview's frames are: a scene that throws is silent on
+            // its frames instead of silencing the whole preview.
+            bridge.set_preview(true);
             bridge
                 .collect_media(request.sample_rate, request.master_volume, &entry_dir)
                 .map_err(|error| error_chain(&error))
