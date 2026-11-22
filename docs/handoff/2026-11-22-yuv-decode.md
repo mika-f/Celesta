@@ -193,8 +193,9 @@ scene uses a real shared-memory `MediaBackend`, switching only its offer.
 
 All alpha samples match exactly. Means are over RGB channels; differing is
 the number of pixels with any difference. Converted-texture readback vs
-`to_rgba()` is **max 0, mean 0, differing 0** for each of the five YUV fixtures:
-709 limited, untagged 601 limited, 709 full, 1918×1078 odd chroma, and raw NV12.
+`to_rgba()` is **max 0, mean 0, differing 0** for each of the six YUV fixtures:
+709 limited, untagged 601 limited, 709 full, 1918×1078 odd chroma, raw NV12,
+and the first frame of the 128×72 sequential H.264 fixture.
 The ≤1 requirement is retained. Synthetic cases also meet ≤1.
 
 End-to-end render vs the RGBA-offer path (≤2 required):
@@ -206,6 +207,7 @@ End-to-end render vs the RGBA-offer path (≤2 required):
 | 709 full, 1920×1080 | 1 / 0.161292 / 1,003,367 | 1 / 0.083997 / 522,526 |
 | 709 limited, 1918×1078 | 2 / 0.293076 / 1,391,230 | 2 / 0.160083 / 923,314 |
 | NV12, 128×72 | 2 / 0.438874 / 7,799 | 2 / 0.244900 / 5,260 |
+| Sequential H.264, 128×72 | 2 / 0.401837 / 7,561 | 2 / 0.219256 / 5,129 |
 
 Effects scene: brightness 0.8, Screen blending, opacity 0.75 over the default
 background. Screenshots of the same 709-limited scene were saved and visually
@@ -216,7 +218,7 @@ checked as a matched pair, not committed:
 - `/home/ubuntu/research/yuv-shots/rgba-effects-true.png`
 - `/home/ubuntu/research/yuv-shots/yuv-effects-true.png`
 
-Gate output: `/home/ubuntu/research/yuv-gate/gpu-b-gates-2.log`.
+Gate output: `/home/ubuntu/research/yuv-gate/b-gpu-tests-final.log`.
 
 ### Completed-texture benchmark
 
@@ -272,3 +274,7 @@ The additional editor Clippy check initially found missing desktop system
 development packages (`fontconfig.pc`, then `alsa.pc`). The standard pkg-config
 search path was correct; installing `libfontconfig1-dev` and `libasound2-dev`
 resolved this environment issue. Its final output is `b-editor-clippy-final.log`.
+The sequential fixture was added in a follow-up commit so every fixture
+answering YUV in A is included. The final complete GPU suite again passed
+441 tests (0 failed, 2 ignored), followed by GPU Clippy and formatting checks.
+Other source and benchmark inputs were unchanged; their earlier checks apply.

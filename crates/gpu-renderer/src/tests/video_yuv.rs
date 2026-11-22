@@ -295,6 +295,7 @@ fn ffmpeg_fixtures_meet_texture_and_scene_gates() {
         "yuv-709-full.mp4",
         "yuv-odd-chroma.mp4",
         "yuv-native-nv12.nut",
+        "yuv-sequence.mp4",
     ] {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../plugins/ffmpeg/tests/fixtures")
