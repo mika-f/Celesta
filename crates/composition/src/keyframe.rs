@@ -39,8 +39,8 @@ pub struct Keyframe<T> {
     pub easing: Option<Easing>,
 }
 
-/// Mirrors the easings.net catalogue (`EaseIn`/`EaseOut`/`EaseInOut` are the
-/// pre-existing quadratic shorthand, kept for backward compatibility with
+/// Mirrors the easings.net catalogue, plus `Whip` for camera moves
+/// (`EaseIn`/`EaseOut`/`EaseInOut` are the pre-existing quadratic shorthand, kept for backward compatibility with
 /// project files that already reference them — they compute the same curve
 /// as `EaseInQuad`/`EaseOutQuad`/`EaseInOutQuad`). See `animation.rs`'s
 /// `apply_easing`/`easing_integral` for the formulas, which mirror
@@ -84,4 +84,8 @@ pub enum Easing {
     EaseInBounce,
     EaseOutBounce,
     EaseInOutBounce,
+    /// A whip for fast camera moves: barely moving at both ends, very fast
+    /// in the middle (98% of the move in the middle third). Not an
+    /// easings.net curve; `Easings.whip` in `packages/react/src/animation.ts`.
+    Whip,
 }

@@ -220,6 +220,12 @@ export function progress(
 }
 
 /**
+ * How steep `Easings.whip` is: its speed in the middle is this many times
+ * the average. Mirrors `WHIP_SHARPNESS` in `crates/composition/src/animation.rs`.
+ */
+const WHIP_SHARPNESS = 7;
+
+/**
  * Common easing curves for `interpolate()`'s `easing` option. Every curve
  * returns exactly 0 at 0 and exactly 1 at 1, so `progress()` is exactly 0
  * before its span and exactly 1 after it. Named `Easings`
@@ -314,6 +320,15 @@ export const Easings = {
   },
   easeInOutBounce: (t: number): number =>
     t < 0.5 ? (1 - Easings.easeOutBounce(1 - 2 * t)) / 2 : (1 + Easings.easeOutBounce(2 * t - 1)) / 2,
+  /**
+   * A whip for fast camera moves: barely moving at both ends and very fast
+   * in the middle, which covers 98% of the move in its middle third at up to
+   * 7 times the average speed. Smooth throughout, and symmetric like the
+   * `easeInOut` curves. Not an easings.net curve; JSON keyframes call it
+   * `'whip'`.
+   */
+  whip: (t: number): number =>
+    t === 0 ? 0 : t === 1 ? 1 : (1 + Math.tanh(WHIP_SHARPNESS * (2 * t - 1)) / Math.tanh(WHIP_SHARPNESS)) / 2,
 
   /**
    * The curve of CSS `cubic-bezier(x1, y1, x2, y2)`: from (0, 0) to (1, 1)

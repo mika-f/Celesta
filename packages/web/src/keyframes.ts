@@ -120,6 +120,8 @@ function easeOutBounce(t: number): number {
 }
 
 const C1 = 1.70158, C2 = C1 * 1.525, C3 = C1 + 1, C4 = (2 * Math.PI) / 3, C5 = (2 * Math.PI) / 4.5;
+/** `Easing::Whip`'s speed in the middle, as a multiple of the average. */
+const WHIP_SHARPNESS = 7;
 
 const EASINGS: Record<KeyframeEasing, (t: number) => number> = {
   'linear': (t) => t,
@@ -160,6 +162,7 @@ const EASINGS: Record<KeyframeEasing, (t: number) => number> = {
   'ease-in-bounce': (t) => 1 - easeOutBounce(1 - t),
   'ease-out-bounce': easeOutBounce,
   'ease-in-out-bounce': (t) => (t < 0.5 ? (1 - easeOutBounce(1 - 2 * t)) / 2 : (1 + easeOutBounce(2 * t - 1)) / 2),
+  'whip': (t) => (t === 0 ? 0 : t === 1 ? 1 : (1 + Math.tanh(WHIP_SHARPNESS * (2 * t - 1)) / Math.tanh(WHIP_SHARPNESS)) / 2),
 };
 
 function easing(name: KeyframeEasing): (t: number) => number {

@@ -43,7 +43,7 @@
 </Camera>
 ```
 
-途中にホールドやカットを挟みながら複数の地点を巡るには、`keyframes` で props を計算して `<Camera {...keyframes(frame, keys)}>` のように渡します。[アニメーション](/ja/docs/animation/)を参照してください。
+途中にホールドやカットを挟みながら複数の地点を巡るには、`keyframes` で props を計算して `<Camera {...keyframes(frame, keys)}>` のように渡します。キーの `drift` でホールド中も少しずつ動かし続けられ、`Easings.whip` でホイップパンになります。[アニメーション](/ja/docs/animation/)を参照してください。
 
 速いカメラの動きをぼかすには、カメラを `MotionBlur` で包み、ブラーが渡すフレームから props を計算して、各時点で値が変わるようにします。[アニメーション](/ja/docs/animation/)を参照してください。
 

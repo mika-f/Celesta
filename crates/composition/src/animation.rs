@@ -299,8 +299,21 @@ fn apply_easing(progress: f64, easing: Easing) -> f64 {
                 (1.0 + ease_out_bounce(2.0 * t - 1.0)) / 2.0
             }
         }
+        Easing::Whip => {
+            if t == 0.0 {
+                0.0
+            } else if t == 1.0 {
+                1.0
+            } else {
+                (1.0 + (WHIP_SHARPNESS * (2.0 * t - 1.0)).tanh() / WHIP_SHARPNESS.tanh()) / 2.0
+            }
+        }
     }
 }
+
+/// How steep `Easing::Whip` is: its speed in the middle is this many times
+/// the average. Mirrors `WHIP_SHARPNESS` in `packages/react/src/animation.ts`.
+const WHIP_SHARPNESS: f64 = 7.0;
 
 /// Shared by `EaseOutBounce`/`EaseInBounce`/`EaseInOutBounce`, mirroring
 /// `Easings.easeOutBounce` in `packages/react/src/animation.ts`.
@@ -433,6 +446,7 @@ mod tests {
             Easing::EaseInOutCirc,
             Easing::EaseInOutBack,
             Easing::EaseInOutBounce,
+            Easing::Whip,
         ] {
             assert!(
                 (apply_easing(0.5, easing) - 0.5).abs() < 1e-9,
@@ -478,7 +492,7 @@ mod tests {
         }
     }
 
-    const ALL_EASINGS: [Easing; 34] = [
+    const ALL_EASINGS: [Easing; 35] = [
         Easing::Linear,
         Easing::EaseIn,
         Easing::EaseOut,
@@ -513,6 +527,7 @@ mod tests {
         Easing::EaseInBounce,
         Easing::EaseOutBounce,
         Easing::EaseInOutBounce,
+        Easing::Whip,
     ];
 
     #[test]

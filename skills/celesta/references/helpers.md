@@ -13,6 +13,8 @@ preview and export, and other people (and agents) reading the file know them.
 | A copy of `easeOutBack` with another constant, a bezier solved by hand, `Math.floor(t * n) / n` | `Easings.back(overshoot).easeOut`, `Easings.cubicBezier(x1, y1, x2, y2)`, `Easings.steps(n)` (also `Easings.elastic({ amplitude, period })`) | `@celesta.studio/react` |
 | A frame range mapped to values, with easing | `interpolate(f, [a, b], [from, to], { easing, extrapolateLeft: 'clamp', extrapolateRight: 'clamp' })` | `@celesta.studio/react` |
 | Several `interpolate` calls chained with `frame < 100 ? … : …`, or `useCue` + `progress` per stop, to move through keys with different easings | `keyframes(f, [{ frame, value, easing }])` (a number or an object of numbers; two keys on one frame cut) | `@celesta.studio/react` |
+| A held camera nudged by hand (`x + (frame - 100) * 0.13`), or a zoom pushed with `zoom * (1 + t * 0.006)`, during a hold | `drift` on the key: `keyframes(f, [{ frame, value, drift: { x: -4, zoom: { log: 0.006 } } }, …], { fps })` | `@celesta.studio/react` |
+| A hand-written steep sigmoid for a whip pan | `Easings.whip` (`'whip'` by name) | `@celesta.studio/react` |
 | A hex color blended by hand | `interpolateColor(f, [a, b], ['#…', '#…'])` | `@celesta.studio/react` |
 | `fract(Math.sin(i * 12.9898 + …) * 43758.5453)` | `random(seed)`, `randomRange(seed, min, max)`, `randomInt(...)` | `@celesta.studio/math` |
 | Wobble from summed sines | `noise(seed, t)`, `loopNoise(seed, t, period)` for loops | `@celesta.studio/math` |

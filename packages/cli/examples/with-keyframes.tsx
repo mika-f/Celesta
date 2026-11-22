@@ -1,26 +1,32 @@
-import { Composition, Easings, Rect, Text, keyframes, useCurrentFrame } from '@celesta.studio/react';
+import { Composition, Easings, Rect, Text, keyframes, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
 import { Camera } from '@celesta.studio/layout';
 import { Circle } from '@celesta.studio/shapes';
 
-// A camera that moves through keys: a push-in, a hold, a cut to another
-// part of the map, and a slow drift. Each key's `easing` shapes the move
-// that arrives at it.
+// A camera that moves through keys: a push-in, a hold that drifts, a whip
+// pan, a cut to another part of the map, and a drift through the rest of the
+// shot. Each key's `easing` shapes the move that arrives at it; its `drift`
+// creeps the view while the value holds after it.
 //
-//   celesta-exporter --react with-keyframes.tsx --frames 0,60,119,120,179 frame.png
+//   celesta-exporter --react with-keyframes.tsx --frames 0,45,74,85,119,120,179 frame.png
 
 const WIDTH = 1920;
 const HEIGHT = 1080;
 
 const CAMERA = [
   { frame: 0, value: { x: 960, y: 540, zoom: 1 } },
-  { frame: 60, value: { x: 520, y: 380, zoom: 2.2 }, easing: Easings.easeInOutCubic },
-  // The same value again holds the view for a second.
-  { frame: 90, value: { x: 520, y: 380, zoom: 2.2 } },
-  // Two keys on one frame cut: frame 120 already shows the second.
-  { frame: 120, value: { x: 560, y: 380, zoom: 2.2 }, easing: 'ease-in-quad' as const },
-  { frame: 120, value: { x: 1300, y: 700, zoom: 1.8 } },
-  // A slightly different value drifts through the rest of the shot.
-  { frame: 180, value: { x: 1330, y: 690, zoom: 1.9 } },
+  // The same value again holds the view for a second, and `drift` keeps it
+  // creeping right and in (`{ log }` zooms at an even pace) while it does.
+  {
+    frame: 45, value: { x: 520, y: 380, zoom: 2.2 }, easing: Easings.easeInOutCubic,
+    drift: { x: 24, zoom: { log: 0.04 } },
+  },
+  { frame: 75, value: { x: 520, y: 380, zoom: 2.2 } },
+  // A whip pan to the market, from where the drift reached.
+  { frame: 95, value: { x: 1180, y: 260, zoom: 2 }, easing: 'whip' as const },
+  { frame: 120, value: { x: 1180, y: 260, zoom: 2 } },
+  // Two keys on one frame cut: frame 120 already shows the second, which
+  // drifts on through the rest of the shot.
+  { frame: 120, value: { x: 1300, y: 700, zoom: 1.8 }, drift: { x: 12, y: -6, zoom: { log: 0.05 } } },
 ];
 
 const PLACES = [
@@ -54,9 +60,10 @@ function Map() {
 
 export default function Root() {
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
   return (
     <Composition width={WIDTH} height={HEIGHT} fps={30} durationInFrames={180}>
-      <Camera {...keyframes(frame, CAMERA)}>
+      <Camera {...keyframes(frame, CAMERA, { fps })}>
         <Map />
       </Camera>
     </Composition>

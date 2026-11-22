@@ -14,7 +14,7 @@ const opacity = interpolate(frame, [0, 30], [0, 1], {
 
 Pass the result to `<Text opacity={opacity} … />`. Input ranges must be strictly increasing and have the same number of entries as the output range. The input and every range entry must be finite numbers: a `NaN`, such as one from a misspelled field, throws an error instead of returning `NaN`. Extrapolation defaults to `extend`; use `clamp` to hold the first and last values.
 
-`Easings` covers the familiar easings.net curves: `linear`, and the `easeIn`/`easeOut`/`easeInOut` variants of `Sine`, `Quad`, `Cubic`, `Quart`, `Quint`, `Expo`, `Circ`, `Back`, `Elastic`, and `Bounce` (for example `Easings.easeOutBack`).
+`Easings` covers the familiar easings.net curves: `linear`, and the `easeIn`/`easeOut`/`easeInOut` variants of `Sine`, `Quad`, `Cubic`, `Quart`, `Quint`, `Expo`, `Circ`, `Back`, `Elastic`, and `Bounce` (for example `Easings.easeOutBack`). For a whip pan there is also `Easings.whip`: it barely moves at both ends and covers 98% of the move in its middle third, at up to seven times the average speed (`'whip'` in JSON keyframes).
 
 When a named curve is not quite right, build one from numbers:
 
@@ -45,6 +45,23 @@ const cam = keyframes(frame, [
 ```
 
 Before the first key the value is the first key's, and after the last key the last key's. Two keys on one frame cut: that frame already shows the second key's value. `easing` is a function, or the name of a curve as JSON keyframes spell it (`'ease-out-back'`). Keys must be in order of `frame`, and every `value` must have the same fields. For the volume of an `<Audio>`, which takes keyframes itself, use `frameKeyframes` instead; see [Media](/en/docs/media/).
+
+### Drift during a hold
+
+A held camera that stands perfectly still can look frozen. Give the key a `drift` and the value keeps creeping while it holds after that key, at a rate per second, so pass the composition's `fps`:
+
+```tsx title="A hold that drifts, then a whip pan"
+const { fps } = useVideoConfig();
+const cam = keyframes(frame, [
+  { frame: 0,   value: { x: 960, y: 540, zoom: 1 } },
+  { frame: 100, value: { x: 880, y: 520, zoom: 1.12 }, easing: Easings.easeInOutCubic,
+    drift: { x: -4, zoom: { log: 0.006 } } },
+  { frame: 160, value: { x: 880, y: 520, zoom: 1.12 } },  // the drift runs to here
+  { frame: 180, value: { x: 300, y: 400, zoom: 1 }, easing: Easings.whip },
+], { fps });
+```
+
+For an object value, `drift` has a rate for each field that moves (`x: -4` is 4 pixels to the left each second); a number value takes one rate. `{ log: r }` multiplies instead of adding, by about `1 + r` each second, so a zoom creeps at an even pace. A field drifts only while it holds: up to the next key when that key has the same value for it, or forever after the last key. The move after the hold starts from wherever the drift reached, so nothing jumps, and a cut starts from its own key. Every frame is still computed from the frame number alone.
 
 ## Interpolate between colors
 

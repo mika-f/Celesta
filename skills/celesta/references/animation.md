@@ -72,6 +72,8 @@ what they produce constant across frames.
 | --- | --- |
 | A value from A to B over some frames | `interpolate` with `'clamp'`, or `progress` |
 | A value through several keys, each leg with its own easing, with holds and cuts (a camera path) | `keyframes` |
+| A hold that keeps creeping (a camera that breathes) | `keyframes` with `drift` |
+| A whip pan | `Easings.whip` |
 | A color from A to B (fill, gradient stop, shadow) | `interpolateColor` |
 | A bouncy pop-in | `spring` |
 | Scenes back to back | `Series` + `computeSeries` |
@@ -164,9 +166,12 @@ Same `inputRange` rules and `easing` as `interpolate`, but takes `#RRGGBB` /
 `linear`, `easeIn`, `easeOut`, `easeInOut` (quadratic), and
 `easeIn…`/`easeOut…`/`easeInOut…` for `Sine`, `Quad`, `Cubic`, `Quart`,
 `Quint`, `Expo`, `Circ`, `Back`, `Elastic`, `Bounce` (for example
-`Easings.easeOutBack`). Every easing returns exactly 0 at 0 and 1 at 1. Any
-`(t: number) => number` works too. JSON keyframes use the same names in
-kebab case (`ease-out-back`).
+`Easings.easeOutBack`), plus `Easings.whip` for whip pans and other fast
+camera moves: it barely moves at both ends and covers 98% of the move in
+its middle third, at up to 7 times the average speed (smooth throughout,
+symmetric like the `easeInOut` curves). Every easing returns exactly 0 at
+0 and 1 at 1. Any `(t: number) => number` works too. JSON keyframes use the
+same names in kebab case (`ease-out-back`, `whip`).
 
 Four members build a curve from numbers instead of being one:
 
@@ -213,10 +218,10 @@ block of entrances:
 
 ## keyframes
 
-`keyframes(frame, keys)`: the value at `frame` of a list of keys
-`{ frame, value, easing? }`. Unlike `interpolate`, each segment has its own
-easing, a value may be an object of numbers that move together, and a move
-can hold or cut.
+`keyframes(frame, keys, { fps? })`: the value at `frame` of a list of keys
+`{ frame, value, easing?, drift? }`. Unlike `interpolate`, each segment has
+its own easing, a value may be an object of numbers that move together, and
+a move can hold, drift while it holds, or cut.
 
 ```tsx
 const cam = keyframes(useCurrentFrame(), [
@@ -243,6 +248,34 @@ const cam = keyframes(useCurrentFrame(), [
 - Keys must be in order of `frame`; a non-finite frame or value, values of
   different shapes, or an unknown easing name throws with the key's index
   (`keyframes() requires keys in order of frame (key 3)`).
+- **Drift**: `drift` on a key creeps the value while it holds after that
+  key, at a rate per second, and needs `keyframes()`'s `{ fps }`
+  (`useVideoConfig().fps`). A number value takes one rate; an object takes
+  a rate per field (`{ x: -4, zoom: { log: 0.006 } }`; fields left out stay
+  still). A plain number is added per second; `{ log: r }` multiplies by
+  `e^r` per second (about `1 + r`), so a zoom creeps at an even pace. This
+  is Motion's `drift: [dx/s, dy/s, dlogz/s]`.
+
+  ```tsx
+  const { fps } = useVideoConfig();
+  const cam = keyframes(frame, [
+    { frame: 0,   value: { x: 960, y: 540, zoom: 1 } },
+    { frame: 100, value: { x: 880, y: 520, zoom: 1.12 }, easing: Easings.easeInOutCubic,
+      drift: { x: -4, zoom: { log: 0.006 } } },
+    { frame: 160, value: { x: 880, y: 520, zoom: 1.12 } },  // the drift runs to here
+    { frame: 180, value: { x: 300, y: 400, zoom: 1 }, easing: Easings.whip },
+  ], { fps });
+  ```
+
+  - A field drifts only while it holds: up to the next key when that key
+    has the same value for the field, or forever after the last key.
+    Drift on a field that moves to the next key, or on the first key of a
+    cut, throws.
+  - The move after the hold starts where the drift reached (no jump at the
+    key); a later hold of the same value keeps that value, drifting on only
+    if its own key has a `drift`. A cut starts from its own key's value.
+  - Still a pure function of the frame: any frame, in any order, gives the
+    same value. Keys without `drift` give exactly what they gave before.
 - Colors are not numbers: blend them with `interpolateColor`.
 - `<Audio volume>` and the other props that take keyframes themselves need
   [`frameKeyframes()`](react-core.md#keyframe-values), not this.
@@ -833,7 +866,8 @@ the center, so `<Camera zoom={1.05}>` is a slow push-in. `shake` is the
 largest drift in world pixels, smoothed by `@celesta.studio/math`'s `noise()`.
 Animate the props from the frame for pans and zooms; for a path through
 several stops with holds and cuts, spread [`keyframes()`](#keyframes):
-`<Camera {...keyframes(frame, keys)}>`. To blur a fast pan,
+`<Camera {...keyframes(frame, keys, { fps })}>`, with `drift` to keep a hold
+creeping and `Easings.whip` (`'whip'`) for a whip pan. To blur a fast pan,
 wrap the camera in a `<MotionBlur>` with a function child that computes the
 props from the frame it is given ([MotionBlur and Trail](#motionblur-and-trail)).
 

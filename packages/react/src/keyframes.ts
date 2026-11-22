@@ -19,6 +19,30 @@ export interface ValueKeyframe<T extends number | Record<string, number>> {
    * Defaults to linear.
    */
   easing?: Easing | ((t: number) => number);
+  /**
+   * How fast the value creeps while it holds after this key, per second:
+   * a rate for a number, or a rate per field for an object (fields left out
+   * stay still). A field may drift only while it holds: up to the next key
+   * if that key has the same value for it, or after the last key. Needs
+   * `keyframes()`'s `fps` option.
+   */
+  drift?: KeyframeDrift<T>;
+}
+
+/**
+ * A drift rate per second: a number is added (`-4` moves 4 px to the left
+ * each second), and `{ log }` multiplies by `e^log` each second, for a
+ * zoom that creeps at an even pace (`{ log: 0.006 }` is about 0.6% a
+ * second).
+ */
+export type DriftRate = number | { log: number };
+
+/** The `drift` of a key whose value is `T`: one rate, or a rate per field. */
+export type KeyframeDrift<T> = T extends number ? DriftRate : { [Field in keyof T]?: DriftRate };
+
+export interface KeyframesOptions {
+  /** Frames per second, to turn `drift`'s rates into frames. Required when a key drifts. */
+  fps?: number;
 }
 
 /**
@@ -43,16 +67,31 @@ export interface ValueKeyframe<T extends number | Record<string, number>> {
  * <Camera {...cam}>…</Camera>
  * ```
  *
+ * A key's `drift` creeps a held value at a rate per second while it holds
+ * after that key, so a hold still breathes; pass `{ fps }`. The move after
+ * the hold starts from where the drift reached, and a later hold of the
+ * same value keeps it, so nothing jumps; a cut starts from its own key.
+ *
+ * ```tsx
+ * const { fps } = useVideoConfig();
+ * keyframes(frame, [
+ *   { frame: 100, value: { x: 880, y: 520, zoom: 1.12 }, drift: { x: -4, zoom: { log: 0.006 } } },
+ *   { frame: 160, value: { x: 880, y: 520, zoom: 1.12 } },  // the drift runs to here
+ *   { frame: 180, value: { x: 300, y: 400, zoom: 1 }, easing: Easings.whip },
+ * ], { fps });
+ * ```
+ *
  * For `<Audio volume>` and other props that take keyframes themselves, use
  * `frameKeyframes()`.
  */
 export function keyframes<K extends ValueKeyframe<number | Record<string, number>>>(
   frame: number,
   keys: readonly K[],
+  options: KeyframesOptions = {},
 ): KeyframeValue<K['value']> {
   // The type comes from every key, so keys declared `as const` (each with
   // its own literal values) are accepted; the shapes are checked here.
-  return valueAt(frame, keys) as KeyframeValue<K['value']>;
+  return valueAt(frame, keys, options) as KeyframeValue<K['value']>;
 }
 
 /**
@@ -62,7 +101,14 @@ export function keyframes<K extends ValueKeyframe<number | Record<string, number
  */
 export type KeyframeValue<T> = T extends number ? number : { -readonly [Field in keyof T]: number };
 
-function valueAt<T extends number | Record<string, number>>(frame: number, keys: readonly ValueKeyframe<T>[]): T {
+type Fields = Record<string, number>;
+type Rates = Record<string, DriftRate>;
+
+function valueAt<T extends number | Record<string, number>>(
+  frame: number,
+  keys: readonly ValueKeyframe<T>[],
+  options: KeyframesOptions,
+): T {
   if (!Number.isFinite(frame)) {
     throw new Error('keyframes() requires a finite frame');
   }
@@ -92,23 +138,113 @@ function valueAt<T extends number | Record<string, number>>(frame: number, keys:
     }
     if (typeof key.easing === 'string') namedEasing(key.easing, index);
   });
+  // Every key's value as fields, a number being the one field `''`.
+  const values = keys.map((key) => asFields(key.value));
+  const rates = keys.map((key, index) => driftRates(key, index, keys[index + 1], options.fps));
+  const fps = options.fps as number;
+  const result = (fields: Fields): T => (typeof keys[0].value === 'number' ? fields[''] : fields) as T;
 
-  if (frame < keys[0].frame) return copyValue(keys[0].value);
+  if (frame < keys[0].frame) return result({ ...values[0] });
   // The last key at or before `frame` starts the segment, so of two keys on
   // one frame the second does.
   let start = 0;
   while (start + 1 < keys.length && keys[start + 1].frame <= frame) start += 1;
-  const from = keys[start];
+  // Where each segment starts: its key's value, or, when an earlier hold
+  // drifted, where that drift reached. A cut starts from its own key.
+  let from = values[0];
+  for (let index = 0; index < start; index += 1) {
+    const next = index + 1;
+    if (keys[next].frame === keys[index].frame) {
+      from = values[next];
+      continue;
+    }
+    const seconds = (keys[next].frame - keys[index].frame) / fps;
+    from = mapFields(from, (field, value) =>
+      values[index][field] === values[next][field] ? drifted(value, rates[index][field], seconds) : values[next][field]);
+  }
   const to = keys[start + 1];
-  if (!to) return copyValue(from.value);
+  const seconds = (frame - keys[start].frame) / fps;
+  if (!to) return result(mapFields(from, (field, value) => drifted(value, rates[start][field], seconds)));
   const easing = typeof to.easing === 'string' ? namedEasing(to.easing, start + 1) : to.easing;
-  const linear = (frame - from.frame) / (to.frame - from.frame);
+  const linear = (frame - keys[start].frame) / (to.frame - keys[start].frame);
   const eased = easing ? easing(linear) : linear;
-  const mix = (a: number, b: number): number => (eased === 0 ? a : a + (b - a) * eased);
-  if (typeof from.value === 'number') return mix(from.value, to.value as number) as T;
-  const fromFields = from.value as Record<string, number>;
-  const toFields = to.value as Record<string, number>;
-  return Object.fromEntries(Object.keys(fromFields).map((field) => [field, mix(fromFields[field], toFields[field])])) as T;
+  const target = values[start + 1];
+  return result(mapFields(from, (field, value) => {
+    if (values[start][field] === target[field]) return drifted(value, rates[start][field], seconds);
+    return eased === 0 ? value : value + (target[field] - value) * eased;
+  }));
+}
+
+function asFields(value: number | Record<string, number>): Fields {
+  return typeof value === 'number' ? { '': value } : value;
+}
+
+function mapFields(fields: Fields, map: (field: string, value: number) => number): Fields {
+  return Object.fromEntries(Object.keys(fields).map((field) => [field, map(field, fields[field])]));
+}
+
+/** `value` after drifting at `rate` for `seconds`; `value` itself without a rate. */
+function drifted(value: number, rate: DriftRate | undefined, seconds: number): number {
+  if (rate === undefined) return value;
+  return typeof rate === 'number' ? value + rate * seconds : value * Math.exp(rate.log * seconds);
+}
+
+/** A key's drift as a rate per field (`''` for a number), checked against the key after it. */
+function driftRates<T extends number | Record<string, number>>(
+  key: ValueKeyframe<T>,
+  index: number,
+  next: ValueKeyframe<T> | undefined,
+  fps: number | undefined,
+): Rates {
+  // Without a prototype, so a field named like an `Object.prototype` member
+  // (`constructor`) has no rate unless the drift gives one.
+  const rates: Rates = Object.create(null);
+  const { drift } = key;
+  if (drift === undefined) return rates;
+  if (typeof fps !== 'number' || !Number.isFinite(fps) || fps <= 0) {
+    throw new Error(`keyframes() requires a positive fps option to drift (key ${index})`);
+  }
+  const invalid = () =>
+    new Error(`keyframes() requires drift to be a rate per second or { log }, one for each field of the value (key ${index})`);
+  if (typeof key.value === 'number') {
+    if (!isDriftRate(drift)) throw invalid();
+    rates[''] = drift;
+  } else {
+    // `{ log: r }` is one rate, not a rate per field, unless the value has a
+    // field named `log`.
+    const oneRate = isDriftRate(drift) && !Object.prototype.hasOwnProperty.call(key.value, 'log');
+    if (drift === null || typeof drift !== 'object' || Array.isArray(drift) || oneRate) throw invalid();
+    for (const [field, rate] of Object.entries(drift as Record<string, unknown>)) {
+      // A field set to `undefined` is the same as a field left out.
+      if (rate === undefined) continue;
+      if (!Object.prototype.hasOwnProperty.call(key.value, field)) {
+        throw new Error(`keyframes() got drift for "${field}", which the value does not have (key ${index})`);
+      }
+      if (!isDriftRate(rate)) throw invalid();
+      rates[field] = rate;
+    }
+  }
+  if (next && next.frame === key.frame) {
+    throw new Error(`keyframes() can drift a value only while it holds after its key, and a cut follows (key ${index})`);
+  }
+  if (next) {
+    const here = asFields(key.value);
+    const there = asFields(next.value);
+    for (const field of Object.keys(rates)) {
+      if (here[field] !== there[field]) {
+        const what = field === '' ? 'the value moves' : `"${field}" moves`;
+        throw new Error(`keyframes() can drift a value only while it holds after its key, and ${what} (key ${index})`);
+      }
+    }
+  }
+  return rates;
+}
+
+function isDriftRate(rate: unknown): rate is DriftRate {
+  if (typeof rate === 'number') return Number.isFinite(rate);
+  if (rate === null || typeof rate !== 'object' || Array.isArray(rate)) return false;
+  const keys = Object.keys(rate);
+  return keys.length === 1 && keys[0] === 'log' && Number.isFinite((rate as { log: unknown }).log);
 }
 
 /** `'number'`, or an object's sorted field names, to compare keys' values by. */
@@ -116,10 +252,6 @@ function valueShape(value: unknown): string {
   if (typeof value === 'number') return 'number';
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return 'invalid';
   return `{${Object.keys(value).sort().join(',')}}`;
-}
-
-function copyValue<T extends number | Record<string, number>>(value: T): T {
-  return typeof value === 'number' ? value : ({ ...(value as Record<string, number>) } as T);
 }
 
 /** The `Easings` curve a kebab-case `Easing` name stands for. */
