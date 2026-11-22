@@ -8,7 +8,7 @@
 use gpui_kit::{Pixels, Rems, px, rems};
 
 /// gpui-kit's `font_size`, in pixels: body text, and the window's `rem`.
-pub const BASE_FONT_SIZE: f32 = 13.0;
+pub const BASE_FONT_SIZE: f32 = 14.0;
 
 /// Height of a panel's header band (the editor's `PanelHeader` and the right
 /// dock's tabs): it holds gpui-kit's medium `Tab` (32px) without overhang.

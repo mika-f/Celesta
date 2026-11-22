@@ -8,6 +8,9 @@ Compositions reload when you save. You can also choose **File → Reload** to re
 
 An image file is read again when it changes. When you overwrite an image, or point an `<Image>`'s `src` at another file, the preview shows the new image from the next frame it draws, such as when you move the playhead or save the composition.
 
+Below the viewer, the current timecode is on the left, the playback and frame navigation controls are in the middle, and **Loop playback** and **Safe areas** are on the right, along with **Select layers** for React compositions. When there is room, **Mark In** and **Mark Out** sit next to the timecode. If you narrow the viewer, use `I` and `O` or the **Mark** menu to set the range.
+In the narrowest layout, **Go to Start** and **Go to End** remain in the **Playback** menu.
+
 **Keyboard shortcuts**
 
 | Action | macOS | Windows / Linux |

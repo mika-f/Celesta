@@ -1,6 +1,6 @@
 //! Keeps text sizes on the editor's type roles.
 //!
-//! At the editor's 13px `rem`, `text_xs` is about 9.75px, too small to read,
+//! At the editor's `rem`, `text_xs` is too small for ordinary chrome,
 //! and a pixel `text_size` steps outside the scale altogether, except on a
 //! painted scale whose labels share its pixel geometry (marked `physical:`
 //! on the line). Body text, values and titles are `text_base`; labels and

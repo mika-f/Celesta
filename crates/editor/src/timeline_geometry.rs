@@ -74,7 +74,7 @@ mod tests {
 
     #[test]
     fn sizes_are_their_tokens_times_the_rem() {
-        for rem in [13.0, 16.0] {
+        for rem in [metrics::BASE_FONT_SIZE, 16.0] {
             let geometry = TimelineGeometry::new(px(rem));
             assert_eq!(geometry.rem, px(rem));
             assert_eq!(geometry.track_header_width, px(18.0 * rem));
@@ -92,6 +92,5 @@ mod tests {
             TimelineGeometry::default(),
             TimelineGeometry::new(px(metrics::BASE_FONT_SIZE))
         );
-        assert_eq!(TimelineGeometry::default().track_header_width, px(234.0));
     }
 }
