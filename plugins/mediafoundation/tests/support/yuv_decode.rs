@@ -274,8 +274,14 @@ fn ffmpeg(path: &Path, time: f64) -> VideoFrame {
     decoder.decode_frame(path, time).unwrap()
 }
 
-fn nv12_planes(reference: &VideoFrame) -> Vec<u8> {
-    if reference.pixel_format == F::Yuv420p {
+fn exact_planes(label: &str, actual: &VideoFrame, reference: &VideoFrame) {
+    assert_eq!(actual.pixel_format, F::Nv12);
+    assert_eq!(
+        (actual.width, actual.height),
+        (reference.width, reference.height)
+    );
+    assert_eq!(actual.color, reference.color);
+    let expected = if reference.pixel_format == F::Yuv420p {
         let y = (reference.width * reference.height) as usize;
         let mut pixels = reference.pixels[..y].to_vec();
         for index in 0..y / 4 {
@@ -288,162 +294,12 @@ fn nv12_planes(reference: &VideoFrame) -> Vec<u8> {
     } else {
         assert_eq!(reference.pixel_format, F::Nv12);
         reference.pixels.as_ref().clone()
-    }
-}
-
-fn ffmpeg_planes(
-    path: &Path,
-    time: f64,
-    reference: &VideoFrame,
-    discard: av::AVDiscard,
-) -> Vec<u8> {
-    let path = CString::new(path.to_str().unwrap()).unwrap();
-    // SAFETY: live FFmpeg contexts own packet/frame storage until freed below;
-    // frame dimensions, format and row strides are checked before plane reads.
-    unsafe {
-        let mut input = null_mut();
-        assert!(av::avformat_open_input(&mut input, path.as_ptr(), null_mut(), null_mut()) >= 0);
-        assert!(av::avformat_find_stream_info(input, null_mut()) >= 0);
-        let stream = av::av_find_best_stream(
-            input,
-            av::AVMediaType::AVMEDIA_TYPE_VIDEO,
-            -1,
-            -1,
-            null_mut(),
-            0,
-        );
-        assert!(stream >= 0);
-        let track = &**(*input).streams.add(stream as usize);
-        let codec = av::avcodec_find_decoder((*track.codecpar).codec_id);
-        assert!(!codec.is_null());
-        let mut decoder = av::avcodec_alloc_context3(codec);
-        assert!(!decoder.is_null());
-        assert!(av::avcodec_parameters_to_context(decoder, track.codecpar) >= 0);
-        (*decoder).skip_loop_filter = discard;
-        assert!(av::avcodec_open2(decoder, codec, null_mut()) >= 0);
-        let mut packet = av::av_packet_alloc();
-        let mut frame = av::av_frame_alloc();
-        assert!(!packet.is_null() && !frame.is_null());
-        let mut selected = None;
-        loop {
-            let read = av::av_read_frame(input, packet);
-            assert!(read >= 0 || read == av::AVERROR_EOF);
-            if read >= 0 && (*packet).stream_index != stream {
-                av::av_packet_unref(packet);
-                continue;
-            }
-            assert!(
-                av::avcodec_send_packet(
-                    decoder,
-                    if read == av::AVERROR_EOF {
-                        null_mut()
-                    } else {
-                        packet
-                    }
-                ) >= 0
-            );
-            av::av_packet_unref(packet);
-            loop {
-                let status = av::avcodec_receive_frame(decoder, frame);
-                if status == av::AVERROR(av::EAGAIN) || status == av::AVERROR_EOF {
-                    break;
-                }
-                assert!(status >= 0);
-                assert_ne!((*frame).best_effort_timestamp, av::AV_NOPTS_VALUE);
-                let seconds = (*frame).best_effort_timestamp as f64 * av::av_q2d(track.time_base);
-                if selected.is_none() || seconds <= time + 1e-7 {
-                    assert_eq!(
-                        ((*frame).width as u32, (*frame).height as u32),
-                        (reference.width, reference.height)
-                    );
-                    assert!(
-                        [
-                            av::AVPixelFormat::AV_PIX_FMT_YUV420P as i32,
-                            av::AVPixelFormat::AV_PIX_FMT_YUVJ420P as i32
-                        ]
-                        .contains(&(*frame).format)
-                    );
-                    let (width, height) = (reference.width as usize, reference.height as usize);
-                    for (plane, columns) in [(0, width), (1, width / 2), (2, width / 2)] {
-                        assert!(
-                            !(*frame).data[plane].is_null()
-                                && (*frame).linesize[plane] >= columns as i32
-                        );
-                    }
-                    let mut pixels = Vec::with_capacity(width * height * 3 / 2);
-                    for y in 0..height {
-                        pixels.extend_from_slice(std::slice::from_raw_parts(
-                            (*frame).data[0].add(y * (*frame).linesize[0] as usize),
-                            width,
-                        ));
-                    }
-                    for y in 0..height / 2 {
-                        for x in 0..width / 2 {
-                            pixels
-                                .push(*(*frame).data[1].add(y * (*frame).linesize[1] as usize + x));
-                            pixels
-                                .push(*(*frame).data[2].add(y * (*frame).linesize[2] as usize + x));
-                        }
-                    }
-                    selected = Some(pixels);
-                }
-                av::av_frame_unref(frame);
-            }
-            if read == av::AVERROR_EOF {
-                break;
-            }
-        }
-        av::av_frame_free(&mut frame);
-        av::av_packet_free(&mut packet);
-        av::avcodec_free_context(&mut decoder);
-        av::avformat_close_input(&mut input);
-        selected.expect("FFmpeg produced no reference frame")
-    }
-}
-
-fn plane_reference(actual: &[u8], normal: &[u8], unfiltered: &[u8]) -> Option<&'static str> {
-    if actual == normal {
-        Some("normal")
-    } else if actual == unfiltered {
-        Some("skip_loop_filter=all")
-    } else {
-        None
-    }
-}
-
-#[test]
-fn plane_reference_requires_exact_equality() {
-    assert_eq!(plane_reference(&[1, 2], &[1, 2], &[2, 3]), Some("normal"));
-    assert_eq!(
-        plane_reference(&[2, 3], &[1, 2], &[2, 3]),
-        Some("skip_loop_filter=all")
-    );
-    assert_eq!(plane_reference(&[1, 2], &[1, 2], &[1, 2]), Some("normal"));
-    assert_eq!(plane_reference(&[1, 3], &[1, 2], &[2, 3]), None);
-    assert_eq!(plane_reference(&[], &[1, 2], &[2, 3]), None);
-    assert_eq!(plane_reference(&[1], &[1, 2], &[2, 3]), None);
-}
-
-fn exact_planes(label: &str, path: &Path, time: f64, actual: &VideoFrame, reference: &VideoFrame) {
-    assert_eq!(actual.pixel_format, F::Nv12);
-    assert_eq!(
-        (actual.width, actual.height),
-        (reference.width, reference.height)
-    );
-    assert_eq!(actual.color, reference.color);
-    let normal = nv12_planes(reference);
-    let unfiltered = ffmpeg_planes(path, time, reference, av::AVDiscard::AVDISCARD_ALL);
-    let matched = plane_reference(&actual.pixels, &normal, &unfiltered);
-    let expected = if matched == Some("skip_loop_filter=all") {
-        &unfiltered
-    } else {
-        &normal
     };
     assert_eq!(actual.pixels.len(), expected.len());
     let mut max = 0u8;
     let mut sum = 0u64;
     let mut differing = 0usize;
-    for (actual, reference) in actual.pixels.iter().zip(expected) {
+    for (actual, reference) in actual.pixels.iter().zip(&expected) {
         let delta = actual.abs_diff(*reference);
         max = max.max(delta);
         sum += u64::from(delta);
@@ -452,14 +308,13 @@ fn exact_planes(label: &str, path: &Path, time: f64, actual: &VideoFrame, refere
         }
     }
     println!(
-        "planes {label}: reference={matched:?} max={max} mean={:.9} differing_bytes={differing}",
+        "planes {label}: max={max} mean={:.9} differing_bytes={differing}",
         sum as f64 / expected.len() as f64
     );
-    assert!(
-        matched.is_some(),
-        "Media Foundation planes differ from both exact FFmpeg references"
+    assert_eq!(
+        *actual.pixels, expected,
+        "Media Foundation/FFmpeg decoded planes differ"
     );
-    assert_eq!(&*actual.pixels, expected);
 }
 
 fn rgba_gate(label: &str, actual: &VideoFrame, reference: &VideoFrame) {
@@ -510,9 +365,11 @@ fn exercise(path: &Path, expected: DecodedColor) {
             transport == FrameTransport::SharedMemory
         );
         process.set_decode_prefetch(true);
-        for (index, time) in [0., 0.25, 0.5, 0.75, 1., 1.25, 1.5, 1.75, 2., 5., 0., 0.25]
-            .into_iter()
-            .enumerate()
+        for (index, time) in [
+            0., 0.25, 0.5, 0.75, 1., 1.25, 1.5, 1.75, 2., 5., 0., 0.25, 0.75, 1.25, 1.75,
+        ]
+        .into_iter()
+        .enumerate()
         {
             let accepted = match index {
                 3 => &[F::Rgba8][..],
@@ -531,18 +388,14 @@ fn exercise(path: &Path, expected: DecodedColor) {
                 assert_eq!(answer, rgba);
             } else {
                 assert_eq!(answer.color, Some(expected));
-                exact_planes(
-                    &format!("{} {transport:?} t={time}", path.display()),
-                    path,
-                    time,
-                    &answer,
-                    &ffmpeg(path, time),
+                let label = format!(
+                    "{} {}x{} {transport:?} t={time}",
+                    path.display(),
+                    answer.width,
+                    answer.height
                 );
-                rgba_gate(
-                    &format!("{} {transport:?} t={time}", path.display()),
-                    &answer,
-                    &rgba,
-                );
+                exact_planes(&label, &answer, &ffmpeg(path, time));
+                rgba_gate(&label, &answer, &rgba);
             }
         }
     }
@@ -555,7 +408,9 @@ fn h264_nv12_matches_ffmpeg_and_our_rgba_over_both_transports_and_prefetch() {
     }
     let directory = tempfile::tempdir().unwrap();
     let original = directory.path().join("source.mp4");
-    generated(&original, "h264", false).unwrap();
+    generated_at(&original, "h264", false, 320, 180).unwrap();
+    let reference = ffmpeg(&original, 0.);
+    assert_eq!((reference.width, reference.height), (320, 180));
     for (name, tagged, full) in [
         ("709-limited", true, false),
         ("untagged", false, false),
@@ -677,8 +532,6 @@ fn aligned_1080p_nv12_matches_ffmpeg() {
         assert_eq!((frame.width, frame.height), (1920, 1080));
         exact_planes(
             &format!("1080p {transport:?}"),
-            &output,
-            0.,
             &frame,
             &ffmpeg(&output, 0.),
         );

@@ -119,6 +119,9 @@ Full diagnostic logs and signing records are retained outside the repository:
 
 ## Owner decision after investigation
 
+This initial decision was superseded after the second frame matched neither
+reference. Current policy/trial: `2026-11-23-mf-plane-gate-policy.md`.
+
 The owner treats the small-frame difference as a property of MF's decoder,
 which is also used by the RGB32 path, rather than of our copy/crop. The evidence
 is the exact match to FFmpeg with `skip_loop_filter=all`, the single native

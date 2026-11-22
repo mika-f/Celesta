@@ -1,5 +1,11 @@
 # PR 888: exact MF decoder references
 
+Historical decision, superseded by `2026-11-23-mf-plane-gate-policy.md`.
+The dual reference passed the first 64x36 frame but neither reference matched
+t=0.25 (normal-reference max 4, mean 0.476273148, 1359 differing bytes).
+The first frame's own-RGBA gate passed, max 4, mean 0.151475694, 869 differing
+pixels, alpha exact. Windows job: `137329508126`.
+
 ## Specification and reason
 
 Owner decision: the MF plane gate must require exact equality to either the
