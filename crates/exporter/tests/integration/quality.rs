@@ -290,10 +290,12 @@ export default function Root() {
     )
     .unwrap();
     let entry = entry.to_str().unwrap();
-    let Some((_, report)) = exporter(&["--react", "--check-quality", entry]) else {
+    let Some((code, report)) = exporter(&["--react", "--check-quality", entry]) else {
         return;
     };
     assert_eq!(report["status"], "ok", "{report}");
+    // A rough scene is something found: the check fails.
+    assert_eq!(code, Some(1), "{report}");
     let coded: Vec<&str> = report["codedWarnings"]
         .as_array()
         .unwrap_or_else(|| panic!("{report}"))

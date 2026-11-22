@@ -381,7 +381,8 @@ Celesta-export --json project.celesta.json --check-quality
 ```
 
 It renders every frame like an export, writes no file, and exits 1 when it
-finds anything (2 for usage errors). With MCP, call `check_quality` with
+finds anything (2 for usage errors): a quality issue below, or another
+warning with a code, such as `rough_scenes` for a rough cut's scenes. With MCP, call `check_quality` with
 the same `source`, `start`, and `end` as `export_video`. Each warning
 starts with a stable code; `quality` in the JSON result has the details:
 

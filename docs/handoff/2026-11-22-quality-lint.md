@@ -48,7 +48,9 @@ first to the last); `--info` reports them all.
 A React check reports the span's rough scenes (`rough_scenes`) as an export
 would, and with `--final` refuses them.
 
-`--check-quality` exits 1 when it reports anything, 0 when not, 2 for usage
+`--check-quality` exits 1 when it reports anything with a stable code (a
+quality issue, or a coded warning such as `rough_scenes` or
+`nondeterministic_render`), 0 when not, 2 for usage
 errors; its `--json` status stays `ok`. It conflicts with an output, frame
 selections, encoder, preset, subtitle, loudness, and loop flags.
 (`--check` already belonged to `--list-components`.)

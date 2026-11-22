@@ -162,10 +162,12 @@ fn checked(run: Run) -> CallToolResult {
     if !run.ok {
         return CallToolResult::structured_error(run.report);
     }
-    let issues = run.report["quality"].as_array().map_or(0, Vec::len);
+    // The quality issues, and the other warnings with a stable code (a
+    // rough scene, nondeterministic rendering).
+    let issues = run.report["codedWarnings"].as_array().map_or(0, Vec::len);
     let mut text = match issues {
-        0 => "OK: no quality issues found\n".to_owned(),
-        found => format!("{found} quality issue(s) found:\n"),
+        0 => "OK: no issues found\n".to_owned(),
+        found => format!("{found} issue(s) found:\n"),
     };
     for warning in run.report["warnings"].as_array().into_iter().flatten() {
         if let Some(warning) = warning.as_str() {

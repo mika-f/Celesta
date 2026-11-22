@@ -225,7 +225,7 @@ async fn check_quality_reports_what_the_pixels_show() {
     assert_eq!(value["quality"][0]["measured"], "pixels");
     assert!(
         text(&result).starts_with(
-            "1 quality issue(s) found:\nwarning: blank_first_frame: frame 0 is one flat color"
+            "1 issue(s) found:\nwarning: blank_first_frame: frame 0 is one flat color"
         ),
         "{}",
         text(&result)

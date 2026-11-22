@@ -90,7 +90,8 @@ or `ERROR:` per frame (`UNSUPPORTED inspection:` for text it cannot measure). Di
 ## Quality warnings
 
 These are warnings, not failures: the export still ran. `--check-quality`
-exits 1 when it reports any. Each starts with its code; `quality` in the
+exits 1 when it reports any, or another coded warning (`rough_scenes`,
+`nondeterministic_render`). Each starts with its code; `quality` in the
 `--json` result has the frames, layer, region, and numbers
 ([verify.md](verify.md#check-flashing-contrast-and-pacing)).
 

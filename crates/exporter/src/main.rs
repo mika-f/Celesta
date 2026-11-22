@@ -116,7 +116,8 @@ contrast (3:1 when large) against what is behind it, shots between hard
 cuts under a second, and a frame 0 of one flat color. Each warning starts
 with its code (flashing, red_flashing, low_contrast_text, short_scene,
 short_shot, blank_first_frame); --json lists them in full under quality.
-It exits 1 when it finds any.
+It exits 1 when it finds any, or any other coded warning (rough_scenes,
+nondeterministic_render).
 
 --inspect evaluates a React entry's frames without rendering pixels, with
 the same text shaping and media probing as an export. It reads one JSON
@@ -156,7 +157,7 @@ struct Cli {
     inspect: bool,
     /// Render every frame (or the --from/--to span) and report flashing,
     /// low-contrast text, short shots and a blank first frame, writing
-    /// nothing; exits 1 when it finds any.
+    /// nothing; exits 1 when it finds any, or another coded warning.
     #[arg(
         long,
         conflicts_with_all = [
@@ -528,11 +529,16 @@ fn main() -> ExitCode {
     }
     let range = export_range(cli.from, cli.to)
         .unwrap_or_else(|error| usage_error(cli.json, ErrorKind::ValueValidation, &error));
-    // A check fails when it finds anything; an export only when it fails.
+    // A check fails when it finds anything with a stable code (a quality
+    // issue, a rough scene, nondeterministic rendering); an export only
+    // when it fails.
     let issues = std::cell::Cell::new(0_usize);
     let export = |on_progress: &mut dyn FnMut(ExportProgress)| {
         job(&cli, &kind, range)?.run(&cancellation, &mut |event| {
-            if matches!(event, ExportProgress::Quality(_)) {
+            if matches!(
+                event,
+                ExportProgress::Quality(_) | ExportProgress::CodedWarning(_)
+            ) {
                 issues.set(issues.get() + 1);
             }
             on_progress(event);
@@ -580,8 +586,8 @@ fn main() -> ExitCode {
             })
         }
         (_, OutputKind::Check) => progress::run_plain(export).map(|()| match issues.get() {
-            0 => eprintln!("check complete: no quality issues found"),
-            found => eprintln!("check complete: {found} quality issue(s) found"),
+            0 => eprintln!("check complete: no issues found"),
+            found => eprintln!("check complete: {found} issue(s) found"),
         }),
         // There is no picture to show progress for, so no dashboard either.
         _ => progress::run_plain(|on_progress| {
