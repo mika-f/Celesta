@@ -609,10 +609,12 @@ fn a_throwing_scene_draws_its_card_only_in_the_preview_when_node_is_available() 
         scene_error.message,
         "Cannot read properties of undefined (reading 'label')"
     );
-    // The stack names the entry's own source, not the temporary bundle.
+    // The stack names the entry's own source, not the temporary bundle (by
+    // file name: on Windows `entry` mixes `/` and `\` where the stack has
+    // `\` only).
     let stack = scene_error.stack.as_deref().unwrap();
-    let source = format!("{}:40:", entry.display());
-    assert!(stack.contains(&source), "{stack}");
+    assert!(stack.contains("with-scene-error.tsx:40:"), "{stack}");
+    assert!(!stack.contains("entry.mjs"), "{stack}");
 
     // Frames before the broken ones still draw, in any order.
     let good = bridge.evaluate_at(Time::new(70, 30), None).unwrap();
