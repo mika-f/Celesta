@@ -1,8 +1,9 @@
-# Export to MP4, MOV, or WebM
+# Export to MP4, MOV, WebM, or GIF
 
 The command-line exporter renders a React composition or a JSON project to
 an H.264 + AAC MP4, a transparent MOV or WebM (see
-[Transparent video](#transparent-video)), or still images: PNG, JPEG, or
+[Transparent video](#transparent-video)), an animated GIF (see
+[Animated GIF](#animated-gif)), or still images: PNG, JPEG, or
 WebP frames and contact sheets (see [Still images](#still-images) and
 [verify.md](verify.md)). Find it
 first: [setup.md](setup.md#find-the-celesta-tools). `Celesta-export` below
@@ -16,6 +17,7 @@ stands for its path.
 - [Export presets](#export-presets)
 - [Transparent video](#transparent-video)
 - [Looping video](#looping-video)
+- [Animated GIF](#animated-gif)
 - [Loudness](#loudness)
 - [Still images](#still-images)
 - [JSON results](#json-results)
@@ -69,11 +71,11 @@ Use `.mp4` when an H.264 encoder is installed. x264-only options such as
 | `--video-option <key=value>` | A setting of the video encoder, read by its type; repeatable. For `ffmpeg-x264/libx264`: `preset=ultrafast` … `veryslow` (default `medium`; encoding speed against file size only, it does not change what is rendered), `crf=0`…`51` (default 18, lower is better quality), `bitDepth=10`. See [Encoders and settings](#encoders-and-settings). For stills, the image encoder's, such as `transparent=true`; see [Still images](#still-images). |
 | `--audio-option <key=value>` | A setting of the audio encoder, such as `bitrate=128000`; repeatable. |
 | `--video-encoder <plugin/id>`, `--audio-encoder <plugin/id>` | An encoder other than the muxer's default; `--audio-encoder none` writes no audio and refuses `--audio-option`, as does a muxer that takes no audio. |
-| `--muxer <plugin/id>` | A muxer other than the one the output's extension picks. One that does not list the output's extension still writes it, with a warning. Stills take it too, with `--video-encoder` and `--video-option` (see [Still images](#still-images)); a video refuses a still muxer (`builtin/…`, or a sequence muxer) with `component_unavailable`. |
+| `--muxer <plugin/id>` | A muxer other than the one the output's extension picks. One that does not list the output's extension still writes it, with a warning. Stills take it too, with `--video-encoder` and `--video-option` (see [Still images](#still-images)); a video refuses a still muxer (`builtin/image`, `builtin/imageSequence`, or any sequence muxer) with `component_unavailable`; `builtin/gifFile` is the one built-in video muxer. |
 | `--list-components [--check]`, `--describe <plugin/id>` | List the installed media components, or show one's settings; take no source or output. See [Encoders and settings](#encoders-and-settings). |
 | `--preset <name>` | An export preset from `export-presets.json`: looked up in `--preset-file`, then the project's file, then the user's. The other component and option flags go over it. x264's preset is a setting of the optional `ffmpeg-x264/libx264`: `--video-encoder ffmpeg-x264/libx264 --video-option preset=<name>`. See [Export presets](#export-presets). |
 | `--preset-file <file>` | An `export-presets.json` to look `--preset` up in first; a missing or invalid one is a `usage` error. |
-| `--loop` | The video plays in a loop (Shorts, TikTok): the AAC sound is encoded to run from its end into its start. Any video output; WebM ignores it. See [Looping video](#looping-video). |
+| `--loop` | The video plays in a loop (Shorts, TikTok): the AAC sound is encoded to run from its end into its start. Any video output; WebM and GIF ignore it (a GIF's repeats are its `plays` setting). See [Looping video](#looping-video). |
 | `--final` | Refuse a React video whose span holds a rough scene (`status: 'rough'` in `<Composition chapters>`) with the error code `rough_scenes`, instead of exporting its placeholder card with a warning. React video only: with a still, a contact sheet, or subtitles alone it is a `usage` error, as MCP `final` is for those and for a JSON project. See [animation.md](animation.md#rough-cut). |
 | `--loudness <l>` | Bring the whole mix to an integrated loudness: LUFS from -70 to -5, `streaming` (-14), or `broadcast` (-23). Video only. See [Loudness](#loudness). |
 | `--true-peak <db>` | The highest true peak `--loudness` may leave, -9 to 0 dBTP (default -1). |
@@ -88,7 +90,7 @@ Use `.mp4` when an H.264 encoder is installed. x264-only options such as
 | `--quality <n>` | 1–100, JPEG and WebP stills only (default 90). Higher is sharper and larger. The same as `--video-option quality=<n>`; give one. |
 
 Video export needs non-zero, even `width` and `height`. The output's
-extension picks a video (`.mp4`, `.mov`, `.webm`) or, with a frame
+extension picks a video (`.mp4`, `.mov`, `.webm`, `.gif`) or, with a frame
 selection, stills (`.png`, `.jpg`, `.jpeg`, `.webp`).
 
 ## Encoders and settings
@@ -401,6 +403,58 @@ Celesta-export --json --loop --react film.tsx film.mp4
   takes `loop: true`.
 - Without `--loop`, the export is unchanged: right for a video that plays
   once, where silence does come before the start.
+
+## Animated GIF
+
+A `.gif` output is an animated GIF, for a short loop in a README or a
+post, written by the built-in encoder `builtin/gif` and muxer `builtin/gifFile` in
+Celesta's own process: no media plugin is needed. A GIF has no sound, so
+the soundtrack is left out (`--loudness` warns that there is no audio).
+
+```sh
+Celesta-export --json --react loop.tsx loop.gif
+Celesta-export --json --react loop.tsx loop.gif \
+  --video-option scale=50 --video-option frameRate=25
+Celesta-export --json --react badge.tsx badge.gif --video-option transparent=true
+Celesta-export --describe builtin/gif
+```
+
+| Key | Values | Default |
+| --- | --- | --- |
+| `frameRate` | `source`, `50`, `30`, `25`, `24`, `20`, `15`, `12`, `10`, `5` | `source`: every frame up to 50 fps, every 2nd (3rd, …) above |
+| `scale` | 1–100 (%) | 100 |
+| `palette` | `global`, `frame` | `global` |
+| `colors` | 2–256 (one is kept for transparency) | 256 |
+| `dither` | `true`, `false` (Floyd–Steinberg) | `true` |
+| `plays` | 0–65536; 0 is forever, 1 plays once | 0 |
+| `transparent` | `true`, `false` | `false` |
+
+- Delays are whole hundredths, rounded on each frame's time (30 fps is 3,
+  4, 3, … and the GIF keeps the composition's length). No frame is kept
+  under 2 hundredths after the one before: browsers play shorter frames at
+  10. So 60 fps keeps every second frame by default.
+- Identical frames are folded into the one before (which lasts longer), and
+  each frame stores only the rectangle that changed; a still background
+  costs almost nothing. Colours that fit the palette are kept exactly;
+  otherwise NeuQuant learns a palette.
+- `palette=global` (one palette, steady colours, smallest files) holds every
+  kept frame in memory until the end; `palette=frame` writes each frame as
+  it comes. Prefer `frame` for a long or large GIF, or scenes whose colours
+  change.
+- `transparent=true`: what nothing draws on is transparent, at one bit
+  (alpha under 128 is clear, the rest opaque; soft edges come out hard).
+  Each frame then clears the one before and is stored whole.
+- Warnings in the result's `warnings`: a GIF over 30 s or over 100 million
+  pixels across its kept frames ("will be large and slow to write"), and a
+  global palette holding over 1 GB. Lower `scale` or `frameRate`, or use
+  `--from`/`--to`.
+- `--loop` changes nothing for a GIF; `plays` sets the repeats. Presets
+  take it as any output (`"muxer": "builtin/gifFile"`, `"video": { "options":
+  { "scale": 50 } }`), and the `--json` result's video is
+  `{"component": "builtin/gif", "codec": "gif"}`. MCP's `export_video`
+  and `@celesta.studio/exporter` take `.gif` outputs and the same options.
+- `--frame 0 out.gif` is still refused: a single frame is a PNG. Animated
+  WebP and APNG are not written yet.
 
 ## Loudness
 

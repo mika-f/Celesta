@@ -68,7 +68,9 @@ default encoders, from the installed media plugins. With the media plugins
 that come with Celesta, .mp4 is H.264 with AAC (H.264 from the system
 encoder on macOS/Windows, or from an optional plugin), .mov is ProRes 4444
 with 24-bit PCM audio, and .webm is VP9 with Opus. MOV and WebM keep
-transparency where nothing is drawn (straight alpha, BT.709). --muxer, --video-encoder and --audio-encoder (none for no audio)
+transparency where nothing is drawn (straight alpha, BT.709). .gif is an
+animated GIF without sound, built in (builtin/gif and builtin/gifFile; --describe builtin/gif
+for its frame rate, scale, palette, dithering, plays and transparency). --muxer, --video-encoder and --audio-encoder (none for no audio)
 choose components by <plugin>/<component>, and --video-option and
 --audio-option set an encoder's settings as KEY=VALUE, repeatable.
 --list-components shows what is installed (with --check, whether each
@@ -110,8 +112,8 @@ request per stdin line, each a composition time (with openEnd, a time past
 the end, evaluated as if the video went on), and answers each with one JSON
 line on stdout; skills/celesta/scripts/inspect.mjs --native drives it.";
 
-/// Exports a Celesta project or React composition to MP4, MOV or WebM video or
-/// PNG, JPEG or WebP stills.
+/// Exports a Celesta project or React composition to MP4, MOV or WebM video,
+/// an animated GIF, or PNG, JPEG or WebP stills.
 #[derive(Parser)]
 #[command(
     name = "celesta-exporter",

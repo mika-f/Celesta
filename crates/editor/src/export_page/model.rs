@@ -247,11 +247,20 @@ impl ExportModel {
             .components()
             .into_iter()
             .filter(|info| info.kind != ComponentKind::Decoder)
-            // Built-in and sequence muxers write stills, not a video.
+            // Sequence muxers and the built-in still muxers write stills,
+            // not a video.
             .filter(|info| info.kind != ComponentKind::Muxer || serves_video(info))
             .collect();
-        // Stable: search order, then manifest order, within an origin.
-        components.sort_by_key(|info| rank(&registry.plugins()[info.plugin]));
+        // Stable: search order, then manifest order, within an origin. The
+        // built-in GIF muxer comes after the plugins' video containers, so
+        // it is never the first default (`default_outputs`) or the top of
+        // the Container list.
+        components.sort_by_key(|info| {
+            (
+                info.kind == ComponentKind::Muxer && info.origin == MediaOrigin::BuiltIn,
+                rank(&registry.plugins()[info.plugin]),
+            )
+        });
         let described = components
             .iter()
             .map(|info| (info.plugin, Described::Checking))
@@ -1303,9 +1312,19 @@ mod tests {
     fn still_muxers_are_not_containers() {
         let registry = celesta_exporter::with_builtin(vec![bundled()]);
         let model = model(&registry);
+        // The built-in GIF muxer writes an animation; it comes after the
+        // plugins' containers, and so does its extension among the defaults.
         assert_eq!(
             labels(&model.muxer_options()),
-            ["MP4 · Bundled", "IVF · Bundled"]
+            ["MP4 · Bundled", "IVF · Bundled", "GIF · Built-in"]
+        );
+        assert_eq!(
+            model.default_outputs(),
+            [
+                PathBuf::from("export.mp4"),
+                PathBuf::from("export.ivf"),
+                PathBuf::from("export.gif")
+            ]
         );
     }
 

@@ -3,7 +3,7 @@
 //! the session's [`celesta_media::Color`]: PNG and WebP keep sRGB RGB(A),
 //! JPEG is JFIF (full-range BT.601, as the `image` crate writes it).
 
-use crate::{ImageComponents, JPEG, PNG, WEBP};
+use crate::{GIF, ImageComponents, JPEG, PNG, WEBP, animated_gif};
 use celesta_media::settings::validate;
 use celesta_media::{
     Encoded, InvalidSetting, MediaError, Packet, PixelFormat, SelectOption, SessionId,
@@ -32,14 +32,14 @@ pub(crate) fn input_formats(encoder: &str) -> &'static [PixelFormat] {
     }
 }
 
-fn option(value: &str, label: &str) -> SelectOption {
+pub(crate) fn option(value: &str, label: &str) -> SelectOption {
     SelectOption {
         value: value.to_owned(),
         label: label.to_owned(),
     }
 }
 
-fn field(
+pub(crate) fn field(
     key: &str,
     label: &str,
     default: SettingValue,
@@ -74,7 +74,7 @@ fn quality() -> SettingField {
     )
 }
 
-fn transparent() -> SettingField {
+pub(crate) fn transparent() -> SettingField {
     field(
         "transparent",
         "Transparent background",
@@ -134,6 +134,7 @@ pub(crate) fn settings(encoder: &str) -> Vec<SettingField> {
                 transparent(),
             ]
         }
+        GIF => animated_gif::settings(),
         _ => Vec::new(),
     }
 }
@@ -168,7 +169,7 @@ pub(crate) struct Session {
     config_due: bool,
 }
 
-fn invalid_setting(key: &str, message: impl Into<String>) -> MediaError {
+pub(crate) fn invalid_setting(key: &str, message: impl Into<String>) -> MediaError {
     MediaError::InvalidSettings {
         key: key.to_owned(),
         message: message.into(),
@@ -363,6 +364,16 @@ impl VideoEncoder for ImageComponents {
         &mut self,
         request: &VideoEncoderRequest<'_>,
     ) -> Result<VideoEncoderOpened, MediaError> {
+        if request.component == GIF {
+            let (open, alpha) = animated_gif::EncoderSession::open(request)?;
+            let session = self.next_session();
+            self.gif_encoders.insert(session, open);
+            return Ok(VideoEncoderOpened {
+                session,
+                input: PixelFormat::Rgba8,
+                alpha,
+            });
+        }
         let (format, input, alpha) = open(request)?;
         let session = self.next_session();
         self.encoders.insert(
@@ -389,6 +400,9 @@ impl VideoEncoder for ImageComponents {
         pts: i64,
         frame: Vec<u8>,
     ) -> Result<Encoded, MediaError> {
+        if let Some(open) = self.gif_encoders.get_mut(&session) {
+            return open.encode(pts, frame);
+        }
         let open = self
             .encoders
             .get_mut(&session)
@@ -412,6 +426,9 @@ impl VideoEncoder for ImageComponents {
     }
 
     fn finish_video(&mut self, session: SessionId) -> Result<Encoded, MediaError> {
+        if let Some(mut open) = self.gif_encoders.remove(&session) {
+            return open.finish();
+        }
         self.encoders
             .remove(&session)
             .map(|_| Encoded::default())
@@ -420,6 +437,7 @@ impl VideoEncoder for ImageComponents {
 
     fn abort_video(&mut self, session: SessionId) {
         self.encoders.remove(&session);
+        self.gif_encoders.remove(&session);
     }
 }
 
@@ -787,9 +805,14 @@ mod tests {
         provider.abort_video(a.session);
         assert!(provider.finish_video(a.session).is_err());
         assert!(matches!(
-            open_sized(&mut provider, "gif", &Settings::new(), (1, 1), &BOTH),
+            open_sized(&mut provider, "tiff", &Settings::new(), (1, 1), &BOTH),
             Err(MediaError::Codec(_))
         ));
+        // The GIF encoder counts from the same counter.
+        let gif = open_sized(&mut provider, "gif", &Settings::new(), (1, 1), &BOTH).unwrap();
+        assert_eq!(gif.session, SessionId(3));
+        provider.abort_video(gif.session);
+        assert!(provider.finish_video(gif.session).is_err());
         let unknown = settings(&[("speed", SettingValue::Number(1.0))]);
         assert!(matches!(
             open_sized(&mut provider, "png", &unknown, (1, 1), &BOTH),

@@ -231,6 +231,14 @@ impl Exporter {
             return Err(ExportError::EmptyTimeline);
         }
         let window = self.project_window(project, duration, full_frame_count)?;
+        for warning in session.output_warnings(
+            project.settings.width,
+            project.settings.height,
+            project.settings.frame_rate,
+            window.frames,
+        ) {
+            progress(ExportProgress::Warning(warning));
+        }
 
         let frame_rate = project.settings.frame_rate;
         let mut renderer = self.export_renderer(asset_root, frame_rate, cancellation)?;

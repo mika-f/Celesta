@@ -22,7 +22,7 @@ keep their chosen format, and show their error instead.
 Choose **Export** in the title bar, or **File → Export…** (`⌘ Shift E`, `Ctrl Shift E`), to open the export page. It replaces the Assets panel on the left. The viewer, the right dock, and the timeline stay where they are, so you can keep looking at the composition while you choose. To leave the page, choose **Export** again, press the panel's X, or press Escape. What you chose is kept. From top to bottom, the page has:
 
 - **Preset**: **None** for Celesta's defaults, then the project's presets under **This project** and yours under **My presets** (see Export presets below).
-- **Container**: the muxer that writes the file, such as **MP4 · FFmpeg** for H.264 video, or **QuickTime · FFmpeg** or **WebM · FFmpeg** for transparent video (see Transparent video below).
+- **Container**: the muxer that writes the file, such as **MP4 · FFmpeg** for H.264 video, **QuickTime · FFmpeg** or **WebM · FFmpeg** for transparent video (see Transparent video below), or **GIF · Built-in** for an animated GIF (see Animated GIF below).
 - **Range**: **Whole composition**, or the start and end you set with In and Out on the timeline (`I` and `O`). **Clear** exports the whole composition again.
 - A **Video** section with the video encoder and its settings, grouped as the encoder groups them. Settings that only apply to another choice are hidden until you make it, and the rarely needed ones are under **Advanced**, closed at first.
 - An **Audio** section with the audio encoder, or **None** for a video without sound, and its settings, ending with **Loudness**: **Off**, **Streaming (-14 LUFS)**, or **Broadcast (-23 LUFS)**, to bring the soundtrack to a loudness target (see Loudness for streaming and broadcast below). The choice stays until you quit the app. When the export has no audio, because the audio encoder is **None** or the container takes no audio, **Loudness** is disabled, with a note that no audio is exported.
@@ -60,7 +60,7 @@ Use PowerShell. Replace `C:\path\to\Celesta` with your installed or extracted Ce
 :::
 ::::
 
-The output's extension picks the kind of file: `.mp4` for H.264 video with AAC audio, `.mov` or `.webm` for transparent video (see Transparent video below), or `.png`, `.jpg`, or `.webp` for still frames (see Still frames and contact sheets below). Add `--overwrite` to replace an existing output file. Use `--from` and `--to` to select a time range:
+The output's extension picks the kind of file: `.mp4` for H.264 video with AAC audio, `.mov` or `.webm` for transparent video (see Transparent video below), `.gif` for an animated GIF (see Animated GIF below), or `.png`, `.jpg`, or `.webp` for still frames (see Still frames and contact sheets below). Add `--overwrite` to replace an existing output file. Use `--from` and `--to` to select a time range:
 
 ::::tabs[Exporter platform]{default="macOS"}
 :::tab[macOS]
@@ -358,6 +358,36 @@ Add `--loudness` to bring the soundtrack to a target: a number of LUFS from -70 
 ::::
 
 The loudness is measured and set on the soundtrack before it is encoded. A `.mov`'s PCM keeps it exactly. AAC (`.mp4`) and Opus (`.webm`) move the loudness by about a tenth of an LU and the true peak by up to about half a dB either way, so the -1 dBTP default can read about -0.5 dBTP in the file; give `--true-peak -2` for more headroom. In the app, the export page's **Loudness** sets the streaming or broadcast target with the -1 dBTP limiter. For another target, ceiling, or `--peak-handling lower`, use the command line, the MCP `export_video` tool, or `@celesta.studio/exporter`.
+
+## Animated GIF
+
+A `.gif` output is an animated GIF, for a short loop in a README or a post. Celesta writes it itself, with the built-in encoder `builtin/gif` and muxer `builtin/gifFile`, so it needs no media plugin. A GIF has no sound: the soundtrack is left out, and `--loudness` warns that there is no audio. In the app, choose **GIF · Built-in** as the export page's **Container**; its settings are in the **Video** section.
+
+```sh
+Celesta-export --react loop.tsx loop.gif
+Celesta-export --react loop.tsx loop.gif --video-option scale=50 --video-option frameRate=25
+Celesta-export --react badge.tsx badge.gif --video-option transparent=true
+```
+
+| Setting | Values | Default |
+| --- | --- | --- |
+| `frameRate` | `source`, `50`, `30`, `25`, `24`, `20`, `15`, `12`, `10`, `5` | `source`: every frame up to 50 fps, every second (or third, …) frame above it |
+| `scale` | 1–100 (%) | 100 |
+| `palette` | `global` (one for the whole GIF), `frame` (one per frame) | `global` |
+| `colors` | 2–256 | 256, one of them kept for transparency |
+| `dither` | `true`, `false` | `true` (Floyd–Steinberg) |
+| `plays` | 0–65536; 0 plays forever | 0 |
+| `transparent` | `true`, `false` | `false` |
+
+- GIF times frames in hundredths of a second, and browsers play a frame shorter than 2 hundredths at 10, so a GIF plays at 50 fps at most, and no frame is kept less than 2 hundredths after the one before. Delays are rounded on each frame's time, so 30 fps alternates 3 and 4 hundredths and the GIF keeps the composition's length.
+- A frame identical to the one before is folded into it, which then lasts longer, and each frame stores only the rectangle that changed. A still background costs almost nothing.
+- A frame with no more colours than the palette holds keeps them exactly; otherwise the palette is learned from the pixels (NeuQuant). `palette=global` keeps colours steady from frame to frame and makes the smallest files, but holds every frame in memory until the end; `palette=frame` writes each frame as it comes and suits scenes whose colours change.
+- `scale` sets the GIF's size from the composition's (rendered at full size, then scaled down); a GIF holds at most 65535 pixels on a side.
+- `transparent=true` keeps what nothing draws on transparent. GIF transparency is one bit: a pixel with alpha under 128 is transparent, the rest opaque, so soft edges come out hard. Each frame then clears the one before and is stored whole.
+- `--loop` changes nothing for a GIF, which has no sound; whether it repeats is `plays`.
+- The export warns when the GIF will be long or large (over 30 seconds, or over 100 million pixels across its frames) and when a global palette would hold over 1 GB of frames. Lower `scale` or `frameRate`, or export a span with `--from` and `--to`.
+- Presets take it like any other output: `{ "name": "README loop", "muxer": "builtin/gifFile", "video": { "options": { "scale": 50, "frameRate": "25" } } }`. `--describe builtin/gif` lists the settings, and the `--json` result's video is `{"component": "builtin/gif", "codec": "gif"}`.
+- Animated WebP and APNG are not written yet: `.webp` and `.png` still need a frame selection.
 
 ## Transparent video
 

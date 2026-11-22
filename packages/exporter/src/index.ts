@@ -19,7 +19,7 @@ export type { ResolveExporterOptions } from './resolve.js';
 export { CANCEL_TIMEOUT_MS } from './run.js';
 export type * from './types.js';
 
-/** Exports a video (the muxers and encoders installed: MP4, MOV and WebM by default), or with only `subtitles`, just the subtitle files. */
+/** Exports a video (the muxers and encoders installed: MP4, MOV and WebM by default, and the built-in animated GIF), or with only `subtitles`, just the subtitle files. */
 export async function exportVideo(options: VideoOptions): Promise<ExportResult> {
   return result(await runExporter(videoArgs(options), options));
 }

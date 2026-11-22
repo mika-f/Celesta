@@ -11,8 +11,14 @@
 //! (`docs/superpowers/specs/2026-11-08-media-components-design.md`, Stills
 //! and sequences).
 
+mod animated_gif;
 mod encoders;
 mod muxers;
+
+pub use animated_gif::{
+    GIF, GIF_FILE, GifEstimate, MAX_FRAME_RATE as GIF_MAX_FRAME_RATE, estimate as gif_estimate,
+    warnings as gif_warnings,
+};
 
 use celesta_media::{
     ComponentDescription, ComponentKind, MediaError, MediaProvider, Muxer, RegisteredPlugin,
@@ -42,7 +48,13 @@ pub const IMAGE: &str = "image";
 /// The id of the muxer that writes a file per frame from a pattern.
 pub const IMAGE_SEQUENCE: &str = "imageSequence";
 
-/// The extensions both muxers write.
+/// Whether the built-in muxer `id` writes a video (an animation) rather
+/// than still images: `gifFile`.
+pub fn muxer_writes_video(id: &str) -> bool {
+    id == GIF_FILE
+}
+
+/// The extensions both still muxers write.
 pub const EXTENSIONS: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
 
 /// The codec families both muxers take, which are the encoders' ids.
@@ -82,11 +94,18 @@ pub fn manifest() -> MediaManifest {
             encoder(PNG, "PNG"),
             encoder(JPEG, "JPEG"),
             encoder(WEBP, "WebP"),
+            encoder(GIF, "GIF"),
         ],
         audio_encoders: Vec::new(),
         muxers: vec![
             muxer(IMAGE, "Image", false),
             muxer(IMAGE_SEQUENCE, "Image sequence", true),
+            MediaMuxerEntry {
+                extensions: vec![GIF.to_owned()],
+                video: vec![GIF.to_owned()],
+                default_video: Some(GIF.to_owned()),
+                ..muxer(GIF_FILE, "GIF", false)
+            },
         ],
     }
 }
@@ -113,6 +132,8 @@ pub fn registered() -> RegisteredPlugin {
 pub struct ImageComponents {
     encoders: HashMap<SessionId, encoders::Session>,
     muxers: HashMap<SessionId, muxers::Session>,
+    gif_encoders: HashMap<SessionId, animated_gif::EncoderSession>,
+    gif_muxers: HashMap<SessionId, animated_gif::MuxerSession>,
     /// The last session number given, one count for every kind.
     last: u64,
 }
@@ -146,8 +167,10 @@ impl MediaProvider for ImageComponents {
             encoder(PNG),
             encoder(JPEG),
             encoder(WEBP),
+            encoder(GIF),
             component(ComponentKind::Muxer, IMAGE),
             component(ComponentKind::Muxer, IMAGE_SEQUENCE),
+            component(ComponentKind::Muxer, GIF_FILE),
         ])
     }
 
@@ -213,8 +236,10 @@ mod tests {
                 (ComponentKind::VideoEncoder, "png"),
                 (ComponentKind::VideoEncoder, "jpeg"),
                 (ComponentKind::VideoEncoder, "webp"),
+                (ComponentKind::VideoEncoder, "gif"),
                 (ComponentKind::Muxer, "image"),
                 (ComponentKind::Muxer, "imageSequence"),
+                (ComponentKind::Muxer, "gifFile"),
             ]
         );
         let find = |id: &str| described.iter().find(|c| c.id == id).unwrap();
@@ -325,6 +350,28 @@ mod tests {
         );
         assert_eq!(find("jpeg").input_formats, [PixelFormat::Rgba8]);
         assert_eq!(find("webp").input_formats, [PixelFormat::Rgba8]);
+        let gif = described
+            .iter()
+            .find(|c| c.kind == ComponentKind::VideoEncoder && c.id == "gif")
+            .unwrap();
+        assert_eq!(gif.input_formats, [PixelFormat::Rgba8]);
+        let gif_keys: Vec<(&str, &SettingValue)> = gif
+            .settings
+            .iter()
+            .map(|field| (field.key.as_str(), &field.default))
+            .collect();
+        assert_eq!(
+            gif_keys,
+            [
+                ("frameRate", &text("source")),
+                ("scale", &SettingValue::Number(100.0)),
+                ("palette", &text("global")),
+                ("colors", &SettingValue::Number(256.0)),
+                ("dither", &SettingValue::Boolean(true)),
+                ("plays", &SettingValue::Number(0.0)),
+                ("transparent", &SettingValue::Boolean(false)),
+            ]
+        );
         for muxer in ["image", "imageSequence"] {
             assert!(find(muxer).settings.is_empty());
             assert!(find(muxer).input_formats.is_empty());
@@ -352,6 +399,7 @@ mod tests {
                 ("png", "PNG", &["png".to_owned()][..]),
                 ("jpeg", "JPEG", &["jpeg".to_owned()][..]),
                 ("webp", "WebP", &["webp".to_owned()][..]),
+                ("gif", "GIF", &["gif".to_owned()][..]),
             ]
         );
         let names: Vec<(&str, &str, bool)> = media
@@ -363,10 +411,18 @@ mod tests {
             names,
             [
                 ("image", "Image", false),
-                ("imageSequence", "Image sequence", true)
+                ("imageSequence", "Image sequence", true),
+                ("gifFile", "GIF", false),
             ]
         );
-        for muxer in &media.muxers {
+        let gif = &media.muxers[2];
+        assert_eq!(gif.extensions, ["gif"]);
+        assert_eq!(gif.video, ["gif"]);
+        assert_eq!(gif.default_video.as_deref(), Some("gif"));
+        assert_eq!(gif.audio, None);
+        assert!(muxer_writes_video("gifFile") && !muxer_writes_video("gif"));
+        assert!(!muxer_writes_video("image") && !muxer_writes_video("imageSequence"));
+        for muxer in &media.muxers[..2] {
             assert_eq!(muxer.extensions, ["png", "jpg", "jpeg", "webp"]);
             assert_eq!(muxer.video, ["png", "jpeg", "webp"]);
             assert_eq!(muxer.default_video.as_deref(), Some("png"));
@@ -379,7 +435,7 @@ mod tests {
             celesta_media::ProviderUse::Describe,
         )
         .unwrap();
-        assert_eq!(provider.describe().unwrap().len(), 5);
+        assert_eq!(provider.describe().unwrap().len(), 7);
         assert!(provider.video_encoder().is_some() && provider.muxer().is_some());
         assert!(provider.decoder().is_none() && provider.audio_encoder().is_none());
         assert!(provider.pipeline().is_none());

@@ -1,6 +1,6 @@
 ---
 name: celesta
-description: Write, edit, check, and export Celesta videos. Covers React compositions (.tsx/.jsx files that import @celesta.studio/react or another @celesta.studio/* package), .celesta.json project timelines, starting a project (--init), animation, shapes and diagrams, text and fonts (measuring, fitting, language, Japanese line breaking), syntax-highlighted code, images/video/audio, character dialogue with subtitles, lip sync, and blinking, SRT/WebVTT subtitle files in and out (image or PSD portraits, custom subtitle bands), project properties, registered components, seamless loops for Shorts and TikTok, PNG frame and contact-sheet checks, and MP4 export with the Celesta command-line exporter. Use whenever a file imports @celesta.studio/*, a *.celesta.json file is involved, or the user asks to make, change, preview, debug, or render a video with Celesta, even if they only say "the video" or "the scene".
+description: Write, edit, check, and export Celesta videos. Covers React compositions (.tsx/.jsx files that import @celesta.studio/react or another @celesta.studio/* package), .celesta.json project timelines, starting a project (--init), animation, shapes and diagrams, text and fonts (measuring, fitting, language, Japanese line breaking), syntax-highlighted code, images/video/audio, character dialogue with subtitles, lip sync, and blinking, SRT/WebVTT subtitle files in and out (image or PSD portraits, custom subtitle bands), project properties, registered components, seamless loops for Shorts and TikTok, PNG frame and contact-sheet checks, and MP4 and animated GIF export with the Celesta command-line exporter. Use whenever a file imports @celesta.studio/*, a *.celesta.json file is involved, or the user asks to make, change, preview, debug, or render a video with Celesta, even if they only say "the video" or "the scene".
 ---
 
 # Celesta
@@ -189,7 +189,9 @@ produces a video that differs between preview and export.
    - Export video only for audio or the final file. Use MOV/ProRes with the
      standard plugin; MP4 needs an installed H.264 encoder (native on macOS/Windows
      or the `ffmpeg-x264` download). Check `--list-components --check` first
-     ([export.md](references/export.md)).
+     ([export.md](references/export.md)). A `.gif` output is a built-in
+     animated GIF without sound, for short loops
+     ([export.md](references/export.md#animated-gif)).
 5. **Report back.** Tell the user which file to open (File → Open…) or
    reload (JSON projects need File → Reload; React entries reload on save;
    an overwritten image file shows from the next frame the preview draws),

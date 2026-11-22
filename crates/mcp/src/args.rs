@@ -147,8 +147,8 @@ pub struct ExportVideoArgs {
     /// The video to write: its extension picks the muxer from the installed
     /// media plugins (with those that come with Celesta, `.mov` ProRes 4444
     /// with alpha, `.webm` VP9 with alpha, and `.mp4` H.264/AAC, which needs
-    /// a native H.264 encoder or an optional H.264 plugin) unless `muxer`
-    /// names one. Leave it out to write only the `subtitles` files, which
+    /// a native H.264 encoder or an optional H.264 plugin; `.gif`, an
+    /// animated GIF without sound, is built in) unless `muxer` names one. Leave it out to write only the `subtitles` files, which
     /// evaluates the frames without rendering or encoding them.
     output: Option<PathBuf>,
     /// Replace `output` if it exists.

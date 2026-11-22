@@ -721,6 +721,33 @@ impl ExportSession {
         formats.and_then(|formats| ring_layout(formats, frame.0, frame.1))
     }
 
+    /// The warnings the resolved output gives for `frames` frames of
+    /// `width`x`height` at `frame_rate`: a GIF's when it is long, large, or
+    /// holds too much in memory ([`celesta_media_image::gif_warnings`]).
+    pub(crate) fn output_warnings(
+        &self,
+        width: u32,
+        height: u32,
+        frame_rate: Rational,
+        frames: u64,
+    ) -> Vec<String> {
+        match &self.resolved {
+            Some(resolved)
+                if resolved.video.reference.plugin == celesta_plugin_host::RESERVED_PLUGIN_ID
+                    && resolved.video.reference.component == celesta_media_image::GIF =>
+            {
+                celesta_media_image::gif_warnings(
+                    &resolved.video.settings,
+                    width,
+                    height,
+                    frame_rate,
+                    frames,
+                )
+            }
+            _ => Vec::new(),
+        }
+    }
+
     /// Whether the resolved output has an audio track to encode.
     pub(crate) fn encodes_audio(&self) -> bool {
         self.resolved
@@ -3515,6 +3542,73 @@ mod tests {
             }),
             "celesta: timing: render 4.50 s for 300 frames; mix none; staged peak 12.6 MB; \
              spilled no; frames in process 1 deep"
+        );
+    }
+
+    #[test]
+    fn a_gif_resolves_to_the_built_in_and_warns_when_large() {
+        let registry = crate::media::with_builtin(Vec::new());
+        let mut session = ExportSession::start(registry, &ExportCancellation::default());
+        let option =
+            |key: &str, value: &str| (key.to_owned(), crate::SettingInput::Text(value.to_owned()));
+        let choice = OutputChoice {
+            video: crate::EncoderChoice {
+                component: None,
+                options: [option("palette", "frame")].into(),
+            },
+            ..OutputChoice::default()
+        };
+        let (plan, warnings) = session
+            .resolve(
+                &choice,
+                &PresetLookup::default(),
+                Path::new("loop.gif"),
+                (1920, 1080),
+            )
+            .unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(plan.muxer.to_string(), "builtin/gifFile");
+        assert_eq!(plan.video.component.to_string(), "builtin/gif");
+        assert!(plan.audio.is_none());
+        assert!(!session.encodes_audio());
+        let thirty = Rational::new(30, 1);
+        assert!(session.output_warnings(640, 360, thirty, 90).is_empty());
+        let warned = session.output_warnings(1920, 1080, thirty, 1800);
+        assert_eq!(warned.len(), 1, "{warned:?}");
+        assert!(warned[0].contains("will be large"), "{warned:?}");
+
+        // Its settings are checked as any encoder's.
+        let bad = OutputChoice {
+            video: crate::EncoderChoice {
+                component: None,
+                options: [option("palette", "none")].into(),
+            },
+            ..OutputChoice::default()
+        };
+        let mut session = ExportSession::start(
+            crate::media::with_builtin(Vec::new()),
+            &ExportCancellation::default(),
+        );
+        let error = session
+            .resolve(
+                &bad,
+                &PresetLookup::default(),
+                Path::new("loop.gif"),
+                (2, 2),
+            )
+            .unwrap_err();
+        assert!(
+            matches!(&error, ExportError::InvalidOption { key, .. } if key == "palette"),
+            "{error:?}"
+        );
+        // Other outputs give no GIF warnings.
+        assert!(
+            ExportSession::start(
+                crate::media::with_builtin(Vec::new()),
+                &ExportCancellation::default()
+            )
+            .output_warnings(1920, 1080, thirty, 100_000)
+            .is_empty()
         );
     }
 }
