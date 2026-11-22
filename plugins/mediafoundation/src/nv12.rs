@@ -2,6 +2,10 @@ use crate::annexb::{Codec, nal_units, record_units};
 use crate::params::{avc_sps_format, hevc_sps_info};
 use celesta_media::{DecodedColor, DecodedMatrix, DecodedRange, MediaError, VideoColor};
 
+pub(crate) fn even_size(width: u32, height: u32) -> bool {
+    width != 0 && height != 0 && width.is_multiple_of(2) && height.is_multiple_of(2)
+}
+
 fn units(codec: Codec, header: &[u8]) -> Vec<&[u8]> {
     if header.first() == Some(&1) {
         record_units(codec, header).unwrap_or_default()
@@ -145,6 +149,15 @@ impl Crop {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_eligibility_requires_nonzero_even_display_dimensions() {
+        assert!(even_size(64, 36));
+        assert!(even_size(1920, 1080));
+        for (width, height) in [(63, 35), (63, 36), (64, 35), (0, 36), (64, 0), (0, 0)] {
+            assert!(!even_size(width, height));
+        }
+    }
 
     #[test]
     fn aligned_1088_surface_crops_to_1080_and_strips_pitch() {

@@ -50,18 +50,19 @@ use std::mem::ManuallyDrop;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use windows::Win32::Media::MediaFoundation::{
-    IMF2DBuffer, IMF2DBuffer2, IMFMediaType, IMFSample, IMFSourceReader, MF_E_INVALIDSTREAMNUMBER,
-    MF_MT_ALPHA_MODE, MF_MT_AUDIO_BITS_PER_SAMPLE, MF_MT_AUDIO_NUM_CHANNELS,
-    MF_MT_AUDIO_SAMPLES_PER_SECOND, MF_MT_DEFAULT_STRIDE, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE,
-    MF_MT_GEOMETRIC_APERTURE, MF_MT_MAJOR_TYPE, MF_MT_MINIMUM_DISPLAY_APERTURE,
-    MF_MT_MPEG_SEQUENCE_HEADER, MF_MT_SUBTYPE, MF_MT_TRANSFER_FUNCTION, MF_MT_VIDEO_CHROMA_SITING,
-    MF_MT_VIDEO_NOMINAL_RANGE, MF_MT_VIDEO_PRIMARIES, MF_MT_VIDEO_ROTATION, MF_MT_YUV_MATRIX,
-    MF_PD_DURATION, MF_SOURCE_READER_ALL_STREAMS,
-    MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING, MF_SOURCE_READER_MEDIASOURCE,
-    MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED, MF_SOURCE_READERF_ENDOFSTREAM,
-    MF_SOURCE_READERF_ERROR, MF2DBuffer_LockFlags_Read, MFAudioFormat_Float, MFAudioFormat_PCM,
-    MFCreateAttributes, MFCreateMediaType, MFCreateSourceReaderFromURL, MFMediaType_Audio,
-    MFMediaType_Video, MFVideoArea, MFVideoFormat_NV12, MFVideoFormat_RGB32,
+    IMF2DBuffer, IMF2DBuffer2, IMFMediaType, IMFSample, IMFSourceReader, IMFSourceReaderEx,
+    MF_E_INVALIDSTREAMNUMBER, MF_MT_ALPHA_MODE, MF_MT_AUDIO_BITS_PER_SAMPLE,
+    MF_MT_AUDIO_NUM_CHANNELS, MF_MT_AUDIO_SAMPLES_PER_SECOND, MF_MT_DEFAULT_STRIDE,
+    MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE, MF_MT_GEOMETRIC_APERTURE, MF_MT_MAJOR_TYPE,
+    MF_MT_MINIMUM_DISPLAY_APERTURE, MF_MT_MPEG_SEQUENCE_HEADER, MF_MT_SUBTYPE,
+    MF_MT_TRANSFER_FUNCTION, MF_MT_VIDEO_CHROMA_SITING, MF_MT_VIDEO_NOMINAL_RANGE,
+    MF_MT_VIDEO_PRIMARIES, MF_MT_VIDEO_ROTATION, MF_MT_YUV_MATRIX, MF_PD_DURATION,
+    MF_SOURCE_READER_ALL_STREAMS, MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING,
+    MF_SOURCE_READER_MEDIASOURCE, MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED,
+    MF_SOURCE_READERF_ENDOFSTREAM, MF_SOURCE_READERF_ERROR, MF2DBuffer_LockFlags_Read,
+    MFAudioFormat_Float, MFAudioFormat_PCM, MFCreateAttributes, MFCreateMediaType,
+    MFCreateSourceReaderFromURL, MFMediaType_Audio, MFMediaType_Video, MFVideoArea,
+    MFVideoFormat_NV12, MFVideoFormat_RGB32,
 };
 use windows::Win32::System::Com::StructuredStorage::{
     PROPVARIANT, PROPVARIANT_0, PROPVARIANT_0_0, PROPVARIANT_0_0_0, PropVariantClear,
@@ -484,7 +485,7 @@ fn native_color(native: &IMFMediaType) -> Option<DecodedColor> {
         return None;
     }
     let (width, height) = pair_of(native, &MF_MT_FRAME_SIZE)?;
-    if width == 0 || height == 0 || !width.is_multiple_of(2) || !height.is_multiple_of(2) {
+    if !crate::nv12::even_size(width, height) {
         return None;
     }
     if let Some((left, top, w, h)) = aperture(native).ok()? {
@@ -551,12 +552,75 @@ fn color_attributes(color: DecodedColor) -> [(GUID, u32); 3] {
     ]
 }
 
+fn trace_type(label: &str, media_type: &IMFMediaType) {
+    eprintln!(
+        "MFTRACE {label}: subtype={:?} size={:?} stride={:?} minimum={:?} geometric={:?} matrix={:?} range={:?} chroma={:?}",
+        guid_of(media_type, &MF_MT_SUBTYPE),
+        pair_of(media_type, &MF_MT_FRAME_SIZE),
+        u32_of(media_type, &MF_MT_DEFAULT_STRIDE),
+        blob(media_type, &MF_MT_MINIMUM_DISPLAY_APERTURE),
+        blob(media_type, &MF_MT_GEOMETRIC_APERTURE),
+        u32_of(media_type, &MF_MT_YUV_MATRIX),
+        u32_of(media_type, &MF_MT_VIDEO_NOMINAL_RANGE),
+        u32_of(media_type, &MF_MT_VIDEO_CHROMA_SITING)
+    );
+}
+
+fn trace_reader(reader: &IMFSourceReader, stream: u32, label: &str) {
+    // SAFETY: diagnostic reads of live COM interfaces and local out pointers.
+    unsafe {
+        if let Ok(native) = reader.GetNativeMediaType(stream, 0) {
+            trace_type(&format!("{label} source"), &native);
+        }
+        if let Ok(current) = reader.GetCurrentMediaType(stream) {
+            trace_type(&format!("{label} reader"), &current);
+        }
+        match reader.cast::<IMFSourceReaderEx>() {
+            Ok(reader) => {
+                for index in 0..8 {
+                    let mut category = GUID::default();
+                    let mut transform = None;
+                    if let Err(error) = reader.GetTransformForStream(
+                        stream,
+                        index,
+                        Some(&mut category),
+                        &mut transform,
+                    ) {
+                        eprintln!("MFTRACE {label} transform {index} end: {error}");
+                        break;
+                    }
+                    eprintln!("MFTRACE {label} transform {index} category={category:?}");
+                    if let Some(transform) = transform {
+                        if let Ok(input) = transform.GetInputCurrentType(0) {
+                            trace_type("transform input", &input);
+                        }
+                        if let Ok(output) = transform.GetOutputCurrentType(0) {
+                            trace_type("transform output", &output);
+                        }
+                        for index in 0..16 {
+                            let Ok(output) = transform.GetOutputAvailableType(0, index) else {
+                                break;
+                            };
+                            if guid_of(&output, &MF_MT_SUBTYPE) == Some(MFVideoFormat_NV12) {
+                                trace_type(&format!("transform available NV12 {index}"), &output);
+                            }
+                        }
+                    }
+                }
+            }
+            Err(error) => eprintln!("MFTRACE no SourceReaderEx: {error}"),
+        }
+    }
+}
+
 fn select_nv12(
     reader: &IMFSourceReader,
     stream: u32,
     color: DecodedColor,
 ) -> Result<IMFMediaType, MediaError> {
+    trace_reader(reader, stream, "before NV12");
     let current = select_output(reader, stream, MFMediaType_Video, MFVideoFormat_NV12)?;
+    trace_reader(reader, stream, "discovered NV12");
     // SAFETY: live reader and the complete uncompressed media type it selected.
     unsafe {
         for (key, value) in color_attributes(color) {
@@ -566,6 +630,7 @@ fn select_nv12(
             "SetCurrentMediaType(NV12 color)",
             reader.SetCurrentMediaType(stream, None, &current),
         )?;
+        trace_reader(reader, stream, "negotiated NV12");
         check(
             "GetCurrentMediaType(NV12)",
             reader.GetCurrentMediaType(stream),
@@ -661,6 +726,11 @@ fn convert_nv12(sample: &IMFSample, layout: NativeLayout) -> Result<VideoFrame, 
                     &mut length,
                 ),
             )?;
+            eprintln!(
+                "MFTRACE Lock2DSize pitch={pitch} length={length} offset={} crop={:?}",
+                (scan as usize).wrapping_sub(start as usize),
+                layout.crop
+            );
             let result = (|| {
                 let pitch = usize::try_from(pitch).map_err(|_| bad())?;
                 let extent = layout.crop.extent(pitch).ok_or_else(bad)?;
@@ -685,6 +755,10 @@ fn convert_nv12(sample: &IMFSample, layout: NativeLayout) -> Result<VideoFrame, 
         } else if let Ok(two) = buffer.cast::<IMF2DBuffer>() {
             let length = check("GetMaxLength", buffer.GetMaxLength())? as usize;
             check("Lock2D", two.Lock2D(&mut scan, &mut pitch))?;
+            eprintln!(
+                "MFTRACE Lock2D pitch={pitch} length={length} crop={:?}",
+                layout.crop
+            );
             let result = (|| {
                 let pitch = usize::try_from(pitch).map_err(|_| bad())?;
                 let extent = layout.crop.extent(pitch).ok_or_else(bad)?;
@@ -701,6 +775,10 @@ fn convert_nv12(sample: &IMFSample, layout: NativeLayout) -> Result<VideoFrame, 
         } else {
             let mut length = 0;
             check("Lock", buffer.Lock(&mut scan, None, Some(&mut length)))?;
+            eprintln!(
+                "MFTRACE Lock length={length} stride={:?} crop={:?}",
+                layout.stride, layout.crop
+            );
             let result = (|| {
                 if scan.is_null() || length as usize > isize::MAX as usize {
                     return Err(bad());
@@ -850,7 +928,7 @@ impl Run {
             .then(|| {
                 let video = source.video.as_ref()?;
                 let display = source.probe.video.as_ref()?;
-                if !display.width.is_multiple_of(2) || !display.height.is_multiple_of(2) {
+                if !crate::nv12::even_size(display.width, display.height) {
                     return None;
                 }
                 let native = native_type(&source.reader, video.stream).ok()??;
@@ -941,6 +1019,9 @@ impl Run {
                 }
             }
             if let Some((sample, time)) = read.sample {
+                if self.native.is_some() {
+                    trace_reader(&self.source.reader, self.stream, "sample");
+                }
                 return Ok(Some(Shown {
                     seconds: time as f64 / HNS_PER_SECOND,
                     sample,
