@@ -390,12 +390,7 @@ mod tests {
     use super::*;
 
     fn chapter(id: &str, from: u64, length: u64) -> ReactChapter {
-        ReactChapter {
-            id: id.to_owned(),
-            name: id.to_uppercase(),
-            from,
-            duration_in_frames: length,
-        }
+        ReactChapter::new(id.to_owned(), id.to_uppercase(), from, length)
     }
 
     /// The playhead at `frame` (and `marks`) in a 300-frame composition.

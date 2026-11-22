@@ -665,12 +665,7 @@ mod tests {
     }
 
     fn chapter(id: &str, from: u64) -> ReactChapter {
-        ReactChapter {
-            id: id.to_owned(),
-            name: id.to_uppercase(),
-            from,
-            duration_in_frames: 60,
-        }
+        ReactChapter::new(id.to_owned(), id.to_uppercase(), from, 60)
     }
 
     #[test]

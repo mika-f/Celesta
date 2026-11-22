@@ -103,8 +103,8 @@ entry, id, reply?, author?, resolved? }` (false reopens). Errors:
 `inspect.mjs` print `comments: N open (M orphaned), K resolved; read them
 with list_comments` (and `comments` counts in JSON) when the composition has
 any; `inspect.mjs` now also prints a `chapters:` line. `celesta-export
---inspect` sends `config.chapters` when any are declared (from main's rough
-cut work); without them, from an older exporter or a composition without
+--inspect` sends `config.chapters` when any are declared; without
+them, from an older exporter or a composition without
 chapters, orphans are not counted (`orphaned: null`).
 
 **Docs.** `skills/celesta/references/review.md` (also `read_docs` topic
