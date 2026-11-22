@@ -228,15 +228,23 @@ pub fn inspect(args: InspectArgs, stop: &Stop, media: &SharedMedia) -> CallToolR
 
 /// The composition's chapters: on one line when they are names and spans
 /// only, else one line each, with a rough chapter tagged and a `desc` after
-/// a colon.
+/// a colon. A name other than the id is followed by the id, which review
+/// comments are anchored to.
 fn write_chapters(text: &mut String, chapters: &[ReactChapter]) {
+    let chapter_label = |chapter: &ReactChapter| {
+        if chapter.name == chapter.id {
+            chapter.id.clone()
+        } else {
+            format!("{} ({})", chapter.name, chapter.id)
+        }
+    };
     if chapters.is_empty() {
         return;
     }
     let span = |chapter: &ReactChapter| {
         format!(
             "{} [{}, {}){}",
-            chapter.name,
+            chapter_label(chapter),
             chapter.from,
             chapter.end(),
             if chapter.is_rough() { " rough" } else { "" }
@@ -698,7 +706,11 @@ mod tests {
             ReactChapter::new("b", "Outro", 30, 30),
         ];
         write_chapters(&mut text, &plain);
-        assert_eq!(text, "chapters: Intro [0, 30), Outro [30, 60)\n");
+        assert_eq!(text, "chapters: Intro (a) [0, 30), Outro (b) [30, 60)\n");
+
+        let mut text = String::new();
+        write_chapters(&mut text, &[ReactChapter::new("intro", "intro", 0, 30)]);
+        assert_eq!(text, "chapters: intro [0, 30)\n");
 
         let mut text = String::new();
         let rough = [
@@ -712,7 +724,7 @@ mod tests {
         write_chapters(&mut text, &rough);
         assert_eq!(
             text,
-            "chapters (1 of 2 rough):\n  The card [0, 60) rough: A card slides in.\n  Outro [60, 90)\n"
+            "chapters (1 of 2 rough):\n  The card (card) [0, 60) rough: A card slides in.\n  Outro (b) [60, 90)\n"
         );
     }
 

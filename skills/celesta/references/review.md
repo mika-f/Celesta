@@ -71,7 +71,8 @@ load.
 Without the MCP server, `inspect.mjs` prints a `comments:` line when there
 are any (`comments: 2 open (1 orphaned), 1 resolved`), and the files can be
 read directly: add the chapter's `from` (from the `chapters:` line of
-`inspect.mjs`) to `anchor.from`.
+`inspect.mjs`, which names each chapter's id in parentheses when its
+label differs) to `anchor.from`.
 
 ## Address a comment
 

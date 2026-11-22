@@ -447,8 +447,12 @@ async function inspectEntry(options) {
   if (config.width % 2 || config.height % 2) warnings.push(`width/height ${config.width}×${config.height} must be even for video export`);
   const chapters = config.chapters ?? [];
   const rough = chapters.filter((chapter) => chapter.status === 'rough');
-  const place = (chapter) => `${chapter.name} [${chapter.from}, ${chapter.from + chapter.durationInFrames})`;
-  const span = (chapter) => `${place(chapter)}${chapter.status === 'rough' ? ' rough' : ''}`;
+  const range = (chapter) => `[${chapter.from}, ${chapter.from + chapter.durationInFrames})`;
+  // Worded as celesta-export's rough_scenes warning words them.
+  const place = (chapter) => `${chapter.name} ${range(chapter)}`;
+  // The id too when the label differs: review comments are anchored to it.
+  const label = (chapter) => (chapter.name && chapter.name !== chapter.id ? `${chapter.name} (${chapter.id})` : chapter.id);
+  const span = (chapter) => `${label(chapter)} ${range(chapter)}${chapter.status === 'rough' ? ' rough' : ''}`;
   if (rough.length) {
     const lead = rough.length === 1
       ? '1 scene is still rough and draws a placeholder card'

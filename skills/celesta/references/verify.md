@@ -112,9 +112,9 @@ same and adds `chapters` to its structured result:
 
 ```text
 chapters (2 of 3 rough):
-  Title [0, 60): The film's name on the ground.
-  The card [60, 165) rough: A card slides onto the blueprint.
-  Logo [165, 210) rough
+  Title (title) [0, 60): The film's name on the ground.
+  The card (card) [60, 165) rough: A card slides onto the blueprint.
+  Logo (logo) [165, 210) rough
 …
 warning: 2 scenes are still rough and draw placeholder cards: The card [60, 165), Logo [165, 210); export warns about them (rough_scenes) and --final refuses them
 ```
