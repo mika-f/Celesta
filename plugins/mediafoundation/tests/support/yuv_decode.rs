@@ -350,9 +350,6 @@ fn rgba_gate(label: &str, actual: &VideoFrame, reference: &VideoFrame) {
 }
 
 fn exercise(path: &Path, expected: DecodedColor) {
-    let _ = MfCodec::new()
-        .decode_video(DECODER_ID, &request(path, 0., &[F::Nv12]))
-        .unwrap();
     for transport in [FrameTransport::SharedMemory, FrameTransport::Pipe] {
         let executable = PathBuf::from(env!("CARGO_BIN_EXE_celesta-codec-mediafoundation"));
         let mut process = MediaProcess::start_with(
@@ -389,23 +386,6 @@ fn exercise(path: &Path, expected: DecodedColor) {
                 assert_eq!(answer, rgba);
             } else {
                 assert_eq!(answer.color, Some(expected));
-                if time == 0. && path.file_name().unwrap() == "709-limited.mp4" {
-                    let no_filter = without_loop_filter(path);
-                    let mut maximum = 0;
-                    let mut sum = 0u64;
-                    let mut count = 0;
-                    assert_eq!(answer.pixels.len(), no_filter.len());
-                    for (&actual, reference) in answer.pixels.iter().zip(no_filter) {
-                        let d = actual.abs_diff(reference);
-                        maximum = maximum.max(d);
-                        sum += u64::from(d);
-                        count += usize::from(d != 0);
-                    }
-                    println!(
-                        "MFTRACE FFmpeg skip_loop_filter=all max={maximum} mean={:.9} differing={count}",
-                        sum as f64 / answer.pixels.len() as f64
-                    );
-                }
                 exact_planes(
                     &format!("{} {transport:?} t={time}", path.display()),
                     &answer,
@@ -418,68 +398,6 @@ fn exercise(path: &Path, expected: DecodedColor) {
                 );
             }
         }
-    }
-}
-
-fn without_loop_filter(path: &Path) -> Vec<u8> {
-    let path = CString::new(path.to_str().unwrap()).unwrap();
-    // SAFETY: temporary diagnostic uses live FFmpeg contexts and releases all allocations.
-    unsafe {
-        let mut input = null_mut();
-        assert!(av::avformat_open_input(&mut input, path.as_ptr(), null_mut(), null_mut()) >= 0);
-        assert!(av::avformat_find_stream_info(input, null_mut()) >= 0);
-        let stream = av::av_find_best_stream(
-            input,
-            av::AVMediaType::AVMEDIA_TYPE_VIDEO,
-            -1,
-            -1,
-            null_mut(),
-            0,
-        );
-        assert!(stream >= 0);
-        let params = (**(*input).streams.add(stream as usize)).codecpar;
-        let mut decoder = av::avcodec_alloc_context3(av::avcodec_find_decoder((*params).codec_id));
-        assert!(!decoder.is_null());
-        assert!(av::avcodec_parameters_to_context(decoder, params) >= 0);
-        (*decoder).skip_loop_filter = av::AVDiscard::AVDISCARD_ALL;
-        assert!(av::avcodec_open2(decoder, null_mut(), null_mut()) >= 0);
-        let mut packet = av::av_packet_alloc();
-        let mut frame = av::av_frame_alloc();
-        let mut got = false;
-        while av::av_read_frame(input, packet) >= 0 {
-            if (*packet).stream_index == stream {
-                assert!(av::avcodec_send_packet(decoder, packet) >= 0);
-                got = av::avcodec_receive_frame(decoder, frame) >= 0;
-            }
-            av::av_packet_unref(packet);
-            if got {
-                break;
-            }
-        }
-        assert!(got);
-        assert_eq!(
-            (*frame).format,
-            av::AVPixelFormat::AV_PIX_FMT_YUV420P as i32
-        );
-        let (width, height) = ((*frame).width as usize, (*frame).height as usize);
-        let mut pixels = Vec::with_capacity(width * height * 3 / 2);
-        for y in 0..height {
-            pixels.extend_from_slice(std::slice::from_raw_parts(
-                (*frame).data[0].add(y * (*frame).linesize[0] as usize),
-                width,
-            ));
-        }
-        for y in 0..height / 2 {
-            for x in 0..width / 2 {
-                pixels.push(*(*frame).data[1].add(y * (*frame).linesize[1] as usize + x));
-                pixels.push(*(*frame).data[2].add(y * (*frame).linesize[2] as usize + x));
-            }
-        }
-        av::av_frame_free(&mut frame);
-        av::av_packet_free(&mut packet);
-        av::avcodec_free_context(&mut decoder);
-        av::avformat_close_input(&mut input);
-        pixels
     }
 }
 
@@ -695,12 +613,15 @@ fn odd_dimensions_keep_rgba() {
     let directory = tempfile::tempdir().unwrap();
     let output = directory.path().join("odd.avi");
     odd_avi(&output);
-    if let Err(error) = MfCodec::new().decode_video(DECODER_ID, &request(&output, 0., &[F::Rgba8]))
-    {
-        eprintln!(
-            "skipping odd-dimension native fallback: this system cannot decode the 63x35 MJPEG AVI as RGB32: {error}; portable eligibility rejects odd display sizes"
-        );
-        return;
+    match MfCodec::new().decode_video(DECODER_ID, &request(&output, 0., &[F::Rgba8])) {
+        Ok(_) => {}
+        Err(MediaError::Codec(error)) if error.contains("0xC00D36B4") => {
+            eprintln!(
+                "skipping odd-dimension native fallback: MF rejects the 63x35 MJPEG AVI as RGB32: {error}; 4:2:0 SPS crops cannot express odd dimensions; portable eligibility covers this case"
+            );
+            return;
+        }
+        Err(error) => panic!("unexpected error probing odd-dimension RGB32 support: {error}"),
     }
     let frame = MfCodec::new()
         .decode_video(DECODER_ID, &request(&output, 0., &[F::Nv12]))
