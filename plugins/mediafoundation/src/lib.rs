@@ -99,6 +99,12 @@ mod params;
 
 #[cfg_attr(
     not(any(windows, test)),
+    expect(dead_code, reason = "only the Windows decoder selects native colour")
+)]
+mod nv12;
+
+#[cfg_attr(
+    not(any(windows, test)),
     expect(
         dead_code,
         reason = "only the Windows encoders use it outside its tests"

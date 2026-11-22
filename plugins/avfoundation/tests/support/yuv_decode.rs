@@ -1,7 +1,7 @@
 use super::*;
 use celesta_codec_ffmpeg::FfmpegBackend;
 use celesta_media::{
-    DecodedColor, DecodedMatrix, DecodedPixelFormat as F, DecodedRange, FrameTransport,
+    DecodedColor, DecodedMatrix, DecodedPixelFormat as F, DecodedRange, Decoder, FrameTransport,
     MediaProcess, ProviderUse, SettingValue, VideoFrameDecoder,
 };
 use ffmpeg_sys_next as av;

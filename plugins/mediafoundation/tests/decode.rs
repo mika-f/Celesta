@@ -5,6 +5,9 @@
 //! and that it leaves no file held open.
 #![cfg(windows)]
 
+#[path = "support/yuv_decode.rs"]
+mod yuv_decode;
+
 #[path = "../../ffmpeg/tests/support/program.rs"]
 mod program;
 

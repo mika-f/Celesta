@@ -1,4 +1,4 @@
-# Native decoded YUV — step A: AVFoundation
+# Native decoded YUV — AVFoundation and Media Foundation
 
 ## Specification
 
@@ -97,3 +97,92 @@ node scripts/plugins/run-cargo.mts plugins test -p celesta-codec-avfoundation --
 ```
 
 Native gate numbers must be inspected there before claiming pixel parity.
+
+## Step B: Media Foundation
+
+The same branch adds offered NV12 for even-sized, upright, alpha-free
+8-bit 4:2:0 SDR H.264/HEVC Main. Unknown headers, unsupported source colour,
+range or chroma siting retain the RGB32 path. No host/GPU/protocol changes.
+
+- `plugins/mediafoundation/src/nv12.rs` reuses existing `annexb`, `params`
+  and `vui` readers to check all SPSs in Annex B or avcC/hvcC headers.
+  Auxiliary HEVC layers, 10-bit/non-420 SPSs, HDR and unsupported matrices
+  or chroma locations are not native. Untagged matrix is 601, range limited.
+  VUI range is read even without a colour description; source attributes
+  take priority, with VUI matrix/range as a fallback when unspecified.
+- `mf/decoder.rs` probes as before. An NV12 offer first opens its reader
+  without advanced video processing (basic processing is off by default),
+  and requests NV12 with source-consistent nominal range, matrix and MPEG2
+  left chroma siting. The current type must confirm those attributes and
+  NV12; the response color is read from it. Unexpected negotiation errors
+  rather than returning falsely labelled pixels. RGB32 setup/conversion
+  for ineligible offers/sources is retained; an ineligible NV12 candidate
+  reopens the processed reader, so eligible NV12 opens only one reader.
+- Locks the original single sample buffer, preferring IMF2DBuffer2's bounded
+  Lock2DSize, then IMF2DBuffer::Lock2D, then IMFMediaBuffer::Lock. Positive
+  pitches and extents are checked; every successful lock is unlocked on
+  success and error. Legacy 2D memory is conservatively bounded by
+  GetMaxLength; an insufficient bound errors instead of guessing.
+- `MF_MT_FRAME_SIZE` supplies allocation dimensions. Minimum display
+  aperture, then geometric aperture supplies the crop; if absent, the
+  probed display size is used. The UV offset is pitch times **coded height**,
+  not display height. Fractional/odd/invalid apertures are rejected. The
+  probe now observes display apertures as well. The shared pack_nv12 strips
+  pitch and allocation padding. Linux tests explicitly exercise 1088 rows
+  cropped to 1080 and nonzero even crop offsets.
+- Accepted formats join the sequential session key. Each buffered sample
+  captures its native layout so a later media-type change cannot reinterpret
+  an already buffered frame with the next frame's layout.
+
+Windows-only tests in `plugins/mediafoundation/tests/support/yuv_decode.rs`
+generate tagged/untagged/full-range H.264, optional HEVC 8-/10-bit, rotated
+H.264, an odd 63x35 uncompressed AVI, and alpha ProRes 4444. HEVC reports
+encoding/decoding capability skips (including a missing codec extension);
+10-bit tries the existing hardware-test size, 160x90. ProRes alpha reports
+a skip when Windows has no decoder for it. Odd AVI and H.264 are mandatory
+when the suite's existing Media Foundation capability gate is available.
+
+Both transports, prefetch, offer changes, RGBA-only/I420-only/empty offers, seeks
+and EOF follow step A. A separate 1920x1080 fixture exercises decoder
+alignment. Gates remain exact plane/color equality with linked FFmpeg,
+and max <=4 against this plugin's own RGBA with exact alpha; max/mean/
+differing are printed. The new gate helper also fixes the missing Decoder
+trait import in step A's helper. EN/JA guides and the skill now describe
+both native plugins.
+
+### Step B validation on this Linux box
+
+- Plugin all-target check: passed (1.35s).
+- Media Foundation portable library tests: **67 passed**, 0 failed (0.12s).
+- Both-plugin all-target Clippy, `-D warnings`: passed (0.70s).
+- Plugin formatting and `git diff --check`: passed.
+- The unchanged media crate retains step A's **151 passed** result and
+  media Clippy pass (4.46s); root formatting and the unchanged AVFoundation
+  portable library retain their step A passes. These were not rerun.
+- An isolated Windows-target audit includes the **actual MF decoder and
+  helpers** with real `windows 0.62.2` bindings; Clippy including its test
+  configuration passed with `-D warnings` (0.55s). This substitutes shared
+  media scaffolding and does not compile/link the full plugin, start MF,
+  or validate any Windows runtime result. Checked the new attribute values
+  against vendored bindings; MF_MT_ALPHA_MODE uses DXGI_ALPHA_MODE per
+  Microsoft documentation (0 unspecified, 3 ignore).
+- An isolated Linux audit compiles the actual new gate helper against the
+  real media/FFmpeg crates, substituting the native codec with FFmpeg and
+  parent native-only helpers with scaffolding. Clippy passed.
+  A separate fixture-only test passed: odd AVI is readable with the intended
+  dimensions/pixels, and all three H.264 retags preserve planes and set the
+  expected color (1 test, 0 failures, 0.03s).
+
+Logs/audit sources: `/home/ubuntu/research/native-yuv/mf-*` and
+`/home/ubuntu/research/native-yuv/windows-api/`.
+
+Full Windows builds/runtime and native gate numbers require a Windows
+runner (the full cross-target dependency build needs MSVC's lib.exe/SDK).
+Neither Windows pixel parity nor HEVC codec-extension behavior has been
+measured here. No native screenshots; visually unverified. No PR is opened.
+
+Native runner command:
+
+```sh
+node scripts/plugins/run-cargo.mts plugins test -p celesta-codec-mediafoundation --locked -- --nocapture
+```

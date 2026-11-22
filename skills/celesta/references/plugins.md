@@ -259,11 +259,13 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   Unset or any other value preserves the usual format negotiation. Encoding
   and the plugin's RGBA conversion are unchanged.
 
-- Decoded YUV: `ffmpeg` can answer NV12/I420; macOS `avfoundation` can answer
+- Decoded YUV: `ffmpeg` can answer NV12/I420; macOS `avfoundation` and
+  Windows `mediafoundation` can answer
   offered NV12 for even-sized upright 8-bit 4:2:0 H.264/HEVC Main SDR with
   BT.601/709 and left chroma siting. Alpha, rotation/mirroring, HDR, 10-bit,
   unsupported metadata and RGBA-only offers keep its existing RGBA path.
-  Media Foundation still answers RGBA8.
+  Media Foundation disables video processing for NV12, validates negotiated
+  matrix/range, and crops aligned decoder surfaces to the display aperture.
 
 ## The VRM plugin
 

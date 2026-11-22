@@ -211,6 +211,37 @@ pub(crate) fn sps_colour(codec: Codec, sps: &[u8]) -> Option<VuiColour> {
     }
 }
 
+/// Range is signalled even when the VUI omits its colour description.
+pub(crate) fn sps_full_range(codec: Codec, sps: &[u8]) -> Option<bool> {
+    let mut bits = to_vui_flag(codec, sps)?;
+    if !bits.flag()? {
+        return Some(false);
+    }
+    if bits.flag()? && bits.bits(8)? == 255 {
+        bits.skip(32)?;
+    }
+    if bits.flag()? {
+        bits.bit()?;
+    }
+    if !bits.flag()? {
+        return Some(false);
+    }
+    bits.skip(3)?;
+    bits.flag()
+}
+
+pub(crate) fn sps_left_chroma(codec: Codec, sps: &[u8]) -> Option<bool> {
+    let mut bits = to_vui_flag(codec, sps)?;
+    if !bits.flag()? {
+        return Some(true);
+    }
+    read_signal(&mut bits)?;
+    if !bits.flag()? {
+        return Some(true);
+    }
+    Some(bits.ue()? == 0 && bits.ue()? == 0)
+}
+
 /// Bits, written from the most significant of the first byte on.
 #[derive(Default)]
 struct BitWriter {
@@ -570,6 +601,7 @@ mod tests {
                 // video_full_range_flag, colour_description_present_flag 0.
                 let signal = with_signal_bits(codec, &sps, &[1, 1, 0, 1, full_range, 0]);
                 assert_eq!(sps_colour(codec, &signal), None, "{text}");
+                assert_eq!(sps_full_range(codec, &signal), Some(full_range == 1));
                 let rewritten = with_bt709(codec, &signal);
                 assert_eq!(
                     sps_colour(codec, &rewritten),
