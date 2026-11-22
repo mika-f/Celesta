@@ -20,5 +20,8 @@ not the rendered video or the composition API.
   and timeline geometry at the editor rem.
 - The PR shows the same frame of `examples/editor-demo.celesta.json` before and
   after, at 1440 × 900 on Linux/Wayland with Mesa software rendering.
+- At the 260 px viewer minimum, Linux UI testing verified that the timecode,
+  transport, and canvas remain visible with the timeline fully expanded.
+  React Select layers was not tested.
 - The preview guide in both languages and the Celesta Agent Skill describe
   where to find the mark controls and how to set a range at narrower widths.
