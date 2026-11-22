@@ -178,7 +178,10 @@ Run on macOS (Apple GPU) with FFmpeg 8 on `PKG_CONFIG_PATH`, after
 - `cargo test -p celesta-exporter -p celesta-mcp --no-fail-fast`: all pass
   but 16 exporter tests that timed out with eight other sessions building on
   the machine (the test codec's program not answering `hello` within 30 s,
-  `inspect.mjs`'s 10 s `--help` probe); rerun alone, every one passed.
+  `inspect.mjs`'s 10 s `--help` probe); rerun alone, every one passed but
+  `stills::a_project_default_preset_never_reaches_stills`, which CI then
+  showed asserts no warnings at all on an empty project and now allows its
+  `blank-first-frame`.
   The MCP tests include `check_quality`, `inspect`'s quality warnings, and
   the ten tools.
 - `cargo clippy -p celesta-exporter -p celesta-mcp -p celesta-editor
