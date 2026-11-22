@@ -138,7 +138,17 @@ produces a video that differs between preview and export.
    `Celesta --init <folder>` creates `film.tsx`, `package.json`, and the
    TypeScript setup; for a slideshow, ranking, or dialogue video, add
    `--template <name>` and edit its `props.json` and data file instead.
-2. **Write or edit the source.** Keep media next to the entry and reference
+2. **Rough cut first, for a film of several scenes.** Before building any
+   scene, write the `defineScenes` list: each scene's `name`,
+   `durationInFrames`, a one-sentence `desc`, and `status: 'rough'`, passed
+   to `<Composition chapters>` and played by `<Scenes>`. Every scene then
+   plays as a placeholder card with its name and `desc`, so the structure
+   and timing can be checked (a contact sheet) and agreed with the user.
+   Then build the scenes one at a time: give each its `Scene` and drop its
+   `status`. Export warns while any scene is rough (`rough_scenes`), and
+   `--final` refuses to export them
+   ([animation.md](references/animation.md#rough-cut)).
+3. **Write or edit the source.** Keep media next to the entry and reference
    it with `./relative/paths`. Prefer small named components and data arrays
    over one big `Root`. Before writing a helper (`clamp`, an eased
    `progress`, a `sin` hash, a timecode, a width from a character count, a
@@ -153,7 +163,7 @@ produces a video that differs between preview and export.
    `Ellipse`, and `Arrow`, not with many thin `Rect`s. Effects and blend modes cost GPU passes
    per layer: put one effect on a `Group` rather than on each of dozens of
    layers ([performance.md](references/performance.md)).
-3. **Check it without the GUI** ([verify.md](references/verify.md)). You
+4. **Check it without the GUI** ([verify.md](references/verify.md)). You
    cannot see the preview window.
    - `node <this skill>/scripts/inspect.mjs film.tsx --frames 0,45,-1` loads
      a React entry exactly like Celesta does, runs `prepare()`, evaluates
@@ -180,7 +190,7 @@ produces a video that differs between preview and export.
      standard plugin; MP4 needs an installed H.264 encoder (native on macOS/Windows
      or the `ffmpeg-x264` download). Check `--list-components --check` first
      ([export.md](references/export.md)).
-4. **Report back.** Tell the user which file to open (File → Open…) or
+5. **Report back.** Tell the user which file to open (File → Open…) or
    reload (JSON projects need File → Reload; React entries reload on save;
    an overwritten image file shows from the next frame the preview draws),
    what you verified, and what you could not verify (for example, audio you

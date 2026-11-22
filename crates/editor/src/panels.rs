@@ -5,6 +5,7 @@ use crate::problems::{Source, flow_line_breaks};
 use crate::problems_panel::show_in_problems_row;
 use crate::react_audio::react_audio_clip_id;
 use crate::timecode::format_timecode;
+use crate::timeline::ROUGH_TAG;
 use crate::view::EditorView;
 use crate::waveform::{clip_local_time, format_media_asset_info};
 use crate::widgets::{json_display, property_display};
@@ -880,12 +881,42 @@ impl EditorView {
                     .hover(|row| row.bg(cx.theme().list_hover))
                     .child(
                         div()
+                            .flex()
+                            .flex_col()
                             .min_w_0()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .text_color(cx.theme().foreground)
-                            .child(chapter.name.clone()),
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap_1()
+                                    .min_w_0()
+                                    .child(
+                                        div()
+                                            .min_w_0()
+                                            .overflow_hidden()
+                                            .whitespace_nowrap()
+                                            .text_ellipsis()
+                                            .text_color(cx.theme().foreground)
+                                            .child(chapter.name.clone()),
+                                    )
+                                    .when(chapter.is_rough(), |name| {
+                                        name.child(
+                                            div().flex_none().text_color(muted).child(ROUGH_TAG),
+                                        )
+                                    }),
+                            )
+                            // The rough cut's script line, under the name.
+                            .when_some(chapter.desc.clone(), |cell, desc| {
+                                cell.child(
+                                    div()
+                                        .min_w_0()
+                                        .overflow_hidden()
+                                        .whitespace_nowrap()
+                                        .text_ellipsis()
+                                        .text_sm()
+                                        .text_color(muted)
+                                        .child(desc),
+                                )
+                            }),
                     )
                     .child(
                         div()

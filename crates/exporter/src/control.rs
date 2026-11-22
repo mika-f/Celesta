@@ -36,8 +36,21 @@ pub enum ExportProgress {
     /// is reported once per export. The JSON report lists it among the
     /// warnings.
     Note(String),
+    /// A warning with a stable code to branch on, such as `rough_scenes`.
+    /// It prints and lists like [`Warning`](Self::Warning); the JSON report
+    /// also lists it, with its code, in `codedWarnings`.
+    CodedWarning(CodedWarning),
     /// A finished output file, reported once it is in place.
     Wrote(ExportedFile),
+}
+
+/// A warning and its stable code; see [`ExportProgress::CodedWarning`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CodedWarning {
+    /// A stable identifier, in the style of an error's `code`.
+    pub code: &'static str,
+    /// The warning in the CLI's words.
+    pub message: String,
 }
 
 /// The size, rate, and length of an exported composition.

@@ -111,7 +111,9 @@ export { Series, Stagger, computeSeries } from './series';
 export type { SeriesItem, SeriesProps, SeriesSequenceProps, SeriesTiming, StaggerProps } from './series';
 
 export { Scenes, defineScenes, sceneAt, useScene } from './scenes';
-export type { PlacedScene, SceneEntry, SceneList, SceneState, ScenesProps, UseSceneOptions } from './scenes';
+export type { PlacedScene, SceneEntry, SceneList, SceneState, SceneStatus, ScenesProps, UseSceneOptions } from './scenes';
+export { ScenePlaceholder } from './scene-placeholder';
+export type { ScenePlaceholderProps } from './scene-placeholder';
 
 export { listChapters } from './chapters';
 export type { Chapter, ChapterInput, ChapterSource, ListChaptersOptions } from './chapters';

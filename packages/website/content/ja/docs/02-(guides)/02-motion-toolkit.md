@@ -85,6 +85,32 @@ const chapters = [
 
 `chapters` はサイズや時計と同じく、作品を読み込むとき（リロードのたびにも）一度だけ読まれます。章は開始位置の順に並べ替えられ、コンポジションの終わりで切られます。長さ 0 の章はシークできる目印になります。`id` の欠落や重複、負または小数のフレーム、終わり以降に始まる章は、読み込みをエラーで止めます。
 
+## まずラフカットを作る
+
+いくつものシーンからなる作品は、すべてのシーンを作り込む前に、絵コンテのように構成を決めておくと合意しやすくなります。各シーンが何で、どれだけ続き、そこで何が起きるかを先に決めます。`defineScenes` の各エントリーに 1 文の `desc` を書き、まだ作っていないシーンには `status: 'rough'` を付けます。
+
+```tsx title="ラフカット：1 シーンができていて、残り 2 シーン"
+const SCENES = defineScenes([
+  { id: 'title', name: 'Title', durationInFrames: 60, desc: "The film's name on the ground.", Scene: Title },
+  { id: 'card', name: 'The card', durationInFrames: 105, status: 'rough', desc: 'A card slides onto the blueprint.' },
+  { id: 'logo', name: 'Logo', durationInFrames: 45, status: 'rough' },
+]);
+
+<Composition width={1920} height={1080} fps={30} durationInFrames={SCENES.durationInFrames} chapters={SCENES}>
+  <Scenes scenes={SCENES} />
+</Composition>
+```
+
+`<Scenes>` はラフのシーンを仮のカードとして再生します。カードには名前と `desc`、一覧の中での位置（**Scene 2 of 3**）、秒数とフレーム数での長さ、シーンの進みに合わせて伸びるバーが描かれます。カードはフレームだけで決まるため、ほかのシーンと同じようにシークでき、書き出せます。縦長や正方形のキャンバスにも収まります。`Scene` をすでに持つラフのシーンもカードを表示するので、その場で作り進められます。`status` を外すと `Scene` が表示されます。`Scene` も `status` もないエントリーも **No Scene yet** と書いたカードを表示しますが、ラフとしては数えません。
+
+上の例のように一覧を `chapters` に渡すと、Celesta のほかの部分もどのシーンがラフかを知ります。
+
+- エディタの Chapters 行は、ラフの章をオレンジではなく灰色で描き、**Rough** と添えます。章にポインターを重ねると `desc` が表示されます。React Preview タブの Chapters 一覧でも同じく **Rough** と添え、名前の下に `desc` を表示します。
+- ラフのシーンを含む範囲を書き出すと、まだラフのシーンがあることを名前付きで警告します。`--json` ではこの警告が `codedWarnings` にもコード `rough_scenes` で入ります。ラフのシーンを書き出さずに止めるには `--final` を付けます（[書き出し](/ja/docs/export/)を参照）。静止画やコンタクトシートでは警告しません。ラフカットはコンタクトシートで確認するためです。
+- `inspect.mjs` と MCP の `inspect` ツールは、章を `desc` 付きで一覧し、ラフの章に印を付けます。
+
+`<TransitionSeries>` の章など、別の方法で並べたシーンにカードを描くには、シーンの長さの `<Sequence>` の中に `<ScenePlaceholder name desc index count durationInFrames>` を置きます。`<FrameChrome>` は `desc` を描きません。`desc` はカットについてのメモで、字幕ではないからです。
+
 ## シーンをトランジションでつなぐ
 
 `<TransitionSeries>` は `Series` と同じくシーンを順に並べ、2 つのシーンの間に `<TransitionSeries.Transition>` を置けます。トランジションは前後のシーンを `durationInFrames` の分だけ重ねるので、`computeTransitionSeries()` で各シーンの開始位置と、重なりの分だけ短くなった全体の長さを求められます。

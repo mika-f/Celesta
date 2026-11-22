@@ -299,12 +299,7 @@ mod tests {
     }
 
     fn chapter(id: &str, name: &str, from: u64, duration_in_frames: u64) -> ReactChapter {
-        ReactChapter {
-            id: id.to_owned(),
-            name: name.to_owned(),
-            from,
-            duration_in_frames,
-        }
+        ReactChapter::new(id.to_owned(), name.to_owned(), from, duration_in_frames)
     }
 
     fn instance(chain: Vec<SourcePos>, ranges: Vec<(u64, u64)>) -> InstanceOccurrences {

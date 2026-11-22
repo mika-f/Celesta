@@ -43,6 +43,11 @@ pub struct ExportOptions {
     /// export measures its mix either way and reports the result in
     /// [`ExportedFile::Video`](crate::ExportedFile::Video).
     pub loudness: Option<LoudnessTarget>,
+    /// Refuses a React video export whose span holds a rough scene (a
+    /// `<Composition chapters>` entry with `status: 'rough'`) with
+    /// [`ExportError::RoughScenes`](crate::ExportError::RoughScenes),
+    /// instead of warning about it with the `rough_scenes` code.
+    pub final_cut: bool,
     /// The content plugins the renderer and the React runtime use. `None`
     /// discovers them when the [`Exporter`](crate::Exporter) is made, in
     /// every location Celesta searches (see

@@ -27,7 +27,8 @@ mod timecode;
 
 pub use celesta_media::{LoudnessTarget, PeakHandling};
 pub use control::{
-    AudioLoudness, CompositionInfo, ExportCancellation, ExportProgress, ExportedFile, TrackInfo,
+    AudioLoudness, CodedWarning, CompositionInfo, ExportCancellation, ExportProgress, ExportedFile,
+    TrackInfo,
 };
 pub use error::{ExportError, FrameFailure, UnavailableReason};
 pub use exporter::{Exporter, project_plugins};

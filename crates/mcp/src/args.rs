@@ -174,6 +174,12 @@ pub struct ExportVideoArgs {
     /// to trim.
     #[serde(rename = "loop")]
     looping: Option<bool>,
+    /// Refuse to export a React entry's rough scenes (`status: 'rough'` in
+    /// its `<Composition chapters>`, drawn as placeholder cards), failing
+    /// with the code `rough_scenes`. Without it they export, with a
+    /// `rough_scenes` entry in `codedWarnings`.
+    #[serde(rename = "final")]
+    final_cut: Option<bool>,
     /// Bring the whole mix to this integrated loudness before encoding:
     /// LUFS from -70 to -5, `"streaming"` (-14, as YouTube and Spotify play)
     /// or `"broadcast"` (-23, EBU R128). The result's video output reports
@@ -578,6 +584,11 @@ impl ExportVideoArgs {
     pub fn job(&self) -> Result<ExportJob, String> {
         reject_unknown(&self.unknown)?;
         let source = self.source.check(false)?;
+        if self.final_cut == Some(true) && !source.react {
+            return Err(
+                "final applies to React entries; a JSON project has no rough scenes".into(),
+            );
+        }
         let subtitles = self
             .subtitles
             .as_ref()
@@ -594,6 +605,7 @@ impl ExportVideoArgs {
                 ("videoEncoder", self.video_encoder.is_some()),
                 ("audioEncoder", self.audio_encoder.is_some()),
                 ("loop", self.looping.is_some()),
+                ("final", self.final_cut == Some(true)),
                 ("loudness", self.loudness.is_some()),
             ];
             if let Some((field, _)) = given.into_iter().find(|(_, given)| *given) {
@@ -644,6 +656,7 @@ impl ExportVideoArgs {
             subtitles,
             looping: self.looping.unwrap_or(false),
             loudness,
+            final_cut: self.final_cut.unwrap_or(false),
             presets: PresetLookup::for_source(&source.path, preset_file),
             ..ExportOptions::default()
         };
@@ -1139,6 +1152,23 @@ mod tests {
         rejects(
             video_job(json!({ "source": "a.tsx", "subtitles": "a.srt", "loop": true })),
             "loop needs an output video",
+        );
+    }
+
+    #[test]
+    fn final_applies_to_a_react_video_only() {
+        let final_cut = |args: Value| video_job(args).unwrap().options.final_cut;
+        assert!(final_cut(
+            json!({ "source": "a.tsx", "output": "a.mp4", "final": true })
+        ));
+        assert!(!final_cut(json!({ "source": "a.tsx", "output": "a.mp4" })));
+        rejects(
+            video_job(json!({ "source": "a.tsx", "subtitles": "a.srt", "final": true })),
+            "final needs an output video",
+        );
+        rejects(
+            video_job(json!({ "source": "a.celesta.json", "output": "a.mp4", "final": true })),
+            "final applies to React entries",
         );
     }
 

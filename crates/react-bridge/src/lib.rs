@@ -38,13 +38,13 @@ pub use properties::{
 };
 pub use stop::RuntimeStop;
 pub use types::{
-    ComponentPropertyField, ComponentPropertySchema, ComponentResolutionRequest,
+    ChapterStatus, ComponentPropertyField, ComponentPropertySchema, ComponentResolutionRequest,
     ComponentResolutions, ComponentSchemaField, ElementKind, FrameEvaluation, FrameSpan,
     LayerSource, LayerSourceReport, LegacyImport, PrepareDependency, PrimitivePropertyField,
     PrimitivePropertyGroup, PrimitivePropertyRow, PrimitivePropertyTable, PrimitiveSize,
     ProjectFrame, PropOverride, ReactAudioClipDescriptor, ReactChapter, ReactCompositionInfo,
     ReactCompositionMetadata, ReactDuck, ReactSubtitleDescriptor, ReceivedProps, ReceivedValue,
-    SourcePos, SpawnOptions, TimingWindow, chapter_at,
+    SourcePos, SpawnOptions, TimingWindow, chapter_at, describe_rough, rough_chapters,
 };
 
 mod project_templates;

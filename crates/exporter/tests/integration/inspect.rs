@@ -192,6 +192,47 @@ export default function Root() {
 }
 
 #[test]
+fn native_inspection_reports_rough_chapters_and_their_desc() {
+    if runtime().is_none() {
+        return;
+    }
+    let (_dir, entry) = entry(
+        r#"
+import { Composition, Scenes, defineScenes } from '@celesta.studio/react';
+const SCENES = defineScenes([
+  { id: 'open', name: 'Open', durationInFrames: 30, desc: 'The title fades in.', Scene: () => null },
+  { id: 'card', name: 'The card', durationInFrames: 30, status: 'rough', desc: 'A card slides in.' },
+]);
+export default function Root() {
+  return <Composition width={400} height={200} fps={30} durationInFrames={SCENES.durationInFrames} chapters={SCENES}><Scenes scenes={SCENES} /></Composition>;
+}
+"#,
+    );
+    let (code, lines) = inspect_exporter(&entry, &[], "");
+    assert_eq!(code, Some(0));
+    let chapters = &lines[0]["config"]["chapters"];
+    assert_eq!(chapters[0]["desc"], "The title fades in.");
+    assert!(chapters[0].get("status").is_none());
+    assert_eq!(chapters[1]["status"], "rough");
+    assert_eq!(chapters[1]["desc"], "A card slides in.");
+
+    let text = inspect_mjs(&entry, &["--frames", "45"]);
+    let output = String::from_utf8_lossy(&text.stdout);
+    assert_eq!(text.status.code(), Some(0), "{output}");
+    assert!(
+        output.contains("chapters (1 of 2 rough):\n  Open [0, 30): The title fades in.\n  The card [30, 60) rough: A card slides in.\n"),
+        "{output}"
+    );
+    assert!(output.contains(r#"text "The card""#), "{output}");
+    assert!(
+        output.contains(
+            "warning: 1 scene is still rough and draws a placeholder card: The card [30, 60)"
+        ),
+        "{output}"
+    );
+}
+
+#[test]
 fn startup_failures_replace_the_handshake() {
     if runtime().is_none() {
         return;

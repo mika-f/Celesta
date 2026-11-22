@@ -156,6 +156,9 @@ impl State {
             ExportProgress::Warning(warning) => {
                 self.diagnostics.push(Diagnostic::Warning(warning));
             }
+            ExportProgress::CodedWarning(warning) => {
+                self.diagnostics.push(Diagnostic::Warning(warning.message));
+            }
             ExportProgress::Note(note) => self.diagnostics.push(Diagnostic::Note(note)),
             ExportProgress::Output(plan) => self.output = Some(plan),
             ExportProgress::Composition(_)
@@ -397,8 +400,12 @@ pub fn run(
                 // The dashboard stopped drawing: the notices it kept print
                 // first, and later ones go through the same list, so every
                 // notice prints once, in arrival order.
-                let diagnostic =
-                    matches!(event, ExportProgress::Warning(_) | ExportProgress::Note(_));
+                let diagnostic = matches!(
+                    event,
+                    ExportProgress::Warning(_)
+                        | ExportProgress::CodedWarning(_)
+                        | ExportProgress::Note(_)
+                );
                 let mut state = state
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -874,6 +881,9 @@ impl PlainProgress {
             | ExportProgress::Wrote(_) => {}
             ExportProgress::Warning(warning) => {
                 self.print_diagnostic(&Diagnostic::Warning(warning.clone()).line());
+            }
+            ExportProgress::CodedWarning(warning) => {
+                self.print_diagnostic(&Diagnostic::Warning(warning.message.clone()).line());
             }
             ExportProgress::Note(note) => self.print_diagnostic(note),
         }

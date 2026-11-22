@@ -49,8 +49,20 @@ pub struct Report {
     outputs: Option<Vec<Output>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     warnings: Option<Vec<String>>,
+    /// The warnings that have a stable code, each also in `warnings`;
+    /// absent when there are none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    coded_warnings: Vec<CodedWarningReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stats: Option<Stats>,
+}
+
+/// One of the report's `codedWarnings`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct CodedWarningReport {
+    /// A stable identifier to branch on, such as `rough_scenes`.
+    code: &'static str,
+    message: String,
 }
 
 #[derive(Serialize)]
@@ -244,6 +256,7 @@ pub fn build(
     let mut compositions = None;
     let mut files = Vec::new();
     let mut warnings = Vec::new();
+    let mut coded_warnings = Vec::new();
     let result = export(&mut |event| {
         match &event {
             ExportProgress::Composition(info) => composition = Some(*info),
@@ -257,6 +270,13 @@ pub fn build(
             ExportProgress::Wrote(file) => files.push(file.clone()),
             ExportProgress::Warning(warning) | ExportProgress::Note(warning) => {
                 warnings.push(warning.clone());
+            }
+            ExportProgress::CodedWarning(warning) => {
+                warnings.push(warning.message.clone());
+                coded_warnings.push(CodedWarningReport {
+                    code: warning.code,
+                    message: warning.message.clone(),
+                });
             }
             _ => {}
         }
@@ -287,6 +307,7 @@ pub fn build(
                 .collect(),
         ),
         warnings: Some(warnings),
+        coded_warnings,
         stats: Some(Stats {
             elapsed_seconds: round(timing.elapsed().as_secs_f64(), 1_000.0),
             render_fps: timing.render_fps().map(|fps| round(fps, 10.0)),
@@ -330,6 +351,9 @@ pub enum Event {
     MixingAudio,
     Muxing,
     Warning {
+        /// Set for a coded warning, as in the report's `codedWarnings`.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        code: Option<&'static str>,
         message: String,
     },
     /// One of the report's `outputs`, once it is in place.
@@ -367,7 +391,12 @@ impl Events {
             ExportProgress::Muxing => Event::Muxing,
             // A note keeps its `note: ` label among the warnings.
             ExportProgress::Warning(message) | ExportProgress::Note(message) => Event::Warning {
+                code: None,
                 message: message.clone(),
+            },
+            ExportProgress::CodedWarning(warning) => Event::Warning {
+                code: Some(warning.code),
+                message: warning.message.clone(),
             },
             ExportProgress::Wrote(file) => Event::Wrote {
                 output: output(file.clone(), self.frame_rate),
@@ -488,6 +517,7 @@ fn error_only(error: ErrorReport) -> Report {
         compositions: None,
         outputs: None,
         warnings: None,
+        coded_warnings: Vec::new(),
         stats: None,
     }
 }
@@ -744,6 +774,14 @@ pub(crate) fn classify(
             ),
         ),
         ExportError::EmptyTimeline => ("empty_timeline", None),
+        ExportError::RoughScenes(_) => (
+            "rough_scenes",
+            fixed(if cli {
+                "build those scenes and drop their `status: 'rough'`, or export without --final"
+            } else {
+                "build those scenes and drop their `status: 'rough'`, or export without `final`"
+            }),
+        ),
         ExportError::EmptyRange => (
             "empty_range",
             fixed(if cli {
@@ -1030,6 +1068,39 @@ mod tests {
             serde_json::json!(["font fallback", "note: terms of use"])
         );
         assert_eq!(value["composition"]["frames"], 90);
+        // Without a coded warning the key is left out.
+        assert!(value.get("codedWarnings").is_none());
+    }
+
+    #[test]
+    fn coded_warnings_are_listed_with_their_code_and_among_the_warnings() {
+        let rough = || {
+            ExportProgress::CodedWarning(crate::CodedWarning {
+                code: "rough_scenes",
+                message: "1 scene is still rough".into(),
+            })
+        };
+        let value = report(|progress| {
+            progress(ExportProgress::Warning("font fallback".into()));
+            progress(rough());
+            Ok(())
+        });
+        assert_eq!(
+            value["warnings"],
+            serde_json::json!(["font fallback", "1 scene is still rough"])
+        );
+        assert_eq!(
+            value["codedWarnings"],
+            serde_json::json!([{"code": "rough_scenes", "message": "1 scene is still rough"}])
+        );
+        assert_eq!(
+            serde_json::to_value(Events::default().event(&rough())).unwrap(),
+            serde_json::json!({"event": "warning", "code": "rough_scenes", "message": "1 scene is still rough"})
+        );
+        assert_eq!(
+            hint(HintStyle::Cli, ExportError::RoughScenes("x".into())).0,
+            "rough_scenes"
+        );
     }
 
     fn hint(hints: HintStyle, error: ExportError) -> (String, String) {

@@ -471,6 +471,8 @@ Celesta は[メディアプラグイン](/ja/docs/plugins/#メディアプラグ
 
 スクリプトや AI エージェント向けには `--json` を追加します。進捗は表示されず、完了時に JSON を 1 行だけ出力します。状態、生成ファイル、警告、読み込み後のサイズ・fps・フレーム数、失敗時のエラーコードとメッセージが含まれます。生成ファイルのうち動画には `"muxer"`（`"ffmpeg/mp4"` など）、`"video"` と `"audio"`（エンコーダーの `"component"` と書き出したコーデック文字列の `"codec"`、たとえば `"avc1.64001F"`。音声のない動画では `"audio"` は `null`）、`"alpha"`（`true` または `false`）、マルチプレクサーが書いたすべてのファイルの `"files"` が付きます。音声のある動画には `"loudness"`（`"integratedLufs"`、`"truePeakDbtp"`、`--loudness` を付けたときは掛けたゲインの `"gainDb"`）も付きます。コンポーネントに関するエラーコードは、`unsupported_output`（出力の拡張子を書けるマルチプレクサーがない）、`component_unavailable`（コンポーネントが入っていないか、ここでは使えない。理由付き）、`incompatible_components`（マルチプレクサーがエンコーダーのコーデックを受け付けない）、`invalid_option`（エンコーダーにない設定や受け付けない値）、`unknown_preset`（その名前のプリセットがどのプリセットファイルにもない）、`invalid_presets`（プリセットファイルを読めないか、プリセットファイルではない）です。引数が拒否された場合は、状態とエラーのみです。
 
+スクリプトが対応したい警告は `"codedWarnings"` にも入ります。各項目は変わらない `"code"` と `"message"` を持ちます（該当がなければキーはありません）。`nondeterministic_render` は、コンポジションが描画中に `Math.random()` や `Date.now()` などの時計を呼んだことを表します（[アニメーション](/ja/docs/animation/)を参照）。`rough_scenes` は、書き出した範囲にラフカットのシーン（`<Composition chapters>` で `status: 'rough'` のもの。[シーン・キュー・拍](/ja/docs/motion-toolkit/)を参照）があり、仮のカードのまま動画に入ったことを表します。代わりに書き出しを止めるには `--final` を付けます。このとき何も書き出さず、エラーコード `rough_scenes` で失敗します。MCP の `export_video` ツールと `@celesta.studio/exporter` も `final` を受け付け、`codedWarnings` を返します。
+
 ソースビルドを使う場合は、[開発者向け手順](/ja/docs/build-from-source/)に対応する Cargo コマンドがあります。
 
 時刻は秒数、`MM:SS.mmm`、`HH:MM:SS.mmm` を指定できます。選んだ範囲を、自身の 00:00 から始まる新しい動画にします。

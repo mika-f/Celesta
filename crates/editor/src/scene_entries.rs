@@ -602,12 +602,7 @@ mod tests {
     use super::*;
 
     fn chapter(id: &str, from: u64, duration_in_frames: u64) -> ReactChapter {
-        ReactChapter {
-            id: id.to_owned(),
-            name: id.to_owned(),
-            from,
-            duration_in_frames,
-        }
+        ReactChapter::new(id.to_owned(), id.to_owned(), from, duration_in_frames)
     }
 
     /// `defineScenes` counts only as `@celesta.studio/react`'s.

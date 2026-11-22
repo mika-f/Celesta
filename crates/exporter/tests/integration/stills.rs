@@ -1628,6 +1628,10 @@ export default () => <Composition width={16} height={16} fps={4} durationInFrame
     let found = warnings(&first);
     assert_eq!(found.len(), 1, "{found:?}");
     assert!(found[0].starts_with(expected), "{found:?}");
+    // `codedWarnings` lists it with its code and the same text.
+    let coded = &json(&first)["codedWarnings"];
+    assert_eq!(coded[0]["code"], "nondeterministic_render", "{coded}");
+    assert_eq!(coded[0]["message"], found[0].as_str(), "{coded}");
     // The same frame again: the same pixels.
     let pixels_once = decode(&still);
     let again = react_export(&entry, &["--json", "--overwrite", "--frame", "2"], &still);

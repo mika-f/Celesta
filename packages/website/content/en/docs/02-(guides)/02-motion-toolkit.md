@@ -85,6 +85,32 @@ const chapters = [
 
 Like the size and clock, `chapters` is read once when the entry loads, and again on every reload. Chapters are ordered by their start and cut at the composition's end; a chapter of length 0 is a seekable mark. A missing or duplicate `id`, a negative or fractional frame, or a chapter starting at or after the end fails the load with an error.
 
+## A rough cut first
+
+A film of several scenes is easier to agree on before every scene is built: first decide what each scene is, how long it lasts, and what happens in it, as a storyboard does. Give each `defineScenes` entry a one-sentence `desc`, and mark the scenes not built yet `status: 'rough'`:
+
+```tsx title="A rough cut: one scene built, two to go"
+const SCENES = defineScenes([
+  { id: 'title', name: 'Title', durationInFrames: 60, desc: "The film's name on the ground.", Scene: Title },
+  { id: 'card', name: 'The card', durationInFrames: 105, status: 'rough', desc: 'A card slides onto the blueprint.' },
+  { id: 'logo', name: 'Logo', durationInFrames: 45, status: 'rough' },
+]);
+
+<Composition width={1920} height={1080} fps={30} durationInFrames={SCENES.durationInFrames} chapters={SCENES}>
+  <Scenes scenes={SCENES} />
+</Composition>
+```
+
+`<Scenes>` plays each rough scene as a placeholder card: its name and `desc`, its place in the list (**Scene 2 of 3**), its length in seconds and frames, and a bar that fills as the scene plays. The card depends on the frame alone, so it scrubs and exports like any other scene, and it fits vertical and square canvases. A rough scene that already has a `Scene` still shows the card, so you can build it in place; remove `status` to see it. An entry with no `Scene` and no `status` also shows a card, tagged **No Scene yet**, but is not counted as rough.
+
+Pass the list as `chapters`, as above, so the rest of Celesta knows which scenes are rough:
+
+- In the editor, the Chapters row draws rough chapters in grey instead of orange and tags them **Rough**; hovering a chapter shows its `desc`. The React Preview tab's Chapters list tags them too and shows each `desc` under its name.
+- An export of a span with rough scenes warns that they are still rough, naming them. In `--json`, the warning also appears in `codedWarnings` with the code `rough_scenes`. Export with `--final` to refuse rough scenes instead (see [Export](/en/docs/export/)). Still frames and contact sheets do not warn, since a contact sheet is how you review a rough cut.
+- `inspect.mjs` and the MCP `inspect` tool list the chapters with their `desc` and mark the rough ones.
+
+To draw the card for a scene laid out another way, such as a chapter of a `<TransitionSeries>`, place `<ScenePlaceholder name desc index count durationInFrames>` in a `<Sequence>` of the scene's length. `<FrameChrome>` does not draw `desc`: it is a note about the cut, not a caption.
+
 ## Transitions between scenes
 
 `<TransitionSeries>` lays scenes out like `Series`, with a `<TransitionSeries.Transition>` between two of them. A transition overlaps the scenes on either side by its `durationInFrames`, so `computeTransitionSeries()` returns each scene’s start and the total length, shortened by every overlap:

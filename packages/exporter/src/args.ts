@@ -34,6 +34,7 @@ export function videoArgs(options: VideoOptions): string[] {
     ...value('loudness', options.loudness),
     ...value('true-peak', options.truePeak),
     ...value('peak-handling', options.peakHandling),
+    ...(options.final ? ['--final'] : []),
   ];
   return command(flags, options, options.output);
 }

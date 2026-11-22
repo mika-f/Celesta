@@ -150,6 +150,21 @@ impl LaneView {
     }
 }
 
+/// The word the Chapters row and list put after a rough chapter's name.
+pub(crate) const ROUGH_TAG: &str = "Rough";
+
+/// What hovering a chapter in the Chapters row says: its `desc`, after
+/// "Rough cut" for a rough one. `None` for a final chapter without a `desc`,
+/// whose name already says all there is.
+pub(crate) fn chapter_tooltip(chapter: &ReactChapter) -> Option<SharedString> {
+    match (chapter.is_rough(), chapter.desc.as_deref()) {
+        (false, None) => None,
+        (false, Some(desc)) => Some(desc.to_owned().into()),
+        (true, None) => Some("Rough cut: not built yet".into()),
+        (true, Some(desc)) => Some(format!("Rough cut: {desc}").into()),
+    }
+}
+
 /// The lane each chapter goes on in the Chapters row: the first lane whose
 /// chapters all end by the time it starts. `chapters` is ordered by `from`,
 /// as the runtime reports it, so a part listed after the scene holding it
@@ -1547,6 +1562,14 @@ impl EditorView {
                     0.0
                 };
                 let target = chapter.clone();
+                // A rough cut's scene, not built yet: grey rather than the
+                // accent, and tagged, so the unbuilt ones read at a glance.
+                let color = if chapter.is_rough() {
+                    cx.theme().muted_foreground
+                } else {
+                    theme::accent()
+                };
+                let tip = chapter_tooltip(chapter);
                 div()
                     .id(SharedString::from(format!(
                         "timeline-chapter-{}",
@@ -1561,20 +1584,32 @@ impl EditorView {
                     .overflow_hidden()
                     .border_l_2()
                     .when(appears_in.contains(&chapter.id), |block| block.border_b_2())
-                    .border_color(theme::accent())
-                    .bg(theme::accent().opacity(if is_current { 0.42 } else { 0.16 }))
+                    .border_color(color)
+                    .bg(color.opacity(if is_current { 0.42 } else { 0.16 }))
                     .cursor_pointer()
                     .child(
                         div()
                             .absolute()
                             .top(rems(0.0625))
                             .left(relative(label_offset))
+                            .flex()
+                            .gap_1()
                             .px_2()
                             .text_sm()
                             .text_color(cx.theme().foreground)
                             .whitespace_nowrap()
-                            .child(chapter.name.clone()),
+                            .child(chapter.name.clone())
+                            .when(chapter.is_rough(), |label| {
+                                label.child(
+                                    div()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(ROUGH_TAG),
+                                )
+                            }),
                     )
+                    .when_some(tip, |block, tip| {
+                        block.tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
+                    })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
                         this.seek_chapter(&target, cx);
@@ -2044,14 +2079,14 @@ fn wheel_zoom_factor(delta_y: f32) -> f64 {
 mod tests {
     use super::{
         LaneGesture, LaneView, LaneWheel, RulerDrag, SelectionBand, band_geometry, chapter_lanes,
-        edit_points, follow_playhead, merge_close_bands, scrub_frames, selection_bands,
-        timeline_rows,
+        chapter_tooltip, edit_points, follow_playhead, merge_close_bands, scrub_frames,
+        selection_bands, timeline_rows,
     };
     use crate::impact::ImpactView;
     use celesta_composition::Time;
     use celesta_editor_core::{ClipKind, ClipSummary, TrackSummary};
     use celesta_project::TrackKind;
-    use celesta_react_bridge::ReactChapter;
+    use celesta_react_bridge::{ChapterStatus, ReactChapter};
     use gpui_kit::{Modifiers, TouchPhase, point};
 
     #[test]
@@ -2084,15 +2119,42 @@ mod tests {
             ("outro", 150, 60),
         ]
         .into_iter()
-        .map(|(id, from, duration_in_frames)| ReactChapter {
-            id: id.to_owned(),
-            name: id.to_owned(),
-            from,
-            duration_in_frames,
+        .map(|(id, from, duration_in_frames)| {
+            ReactChapter::new(id.to_owned(), id.to_owned(), from, duration_in_frames)
         })
         .collect();
         assert_eq!(chapter_lanes(&chapters), [0, 0, 1, 1, 0, 1]);
         assert!(chapter_lanes(&[]).is_empty());
+    }
+
+    #[test]
+    fn a_chapter_tooltip_says_rough_and_its_desc() {
+        let plain = ReactChapter::new("a", "A", 0, 30);
+        let described = ReactChapter {
+            desc: Some("A card slides in.".to_owned()),
+            ..plain.clone()
+        };
+        let rough = ReactChapter {
+            status: ChapterStatus::Rough,
+            ..plain.clone()
+        };
+        let rough_described = ReactChapter {
+            status: ChapterStatus::Rough,
+            ..described.clone()
+        };
+        assert_eq!(chapter_tooltip(&plain), None);
+        assert_eq!(
+            chapter_tooltip(&described).as_deref(),
+            Some("A card slides in.")
+        );
+        assert_eq!(
+            chapter_tooltip(&rough).as_deref(),
+            Some("Rough cut: not built yet")
+        );
+        assert_eq!(
+            chapter_tooltip(&rough_described).as_deref(),
+            Some("Rough cut: A card slides in.")
+        );
     }
 
     fn assert_bands(actual: Vec<(f32, f32)>, expected: &[(f32, f32)]) {

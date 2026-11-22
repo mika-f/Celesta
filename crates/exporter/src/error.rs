@@ -157,6 +157,10 @@ pub enum ExportError {
     UnsupportedDimensions { width: u32, height: u32 },
     #[error("cannot export an empty timeline")]
     EmptyTimeline,
+    /// A final export (`--final`) of a span with rough scenes in it: a
+    /// rough cut's placeholder cards, which a final export refuses.
+    #[error("{0}; a final export refuses rough scenes")]
+    RoughScenes(String),
     /// The requested export range, once clamped to the composition and
     /// snapped to frames, covers zero frames.
     #[error("the requested export range does not cover any frames")]

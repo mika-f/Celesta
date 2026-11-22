@@ -233,6 +233,9 @@ impl EditorView {
             ExportEvent::Progress(ExportProgress::Warning(warning)) => {
                 self.export_notices.warning(warning);
             }
+            ExportEvent::Progress(ExportProgress::CodedWarning(warning)) => {
+                self.export_notices.warning(warning.message);
+            }
             ExportEvent::Progress(ExportProgress::Note(note)) => {
                 self.export_notices.note(note);
             }
