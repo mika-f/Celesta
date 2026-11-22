@@ -45,6 +45,15 @@ or further alternate decoder modes to the plane gate.
 
 ## Checks and outcome
 
+First Windows trial (`e90cf225`, job `137333823771`): every limited-range frame
+at 320x180 matched normal FFmpeg exactly, max 0, mean 0, differing bytes 0,
+over both transports. Own-RGBA max 2, alpha exact. The test then encountered
+`unexpected Media Foundation NV12 type, color or aperture` opening the untagged
+fixture, before any plane comparison. This is not a plane mismatch and does
+not yet trigger option 1. The error now includes the negotiated type/color
+values to identify the failing validation, and test errors identify the path,
+transport and time. No decoder behavior or quality setting is changed.
+
 Windows/macOS CI determines whether option 2 succeeds or option 1 is needed.
 The final handoff response records signed SHA, metrics, chosen option and all
 settled checks. Native before/after screenshots remain unavailable on Linux;

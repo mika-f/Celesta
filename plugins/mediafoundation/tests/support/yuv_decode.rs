@@ -379,7 +379,9 @@ fn exercise(path: &Path, expected: DecodedColor) {
             };
             let answer = process
                 .decode_video(DECODER_ID, &request(path, time, accepted))
-                .unwrap();
+                .unwrap_or_else(|error| {
+                    panic!("{} {transport:?} t={time}: {error}", path.display())
+                });
             let rgba = MfCodec::new()
                 .decode_video(DECODER_ID, &request(path, time, &[F::Rgba8]))
                 .unwrap();

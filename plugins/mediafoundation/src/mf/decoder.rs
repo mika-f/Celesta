@@ -586,8 +586,16 @@ impl NativeLayout {
         video: &VideoStream,
         expected: DecodedColor,
     ) -> Result<Self, MediaError> {
-        let bad =
-            || MediaError::Codec("unexpected Media Foundation NV12 type, color or aperture".into());
+        let bad = || {
+            MediaError::Codec(format!(
+                "unexpected Media Foundation NV12 type, color or aperture: subtype={:?} size={:?} matrix={:?} range={:?} chroma={:?} expected={expected:?}",
+                guid_of(current, &MF_MT_SUBTYPE),
+                pair_of(current, &MF_MT_FRAME_SIZE),
+                u32_of(current, &MF_MT_YUV_MATRIX),
+                u32_of(current, &MF_MT_VIDEO_NOMINAL_RANGE),
+                u32_of(current, &MF_MT_VIDEO_CHROMA_SITING),
+            ))
+        };
         if guid_of(current, &MF_MT_SUBTYPE) != Some(MFVideoFormat_NV12)
             || color_attributes(expected)
                 .iter()
