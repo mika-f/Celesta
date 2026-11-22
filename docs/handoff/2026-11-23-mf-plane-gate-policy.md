@@ -12,7 +12,7 @@
    mandatory own-RGBA max <=4/channel plus exact-alpha gate. Document results.
 4. Confirm macOS stays green. New commits, push, signed recreation, all CI.
 
-## Implementation of option 2 trial
+## Implementation (option 2 retained)
 
 - `plugins/mediafoundation/tests/support/yuv_decode.rs`: removes the alternate
   decoder/reference/selector tests, restoring the original normal-FFmpeg
@@ -65,7 +65,45 @@ values. Range/chroma/subtype/aperture validation and every pixel gate remain
 unchanged. This fixes the branch's untagged negotiation rejection; it does not
 change pixel data or decoder settings.
 
-Windows/macOS CI determines whether option 2 succeeds or option 1 is needed.
-The final handoff response records signed SHA, metrics, chosen option and all
-settled checks. Native before/after screenshots remain unavailable on Linux;
-this step changes test policy/fixtures, not production rendering behavior.
+## Final result: option 2
+
+Signed code commit `faa878a39d619cf4d1dc78f4bf1fda56da1d3d5b` passed all CI:
+10 passed, 0 failed, 0 pending, 5 skipped. Windows plugin job `137340986159`
+reports **141 MF tests passed**. macOS plugins (`137340986015`) and root tests
+(`137340985959`) passed with unchanged AVFoundation fixtures/exact gates.
+
+All three 320x180 variants match normal FFmpeg exactly on every frame, both
+transports, with prefetch and the offer-change/seek/EOF requests. There are 12
+NV12 comparisons per variant per transport (all eight frames plus repeats and
+EOF clamping), **72 comparisons**, each max 0, mean 0, differing bytes 0.
+Both 1080p comparisons are also exact. **Option 1 is not needed or implemented:
+the normal-FFmpeg exact plane gate remains on every eligible MF fixture.**
+
+The mandatory own-RGBA/exact-alpha gate passes every comparison. Across each
+variant's requests, the observed worst RGB maximum/mean/differing-pixel count
+(the individual maxima need not refer to the same request) are:
+
+| Fixture | Max RGB | Largest mean | Largest differing-pixel count |
+| --- | ---: | ---: | ---: |
+| 320x180 709 limited | 2 | 0.084699074 | 13187 |
+| 320x180 untagged | 2 | 0.090659722 | 13954 |
+| 320x180 709 full | 2 | 0.058356481 | 9207 |
+| 1080p | 2 | 0.055932034 | 326878 |
+
+Alpha is exact throughout. Optional HEVC/10-bit and unsupported ProRes/odd-size
+capability skips remain as before; no skipped fixture is claimed bit-exact.
+There is no alternate loop-filter reference and no MF quality-setting change.
+
+Local checks after the matrix validation fix: MF portable library tests
+**71 passed, 0 failed** (0.13s); MF all-target Clippy `-D warnings` completed
+(0.33s); isolated actual Windows decoder/API test-config Clippy completed
+(0.40s). Gate-helper Clippy/fixture-retag audit passed earlier after removing
+the alternate reference. Formatting/diff checks exited 0. Isolated audits do
+not establish native parity; the Windows CI results above do.
+
+Logs, metrics and signing records are retained under
+`/home/ubuntu/research/native-yuv/320-*`. The final handoff response records the
+signed documentation HEAD and its settled checks. Native before/after
+screenshots remain unavailable on Linux; no pixel conversion/rendering
+behavior or fixture data changed, apart from the source-consistent untagged
+validation fix and generated H.264 fixture dimensions described above.
