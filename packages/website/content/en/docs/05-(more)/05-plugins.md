@@ -408,6 +408,8 @@ Video frames cross memory Celesta shares with the media plugin's process, which 
 
 For an A/B comparison of the same export, set `CELESTA_DECODE_YUV=0` before starting Celesta to request only RGBA8 decoded frames, even when the GPU path would accept YUV. Unset or any other value keeps the usual pixel-format negotiation. This does not change encoding or the plugin's RGBA conversion.
 
+The `ffmpeg` decoder can answer NV12 or I420. On macOS, `avfoundation` can answer NV12 for offered, even-sized, upright 8-bit 4:2:0 H.264 and HEVC Main SDR video with a supported BT.601/709 matrix and left chroma siting. Other sources and RGBA-only offers keep its existing RGBA conversion; alpha, rotated, HDR and 10-bit sources do not take this NV12 path. Media Foundation still answers RGBA8.
+
 To use your own build, use a separate prefix for each variant and the environment variables in [Build from source](/en/docs/build-from-source/). Build the desired plugin with `node scripts/plugins/build.mts plugins/ffmpeg-x264 --out <your user plugin folder>` (or `plugins/ffmpeg` for the standard build). The user folder is searched before bundled plugins, and the app asks before running them. Only `ffmpeg-x264` ships `LICENSE-GPL-2.0` and `GPL-SOURCE-OFFER.md`; `ffmpeg` ships `LICENSE-LGPL-2.1` and `FFMPEG-SOURCE.md`. Both builds retain `LICENSE-MIT` and `LICENSE-APACHE`. The repository root contains only Celesta's MIT/Apache license texts; FFmpeg GPL/LGPL texts live under the relevant plugin folders. In a package, they remain in each plugin's `licenses/` folder and describe the linked FFmpeg build. Update source and relinking materials to match any build you distribute.
 
 ## Samples

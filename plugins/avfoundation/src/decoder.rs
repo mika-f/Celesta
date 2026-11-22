@@ -8,8 +8,9 @@
 //! first (retimed to the start), and later ones as they are, so a request
 //! walks the reader forward to the last frame shown by its time. A time past
 //! the last frame is clamped to it (as FFmpeg's `clamp_to_source_end`).
-//! Frames are 8-bit BGRA converted by AVFoundation from BT.709 (deviation
-//! 64), turned to RGBA, and turned upright by a quarter-turn
+//! Eligible offered frames stay NV12; other frames are 8-bit BGRA
+//! converted by AVFoundation from BT.709 (deviation 64), turned to RGBA,
+//! and turned upright by a quarter-turn
 //! `preferredTransform` (as FFmpeg's autorotation). A sequential session
 //! keeps its reader while its requests move forward by up to a second.
 //!
@@ -21,8 +22,8 @@ use crate::names::{codec_name, matrix_name, pcm_name, primaries_name, transfer_n
 use block2::RcBlock;
 use celesta_composition::{Rational, Time};
 use celesta_media::{
-    AudioBuffer, AudioStream, MediaError, MediaProbe, VideoColor, VideoFrame, VideoRequest,
-    VideoStream, timestamps_match, video_seconds,
+    AudioBuffer, AudioStream, DecodedColor, DecodedPixelFormat, DecodedRange, MediaError,
+    MediaProbe, VideoColor, VideoFrame, VideoRequest, VideoStream, timestamps_match, video_seconds,
 };
 use objc2::rc::{Retained, autoreleasepool};
 use objc2::runtime::AnyObject;
@@ -36,18 +37,32 @@ use objc2_av_foundation::{
 use objc2_core_audio_types::{
     kAudioFormatFlagIsBigEndian, kAudioFormatFlagIsFloat, kAudioFormatLinearPCM,
 };
-use objc2_core_foundation::{CFRetained, CFString, CGAffineTransform};
+use objc2_core_foundation::{
+    CFBoolean, CFData, CFDictionary, CFRetained, CFString, CFType, CGAffineTransform,
+};
 use objc2_core_media::{
     CMAudioFormatDescriptionGetStreamBasicDescription, CMFormatDescription, CMSampleBuffer, CMTime,
     CMTimeFlags, CMTimeRange, CMVideoFormatDescriptionGetDimensions,
-    kCMFormatDescriptionExtension_ColorPrimaries, kCMFormatDescriptionExtension_TransferFunction,
-    kCMFormatDescriptionExtension_YCbCrMatrix, kCMTimePositiveInfinity,
+    kCMFormatDescriptionExtension_ChromaLocationBottomField,
+    kCMFormatDescriptionExtension_ChromaLocationTopField,
+    kCMFormatDescriptionExtension_ColorPrimaries,
+    kCMFormatDescriptionExtension_ContainsAlphaChannel,
+    kCMFormatDescriptionExtension_FullRangeVideo,
+    kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms,
+    kCMFormatDescriptionExtension_TransferFunction, kCMFormatDescriptionExtension_YCbCrMatrix,
+    kCMTimePositiveInfinity,
 };
 use objc2_core_video::{
-    CVPixelBuffer, CVPixelBufferGetBaseAddress, CVPixelBufferGetBytesPerRow,
-    CVPixelBufferGetHeight, CVPixelBufferGetPixelFormatType, CVPixelBufferGetWidth,
-    CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags, CVPixelBufferUnlockBaseAddress,
-    kCVPixelBufferPixelFormatTypeKey, kCVPixelFormatType_32BGRA,
+    CVPixelBuffer, CVPixelBufferGetBaseAddress, CVPixelBufferGetBaseAddressOfPlane,
+    CVPixelBufferGetBytesPerRow, CVPixelBufferGetBytesPerRowOfPlane, CVPixelBufferGetHeight,
+    CVPixelBufferGetHeightOfPlane, CVPixelBufferGetPixelFormatType, CVPixelBufferGetPlaneCount,
+    CVPixelBufferGetWidth, CVPixelBufferGetWidthOfPlane, CVPixelBufferLockBaseAddress,
+    CVPixelBufferLockFlags, CVPixelBufferUnlockBaseAddress, kCVImageBufferChromaLocation_Left,
+    kCVImageBufferChromaLocationBottomFieldKey, kCVImageBufferChromaLocationTopFieldKey,
+    kCVImageBufferColorPrimariesKey, kCVImageBufferTransferFunctionKey,
+    kCVImageBufferYCbCrMatrixKey, kCVPixelBufferPixelFormatTypeKey, kCVPixelFormatType_32BGRA,
+    kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+    kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
 };
 use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString, NSURL};
 use std::collections::HashMap;
@@ -175,6 +190,8 @@ struct VideoTrack {
     /// The displayed size (the probe's).
     width: u32,
     height: u32,
+    native: Option<DecodedColor>,
+    color: VideoColor,
 }
 
 /// A decoded sample buffer, shown from `seconds`.
@@ -195,6 +212,7 @@ struct Run {
     next: Option<Shown>,
     /// Whether the reader has given its last frame.
     ended: bool,
+    native: Option<DecodedColor>,
 }
 
 impl Drop for Run {
@@ -219,7 +237,7 @@ struct Session {
 }
 
 /// A sequential session: the renderer's name for it, and the file.
-type SessionKey = (String, PathBuf);
+type SessionKey = (String, PathBuf, Vec<DecodedPixelFormat>);
 
 /// The decoder's assets by path and its sequential sessions.
 #[derive(Default)]
@@ -359,6 +377,95 @@ fn video_color(format: &CMFormatDescription) -> VideoColor {
     }
 }
 
+fn native_color(
+    format: &CMFormatDescription,
+    transform: CGAffineTransform,
+    width: u32,
+    height: u32,
+) -> Option<DecodedColor> {
+    if width == 0
+        || height == 0
+        || !width.is_multiple_of(2)
+        || !height.is_multiple_of(2)
+        || transform.a != 1.0
+        || transform.b != 0.0
+        || transform.c != 0.0
+        || transform.d != 1.0
+    {
+        return None;
+    }
+    // SAFETY: immutable CoreMedia keys and a valid format description.
+    let (atoms, alpha, range) = unsafe {
+        (
+            format.extension(kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms)?,
+            format.extension(kCMFormatDescriptionExtension_ContainsAlphaChannel),
+            format.extension(kCMFormatDescriptionExtension_FullRangeVideo),
+        )
+    };
+    if alpha
+        .as_deref()
+        .is_some_and(|v| v.downcast_ref::<CFBoolean>().is_none_or(CFBoolean::value))
+    {
+        return None;
+    }
+    // SAFETY: a valid video format description.
+    let name = match unsafe { format.media_sub_type() }.to_be_bytes() {
+        [b'a', b'v', b'c', b'1' | b'3'] => "avcC",
+        [b'h', b'v', b'c', b'1'] | [b'h', b'e', b'v', b'1'] => "hvcC",
+        _ => return None,
+    };
+    let atoms = atoms.downcast_ref::<CFDictionary>()?;
+    // SAFETY: CMFormatDescription extensions are property lists: dictionary
+    // keys are CFStrings and values are CoreFoundation objects.
+    let atoms = unsafe { atoms.cast_unchecked::<CFString, CFType>() };
+    let record = atoms.get(&CFString::from_str(name))?;
+    let record = record.downcast_ref::<CFData>()?.to_vec();
+    if !(if name == "avcC" {
+        crate::params::avc_8bit420(&record)
+    } else {
+        crate::params::hevc_8bit420(&record)
+    }) {
+        return None;
+    }
+    // SAFETY: immutable CoreMedia and CoreVideo keys.
+    unsafe {
+        for key in [
+            kCMFormatDescriptionExtension_ChromaLocationTopField,
+            kCMFormatDescriptionExtension_ChromaLocationBottomField,
+        ] {
+            if extension(format, key)
+                .is_some_and(|v| v != kCVImageBufferChromaLocation_Left.to_string())
+            {
+                return None;
+            }
+        }
+        if extension(format, kCMFormatDescriptionExtension_YCbCrMatrix)
+            .is_some_and(|v| matrix_name(&v).is_none())
+        {
+            return None;
+        }
+        for (key, name) in [
+            (
+                kCMFormatDescriptionExtension_ColorPrimaries,
+                primaries_name as fn(&str) -> Option<&'static str>,
+            ),
+            (
+                kCMFormatDescriptionExtension_TransferFunction,
+                transfer_name,
+            ),
+        ] {
+            if extension(format, key).is_some_and(|v| name(&v).is_none()) {
+                return None;
+            }
+        }
+    }
+    let range = match range.as_deref() {
+        Some(value) if value.downcast_ref::<CFBoolean>()?.value() => DecodedRange::Full,
+        _ => DecodedRange::Limited,
+    };
+    crate::nv12::color(&video_color(format), range)
+}
+
 /// `track` as the probe's video stream, and how it is decoded.
 fn video_stream(index: u32, track: Retained<AVAssetTrack>) -> Option<(VideoStream, VideoTrack)> {
     let format = &*format_description(&track)?;
@@ -399,6 +506,8 @@ fn video_stream(index: u32, track: Retained<AVAssetTrack>) -> Option<(VideoStrea
         turn,
         width,
         height,
+        native: native_color(format, transform, coded.0, coded.1),
+        color: stream.color.clone(),
     };
     Some((stream, decoded))
 }
@@ -545,7 +654,12 @@ fn shown_by(frame: f64, time: f64) -> bool {
 
 impl Run {
     /// A reader of `video` from `time` seconds, started.
-    fn open(source: &Source, video: &VideoTrack, time: f64) -> Result<Run, MediaError> {
+    fn open(
+        source: &Source,
+        video: &VideoTrack,
+        time: f64,
+        native: Option<DecodedColor>,
+    ) -> Result<Run, MediaError> {
         let reader = new_reader(source)?;
         // SAFETY (each static): an immutable string the frameworks define.
         let (primaries_key, primaries, transfer_key, transfer, matrix_key, matrix, color_key) = unsafe {
@@ -572,13 +686,17 @@ impl Run {
                 matrix.ok_or_else(missing)?.as_ref(),
             ],
         );
-        let bgra = NSNumber::new_u32(kCVPixelFormatType_32BGRA);
+        let bgra = NSNumber::new_u32(native.map_or(kCVPixelFormatType_32BGRA, nv12_format));
         // SAFETY: an immutable CFString CoreVideo defines.
         let format_key = cf_key(unsafe { kCVPixelBufferPixelFormatTypeKey });
-        let settings: Retained<NSDictionary<NSString, AnyObject>> = NSDictionary::from_slices(
-            &[format_key, color_key.ok_or_else(missing)?],
-            &[bgra.as_ref(), color.as_ref()],
-        );
+        let settings: Retained<NSDictionary<NSString, AnyObject>> = if native.is_some() {
+            NSDictionary::from_slices(&[format_key], &[bgra.as_ref()])
+        } else {
+            NSDictionary::from_slices(
+                &[format_key, color_key.ok_or_else(missing)?],
+                &[bgra.as_ref(), color.as_ref()],
+            )
+        };
         let start = CMTime {
             value: start_ticks(time, video.timescale),
             timescale: video.timescale,
@@ -614,6 +732,7 @@ impl Run {
             current: None,
             next: None,
             ended: false,
+            native,
         })
     }
 
@@ -682,7 +801,7 @@ impl Run {
         if let Some(frame) = &shown.frame {
             return Ok(frame.clone());
         }
-        let frame = convert(&shown.sample, video)?;
+        let frame = convert(&shown.sample, video, self.native)?;
         shown.frame = Some(frame.clone());
         Ok(frame)
     }
@@ -695,12 +814,145 @@ fn start_ticks(time: f64, timescale: i32) -> i64 {
     ((time + tolerance) * f64::from(timescale)).floor() as i64
 }
 
-/// `sample`'s BGRA image as tightly packed RGBA, turned upright.
-fn convert(sample: &CMSampleBuffer, video: &VideoTrack) -> Result<VideoFrame, MediaError> {
+fn nv12_format(color: DecodedColor) -> u32 {
+    match color.range {
+        DecodedRange::Limited => kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+        DecodedRange::Full => kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+    }
+}
+
+fn convert_nv12(
+    buffer: &CVPixelBuffer,
+    video: &VideoTrack,
+    requested: DecodedColor,
+) -> Result<VideoFrame, MediaError> {
+    let bad = || MediaError::Codec("AVAssetReader gave an unexpected NV12 layout or colour".into());
+    if CVPixelBufferGetPixelFormatType(buffer) != nv12_format(requested)
+        || CVPixelBufferGetWidth(buffer) != video.width as usize
+        || CVPixelBufferGetHeight(buffer) != video.height as usize
+        || CVPixelBufferGetPlaneCount(buffer) != 2
+    {
+        return Err(bad());
+    }
+    let mut tags = video.color.clone();
+    // SAFETY: immutable CoreVideo keys; a null attachment-mode pointer is allowed.
+    unsafe {
+        if let Some(value) = buffer.attachment(
+            kCMFormatDescriptionExtension_FullRangeVideo,
+            std::ptr::null_mut(),
+        ) {
+            let full = value.downcast_ref::<CFBoolean>().ok_or_else(bad)?.value();
+            if full != (requested.range == DecodedRange::Full) {
+                return Err(bad());
+            }
+        }
+        for (key, name, tag) in [
+            (
+                kCVImageBufferYCbCrMatrixKey,
+                matrix_name as fn(&str) -> Option<&'static str>,
+                &mut tags.matrix,
+            ),
+            (
+                kCVImageBufferTransferFunctionKey,
+                transfer_name,
+                &mut tags.transfer,
+            ),
+            (
+                kCVImageBufferColorPrimariesKey,
+                primaries_name,
+                &mut tags.primaries,
+            ),
+        ] {
+            if let Some(value) = buffer.attachment(key, std::ptr::null_mut()) {
+                let value = value
+                    .downcast_ref::<CFString>()
+                    .ok_or_else(bad)?
+                    .to_string();
+                *tag = Some(name(&value).ok_or_else(bad)?.to_owned());
+            }
+        }
+        for key in [
+            kCVImageBufferChromaLocationTopFieldKey,
+            kCVImageBufferChromaLocationBottomFieldKey,
+        ] {
+            if let Some(value) = buffer.attachment(key, std::ptr::null_mut())
+                && value
+                    .downcast_ref::<CFString>()
+                    .ok_or_else(bad)?
+                    .to_string()
+                    != kCVImageBufferChromaLocation_Left.to_string()
+            {
+                return Err(bad());
+            }
+        }
+    }
+    let color = crate::nv12::color(&tags, requested.range).ok_or_else(bad)?;
+    let lock = CVPixelBufferLockFlags::ReadOnly;
+    // SAFETY: a valid buffer; the lock is balanced below even on copy errors.
+    let status = unsafe { CVPixelBufferLockBaseAddress(buffer, lock) };
+    if status != 0 {
+        return Err(MediaError::Codec(format!(
+            "CVPixelBufferLockBaseAddress failed: {status}"
+        )));
+    }
+    let result = (|| {
+        let mut planes = Vec::with_capacity(2);
+        for index in 0..2 {
+            let rows = video.height as usize / (index + 1);
+            if CVPixelBufferGetWidthOfPlane(buffer, index) != video.width as usize / (index + 1)
+                || CVPixelBufferGetHeightOfPlane(buffer, index) != rows
+            {
+                return Err(bad());
+            }
+            let stride = CVPixelBufferGetBytesPerRowOfPlane(buffer, index);
+            let base = CVPixelBufferGetBaseAddressOfPlane(buffer, index);
+            let length = (rows - 1)
+                .checked_mul(stride)
+                .and_then(|n| n.checked_add(video.width as usize))
+                .ok_or_else(bad)?;
+            if base.is_null() || stride < video.width as usize || length > isize::MAX as usize {
+                return Err(bad());
+            }
+            // SAFETY: locked, live CoreVideo plane, with validated row size and extent.
+            planes.push((
+                unsafe { std::slice::from_raw_parts(base.cast::<u8>(), length) },
+                stride,
+            ));
+        }
+        let pixels = celesta_media::pack_nv12(
+            video.width,
+            video.height,
+            planes[0].0,
+            planes[0].1,
+            planes[1].0,
+            planes[1].1,
+        )?;
+        VideoFrame::new(
+            video.width,
+            video.height,
+            DecodedPixelFormat::Nv12,
+            Some(color),
+            pixels,
+        )
+    })();
+    // SAFETY: balances the successful read-only lock above; no plane reference escapes.
+    unsafe { CVPixelBufferUnlockBaseAddress(buffer, lock) };
+    result
+}
+
+/// `sample`'s image as tightly packed offered NV12 or upright RGBA.
+fn convert(
+    sample: &CMSampleBuffer,
+    video: &VideoTrack,
+    native: Option<DecodedColor>,
+) -> Result<VideoFrame, MediaError> {
     // SAFETY: a sample buffer's image buffer may always be read.
     let image = unsafe { sample.image_buffer() }
         .ok_or_else(|| MediaError::Codec("AVAssetReader gave a frame without an image".into()))?;
     let buffer: &CVPixelBuffer = &image;
+    if let Some(color) = native {
+        return convert_nv12(buffer, video, color);
+    }
     let format = CVPixelBufferGetPixelFormatType(buffer);
     if format != kCVPixelFormatType_32BGRA {
         return Err(MediaError::Codec(format!(
@@ -824,12 +1076,20 @@ impl AvfDecoder {
             return Err(MediaError::NoVideoStream(path.to_owned()));
         };
         let time = clamp_to_source_end(time, stream, source.probe.duration);
+        let native = request
+            .accepts(DecodedPixelFormat::Nv12)
+            .then_some(video.native)
+            .flatten();
         let Some(sequential) = request.sequential else {
-            return Run::open(source, video, time)?.frame_at(time, video, path);
+            return Run::open(source, video, time, native)?.frame_at(time, video, path);
         };
 
         self.requests = self.requests.saturating_add(1);
-        let key = (sequential.session.to_owned(), path.to_owned());
+        let key = (
+            sequential.session.to_owned(),
+            path.to_owned(),
+            request.accepted_pixel_formats.to_vec(),
+        );
         let source = &self.sources[path];
         let video = source.video.as_ref().expect("the source has video");
         let reusable = self.sessions.get(&key).is_some_and(|session| {
@@ -838,7 +1098,7 @@ impl AvfDecoder {
         });
         if !reusable {
             self.sessions.remove(&key);
-            let run = Run::open(source, video, time)?;
+            let run = Run::open(source, video, time, native)?;
             self.sessions.insert(
                 key.clone(),
                 Session {
