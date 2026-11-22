@@ -42,8 +42,8 @@ pub const MIN_SCENE_SECONDS: f64 = 1.0;
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, strum::IntoStaticStr,
 )]
-#[serde(rename_all = "kebab-case")]
-#[strum(serialize_all = "kebab-case")]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum QualityCode {
     /// More than three general flashes in a second, over enough of the
     /// picture.
@@ -281,11 +281,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn codes_are_kebab_case_and_issues_print_them_first() {
-        assert_eq!(QualityCode::LowContrastText.as_str(), "low-contrast-text");
+    fn codes_are_snake_case_and_issues_print_them_first() {
+        assert_eq!(QualityCode::LowContrastText.as_str(), "low_contrast_text");
         assert_eq!(
             serde_json::to_value(QualityCode::RedFlashing).unwrap(),
-            "red-flashing"
+            "red_flashing"
         );
         let issue = QualityIssue::new(
             QualityCode::ShortScene,
@@ -294,10 +294,10 @@ mod tests {
         );
         assert_eq!(
             issue.to_string(),
-            "short-scene: chapter \"intro\" lasts 0.50 s"
+            "short_scene: chapter \"intro\" lasts 0.50 s"
         );
         let value = serde_json::to_value(&issue).unwrap();
-        assert_eq!(value["code"], "short-scene");
+        assert_eq!(value["code"], "short_scene");
         assert_eq!(value["measured"], "layers");
         assert!(value.get("frames").is_none() && value.get("layer").is_none());
     }

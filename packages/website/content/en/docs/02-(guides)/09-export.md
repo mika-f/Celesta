@@ -481,18 +481,18 @@ Add `--debug-guides` to draw a React composition's `<DebugOverlay>` and `<DebugB
 
 ## Check for flashing, contrast, and pacing
 
-Every export, and `--info`, warns about problems it can read from the layers it evaluates, without extra work: a scene (an outermost `<Composition chapters>` entry, or an item on a JSON project's video track) shorter than one second, a frame 0 that shows nothing but solid rectangles (frame 0 is the thumbnail and the video's first frame), and text whose color is too close to the solid rectangle colors behind it. Each warning starts with a stable code, such as `warning: short-scene: chapter "intro" lasts 0.50 s …`.
+Every export, and `--info`, warns about problems it can read from the layers it evaluates, without extra work: a scene (an outermost `<Composition chapters>` entry, or an item on a JSON project's video track) shorter than one second, a frame 0 that shows nothing but solid rectangles (frame 0 is the thumbnail and the video's first frame), and text whose color is too close to the solid rectangle colors behind it. Each warning starts with a stable code, such as `warning: short_scene: chapter "intro" lasts 0.50 s …`.
 
 `--check-quality` renders every frame (or the `--from`/`--to` span) and measures the pixels, writing no file. It takes about as long as rendering the video, and exits with status 1 when it finds anything:
 
 | Code | Meaning |
 | --- | --- |
 | `flashing` | More than three flashes (pairs of opposing changes in brightness of at least 10 %, the darker side below 80 %) in one second over more than a quarter of any third-by-third window of the frame: WCAG 2.3.1's general flash threshold, which guards against seizures. The warning gives the frames and the region. |
-| `red-flashing` | The same for saturated red (WCAG's red flash threshold). |
-| `low-contrast-text` | Text below 4.5:1 contrast against what is drawn behind it (3:1 for text at least 24 px, or 18.66 px bold, on a 1080-pixel short side), measured on its glyph pixels about twice a second. An outline, shadow, or glow counts as the text's backdrop. Text fading or scaling in is measured once it holds still. |
-| `short-shot` | The picture between two hard cuts lasts less than one second. |
-| `short-scene` | A chapter or video item is shorter than one second (from the layers, as above). |
-| `blank-first-frame` | Frame 0 is one flat color. |
+| `red_flashing` | The same for saturated red (WCAG's red flash threshold). |
+| `low_contrast_text` | Text below 4.5:1 contrast against what is drawn behind it (3:1 for text at least 24 px, or 18.66 px bold, on a 1080-pixel short side), measured on its glyph pixels about twice a second. An outline, shadow, or glow counts as the text's backdrop. Text fading or scaling in is measured once it holds still. |
+| `short_shot` | The picture between two hard cuts lasts less than one second. |
+| `short_scene` | A chapter or video item is shorter than one second (from the layers, as above). |
+| `blank_first_frame` | Frame 0 is one flat color. |
 
 ::::tabs[Exporter platform]{default="macOS"}
 :::tab[macOS]

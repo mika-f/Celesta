@@ -97,12 +97,12 @@ exits 1 when it reports any. Each starts with its code; `quality` in the
 | Message | Cause and fix |
 | --- | --- |
 | `warning: flashing: N flashes within one second, more than 3, at frames …` | A blink, strobe, or rapid run of cuts in the region named, fast and bright enough to risk seizures. Slow it to 3 a second or less, make it smaller than a quarter of a third of the frame, or lower its brightness change. |
-| `warning: red-flashing: …` | The same with saturated red. Remove red strobing. |
-| `warning: low-contrast-text: text layer "id" ("…") is #AAAAAA on #BBBBBB behind it: R:1, below 4.5:1, at …` | From the layers: the text's color against the solid rectangles behind its anchor point. Pick colors with enough contrast (the palette's word color on its ground), or add a backing panel, an outline (`stroke`), or a `shadow`. |
-| `warning: low-contrast-text: text layer "id" ("…") has R:1 contrast against what is behind it (90 % of its glyph pixels reach it), …` | From the pixels (`--check-quality`): part of the text sits on a background too close to its color, such as an image or a gradient. Move it, darken or lighten what is behind it, or give it a backing panel or an outline. |
-| `warning: short-scene: chapter "x" lasts 0.50 s …` (or `item "x" on video track "y"`) | A scene under a second. Lengthen it or merge it with the next one. |
-| `warning: short-shot: between hard cuts a shot lasts 0.40 s …` (or `N shots in a row last under 1 s`) | Cuts too close together. Hold each shot for at least a second, or use a transition instead of a cut. |
-| `warning: blank-first-frame: frame 0 draws nothing but the background …`, `… shows only solid rectangles …`, or `… is one flat color (#14161C) …` | Frame 0 is the thumbnail. Have the title or subject visible on it: start entrances already in place instead of from opacity 0 or scale 0, or put a title card first. |
+| `warning: red_flashing: …` | The same with saturated red. Remove red strobing. |
+| `warning: low_contrast_text: text layer "id" ("…") is #AAAAAA on #BBBBBB behind it: R:1, below 4.5:1, at …` | From the layers: the text's color against the solid rectangles behind its anchor point. Pick colors with enough contrast (the palette's word color on its ground), or add a backing panel, an outline (`stroke`), or a `shadow`. |
+| `warning: low_contrast_text: text layer "id" ("…") has R:1 contrast against what is behind it (90 % of its glyph pixels reach it), …` | From the pixels (`--check-quality`): part of the text sits on a background too close to its color, such as an image or a gradient. Move it, darken or lighten what is behind it, or give it a backing panel or an outline. |
+| `warning: short_scene: chapter "x" lasts 0.50 s …` (or `item "x" on video track "y"`) | A scene under a second. Lengthen it or merge it with the next one. |
+| `warning: short_shot: between hard cuts a shot lasts 0.40 s …` (or `N shots in a row last under 1 s`) | Cuts too close together. Hold each shot for at least a second, or use a transition instead of a cut. |
+| `warning: blank_first_frame: frame 0 draws nothing but the background …`, `… shows only solid rectangles …`, or `… is one flat color (#14161C) …` | Frame 0 is the thumbnail. Have the title or subject visible on it: start entrances already in place instead of from opacity 0 or scale 0, or put a title card first. |
 | `unexpected argument '--check-quality'` | The installed Celesta is older than this check; ask the user to update, or check frames by eye with a contact sheet. |
 
 ## Media, PSD, lip sync

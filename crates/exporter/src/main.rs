@@ -114,8 +114,8 @@ without writing anything and also measures the pixels: more than three
 flashes in a second (WCAG 2.3.1, general and red), text under 4.5:1
 contrast (3:1 when large) against what is behind it, shots between hard
 cuts under a second, and a frame 0 of one flat color. Each warning starts
-with its code (flashing, red-flashing, low-contrast-text, short-scene,
-short-shot, blank-first-frame); --json lists them in full under quality.
+with its code (flashing, red_flashing, low_contrast_text, short_scene,
+short_shot, blank_first_frame); --json lists them in full under quality.
 It exits 1 when it finds any.
 
 --inspect evaluates a React entry's frames without rendering pixels, with

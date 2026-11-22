@@ -1097,7 +1097,7 @@ fn a_project_default_preset_never_reaches_stills() {
     assert!(
         report["warnings"].as_array().is_none_or(|warnings| warnings
             .iter()
-            .all(|warning| warning.as_str().unwrap().starts_with("blank-first-frame: "))),
+            .all(|warning| warning.as_str().unwrap().starts_with("blank_first_frame: "))),
         "{report}"
     );
     assert_eq!(pixels(&output).len(), 36);

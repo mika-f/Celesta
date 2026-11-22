@@ -590,7 +590,8 @@ frame numbers, the warnings, and on failure an error code:
 (Shown wrapped here; the real output is one line.) `quality` lists the
 warnings that are quality issues (flashing, low-contrast text, short scenes
 and shots, a blank first frame) in full, each with its `code`, `frames`,
-and measurements; every export reports those it can read from the layers,
+and measurements (each is also in `codedWarnings`, by its code); every
+export reports those it can read from the layers,
 and `--check-quality` renders every frame to measure the rest
 ([verify.md](verify.md#check-flashing-contrast-and-pacing)). When the entry used a
 props file, the result also has `propsFile` (its path) and `propsFileAuto`

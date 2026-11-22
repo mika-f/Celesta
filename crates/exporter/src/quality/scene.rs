@@ -1026,6 +1026,8 @@ mod tests {
             name: id.into(),
             from,
             duration_in_frames,
+            desc: None,
+            status: Default::default(),
         }
     }
 

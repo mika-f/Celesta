@@ -64,13 +64,13 @@ export default function Root() {
         .iter()
         .map(|issue| issue["code"].as_str().unwrap())
         .collect();
-    assert_eq!(codes, ["low-contrast-text", "short-scene"], "{quality:?}");
+    assert_eq!(codes, ["low_contrast_text", "short_scene"], "{quality:?}");
     assert_eq!(quality[0]["layer"], "title");
     assert_eq!(quality[0]["frames"][0]["from"], 0);
     assert_eq!(quality[0]["frames"][0]["to"], 60);
     assert_eq!(quality[1]["frames"][0]["to"], 10);
     assert!(
-        text(&result).contains("warning: short-scene: chapter \"intro\" lasts 0.33 s"),
+        text(&result).contains("warning: short_scene: chapter \"intro\" lasts 0.33 s"),
         "{}",
         text(&result)
     );
@@ -80,7 +80,7 @@ export default function Root() {
     let result = call(&client, "inspect", json!({ "entry": entry })).await;
     assert_eq!(
         structured(&result)["quality"][0]["code"],
-        "blank-first-frame"
+        "blank_first_frame"
     );
 }
 

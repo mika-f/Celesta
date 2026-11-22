@@ -105,8 +105,8 @@ Check that:
   `opacity 0`; an inactive `Sequence` contributes nothing);
 - nothing is `MISSING FILE` and no frame reports `ERROR`;
 - audio clips start and last as long as intended;
-- no `warning:` line starts with a quality code (`short-scene`,
-  `blank-first-frame`, `low-contrast-text`): see
+- no `warning:` line starts with a quality code (`short_scene`,
+  `blank_first_frame`, `low_contrast_text`): see
   [below](#check-flashing-contrast-and-pacing). With `--json`, `quality`
   lists them with their frames.
 
@@ -396,11 +396,11 @@ starts with a stable code; `quality` in the JSON result has the details:
 | `code` | Found from | Fix |
 | --- | --- | --- |
 | `flashing` | pixels (`--check-quality`) | More than three general flashes in a second over more than a quarter of a window a third of the frame wide and high (WCAG 2.3.1). Slow the blinking or the cuts to 3 a second or less, shrink the area that flashes, or lower its contrast. `region` says where. |
-| `red-flashing` | pixels | The same for saturated red. Avoid red strobes entirely. |
-| `low-contrast-text` | layers (every export, `inspect`) and pixels | `layer` is the text's id; `value` the contrast, `limit` what it needs. Change the text or ground color (the palette's word color against its ground), add a backing `Panel`/`Rect`, or an outline (`stroke`) or `shadow`, which count as the text's backdrop. From the layers only text over solid rectangles is measured; over images, video, or gradients only the pixel check measures it. Text fading or scaling in is measured once it holds still. |
-| `short-scene` | layers (every export, `inspect`, `--info`) | An outermost chapter (`<Composition chapters>`, `defineScenes`) or a JSON project's video item is under 1 s. Lengthen it or merge it into a neighbour. |
-| `short-shot` | pixels | The picture between two hard cuts (most of the frame changing at once) lasts under 1 s. Hold the shot longer, or turn the cut into a transition. Shots inside a flashing span are reported as flashing. |
-| `blank-first-frame` | layers (frame 0 has nothing but solid rectangles) and pixels (frame 0 is one flat color) | Show the title or the subject from frame 0: start entrances already visible, or at the end of their motion, rather than at opacity 0 or scale 0. |
+| `red_flashing` | pixels | The same for saturated red. Avoid red strobes entirely. |
+| `low_contrast_text` | layers (every export, `inspect`) and pixels | `layer` is the text's id; `value` the contrast, `limit` what it needs. Change the text or ground color (the palette's word color against its ground), add a backing `Panel`/`Rect`, or an outline (`stroke`) or `shadow`, which count as the text's backdrop. From the layers only text over solid rectangles is measured; over images, video, or gradients only the pixel check measures it. Text fading or scaling in is measured once it holds still. |
+| `short_scene` | layers (every export, `inspect`, `--info`) | An outermost chapter (`<Composition chapters>`, `defineScenes`) or a JSON project's video item is under 1 s. Lengthen it or merge it into a neighbour. |
+| `short_shot` | pixels | The picture between two hard cuts (most of the frame changing at once) lasts under 1 s. Hold the shot longer, or turn the cut into a transition. Shots inside a flashing span are reported as flashing. |
+| `blank_first_frame` | layers (frame 0 has nothing but solid rectangles) and pixels (frame 0 is one flat color) | Show the title or the subject from frame 0: start entrances already visible, or at the end of their motion, rather than at opacity 0 or scale 0. |
 
 Notes:
 

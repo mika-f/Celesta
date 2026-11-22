@@ -279,7 +279,7 @@ test('the layer checks report low-contrast text and short scenes with their fram
     const json = inspect('--every', '1', '--json');
     assert.equal(json.status, 0, json.stderr);
     const { quality } = JSON.parse(json.stdout) as { quality: QualityIssue[] };
-    assert.deepEqual(quality.map((issue) => issue.code), ['low-contrast-text', 'short-scene']);
+    assert.deepEqual(quality.map((issue) => issue.code), ['low_contrast_text', 'short_scene']);
     const [contrast, short] = quality as [QualityIssue, QualityIssue];
     assert.equal(contrast.layer, 'title');
     assert.equal(contrast.measured, 'layers');
@@ -298,8 +298,8 @@ test('the layer checks report low-contrast text and short scenes with their fram
 
     const text = inspect('--frames', '0,30');
     assert.equal(text.status, 0, text.stderr);
-    assert.match(text.stdout, /warning: low-contrast-text: text layer "title"/);
-    assert.match(text.stdout, /warning: short-scene: chapter "intro"/);
+    assert.match(text.stdout, /warning: low_contrast_text: text layer "title"/);
+    assert.match(text.stdout, /warning: short_scene: chapter "intro"/);
   });
 });
 
@@ -316,7 +316,7 @@ test('a first frame of nothing but solid rectangles is blank', () => {
       }
     `);
     const { quality } = JSON.parse(inspect('--json').stdout) as { quality: QualityIssue[] };
-    assert.deepEqual(quality.map((issue) => [issue.code, issue.frames?.[0]?.from]), [['blank-first-frame', 0]]);
+    assert.deepEqual(quality.map((issue) => [issue.code, issue.frames?.[0]?.from]), [['blank_first_frame', 0]]);
     assert.match(quality[0]!.message, /^frame 0 shows only solid rectangles/);
     // Frame 0 not inspected: nothing to say about it.
     const later = JSON.parse(inspect('--frames', '1,2', '--json').stdout) as { quality: QualityIssue[] };
@@ -342,6 +342,6 @@ test('a backdrop its group clips away is not behind the text', () => {
     const json = inspect('--json');
     assert.equal(json.status, 0, json.stderr);
     const { quality } = JSON.parse(json.stdout) as { quality: QualityIssue[] };
-    assert.deepEqual(quality.map((issue) => [issue.code, issue.layer]), [['low-contrast-text', 'left']]);
+    assert.deepEqual(quality.map((issue) => [issue.code, issue.layer]), [['low_contrast_text', 'left']]);
   });
 });

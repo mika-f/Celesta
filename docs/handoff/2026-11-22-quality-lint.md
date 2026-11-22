@@ -14,11 +14,11 @@ Every issue is a warning with a stable code (`celesta_exporter::quality::Quality
 | Code | Rule | Measured from |
 | --- | --- | --- |
 | `flashing` | More than 3 general flashes in any one-second window (WCAG 2.3.1). | pixels |
-| `red-flashing` | More than 3 saturated-red flashes in a second (WCAG 2.3.1's red flash). | pixels |
-| `low-contrast-text` | Text below 4.5:1 against what is behind it, 3:1 for large text (WCAG 1.4.3). | layers and pixels |
-| `short-scene` | An outermost React chapter, or an enabled item on an enabled JSON video track, under 1 s; an item's frames are those whose time falls in its range, as the evaluator shows it. | layers |
-| `short-shot` | The picture between two hard cuts lasts under 1 s. | pixels |
-| `blank-first-frame` | Frame 0 has nothing but solid rectangles (layers) or is one flat color (pixels). | layers and pixels |
+| `red_flashing` | More than 3 saturated-red flashes in a second (WCAG 2.3.1's red flash). | pixels |
+| `low_contrast_text` | Text below 4.5:1 against what is behind it, 3:1 for large text (WCAG 1.4.3). | layers and pixels |
+| `short_scene` | An outermost React chapter, or an enabled item on an enabled JSON video track, under 1 s; an item's frames are those whose time falls in its range, as the evaluator shows it. | layers |
+| `short_shot` | The picture between two hard cuts lasts under 1 s. | pixels |
+| `blank_first_frame` | Frame 0 has nothing but solid rectangles (layers) or is one flat color (pixels). | layers and pixels |
 
 An issue (`QualityIssue`) has `code`, `message`, `measured` (`layers` or
 `pixels`), `frames` (`[{from, to, start, end}]`, `to` exclusive, seconds
@@ -39,7 +39,7 @@ The cost decides it:
   `--from`/`--to` span) and runs `PixelLint` (flashing, red flashing,
   short shots, flat frame 0) and `TextContrast`, writing no file. In check
   mode the layer contrast is off (pixels replace it) and a layer
-  `blank-first-frame` is dropped when frame 0 is rendered.
+  `blank_first_frame` is dropped when frame 0 is rendered.
 
 The timeline checks report only scenes and items that touch the frames an
 export or check covers (`--from`/`--to`, or the stills selected, from the
@@ -131,8 +131,10 @@ says whether its texts moved.
   `FrameSpan`, `Region`, `report`, `sort_issues`), `luminance.rs`,
   `scene.rs`, `pixels.rs`, `contrast.rs`.
 - `ExportProgress::Quality(QualityIssue)`. The JSON report lists each among
-  `warnings` (`code: message`) and in `quality`; the `--json-progress`
-  `warning` event carries `quality` too. The terminal progress, `--info`,
+  `warnings` (`code: message`), in `codedWarnings` beside the other coded
+  warnings (`rough_scenes`, `nondeterministic_render`), whose snake_case the
+  quality codes follow, and in full in `quality`; the `--json-progress`
+  `warning` event carries its `code` and `quality` too. The terminal progress, `--info`,
   and the editor's export notices print it as a warning.
 - `render_video`, `render_react_video`, and the stills loop feed every scene
   to a `SceneLint`; `report_composition` (now shared with stills) reports
@@ -154,7 +156,7 @@ says whether its texts moved.
 
 ## Limits
 
-- Sequences that are not chapters are not short scenes; `short-shot` covers
+- Sequences that are not chapters are not short scenes; `short_shot` covers
   cuts in the pixels instead. JSON overlay tracks are not scenes.
 - Layer contrast looks only at the anchor point and at solid rectangles;
   the pixel check covers the rest about twice a second.
@@ -181,7 +183,7 @@ Run on macOS (Apple GPU) with FFmpeg 8 on `PKG_CONFIG_PATH`, after
   `inspect.mjs`'s 10 s `--help` probe); rerun alone, every one passed but
   `stills::a_project_default_preset_never_reaches_stills`, which CI then
   showed asserts no warnings at all on an empty project and now allows its
-  `blank-first-frame`.
+  `blank_first_frame`.
   The MCP tests include `check_quality`, `inspect`'s quality warnings, and
   the ten tools.
 - `cargo clippy -p celesta-exporter -p celesta-mcp -p celesta-editor
@@ -195,6 +197,6 @@ Run on macOS (Apple GPU) with FFmpeg 8 on `PKG_CONFIG_PATH`, after
   caption on a lighter panel, white text, and a 0.5 s first chapter.
   `--check-quality` (about 2.5 s for 90 frames at 640×360) reported
   `flashing` (5 flashes, frames 30–57, the whole frame), both texts'
-  `low-contrast-text` in pixels, and `short-scene`, and exited 1;
+  `low_contrast_text` in pixels, and `short_scene`, and exited 1;
   `inspect.mjs --native --every 1` and a still export reported the layer
   ones. Rendering is unchanged, so there are no before/after screenshots.

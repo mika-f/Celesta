@@ -1000,7 +1000,7 @@ function shortChapters(chapters = [], frameRate) {
     const name = chapter.name && chapter.name !== chapter.id ? `${quoted(chapter.name)} (${chapter.id})` : quoted(chapter.id);
     const span = frameSpan(chapter.from, end(chapter), frameRate);
     return [{
-      code: 'short-scene', measured: 'layers',
+      code: 'short_scene', measured: 'layers',
       message: `chapter ${name} lasts ${length.toFixed(2)} s (${describeSpans([span])}), under ${MIN_SCENE_SECONDS} s; give each scene at least a second`,
       frames: [span], value: roundTo(length, 1000), limit: MIN_SCENE_SECONDS,
     }];
@@ -1191,7 +1191,7 @@ function sceneLint(frameRate) {
       const walk = walkScene(scene);
       if (frame === 0 && !walk.content) {
         firstFrame = {
-          code: 'blank-first-frame', measured: 'layers',
+          code: 'blank_first_frame', measured: 'layers',
           message: walk.flatRects ? `frame 0 shows only solid rectangles: ${BLANK_ADVICE}` : `frame 0 draws nothing but the background: ${BLANK_ADVICE}`,
           frames: [frameSpan(0, 1, frameRate)],
         };
@@ -1218,7 +1218,7 @@ function sceneLint(frameRate) {
         if (!record.failing.length) continue;
         const spans = record.failing.map(([from, to]) => frameSpan(from, to, frameRate));
         issues.push({
-          code: 'low-contrast-text', measured: 'layers',
+          code: 'low_contrast_text', measured: 'layers',
           message: `text layer ${quoted(id)} (${quoted(record.sample)}) is ${hexOf(record.colors[0])} on ${hexOf(record.colors[1])} behind it: ${record.worst.toFixed(2)}:1, below ${record.limit}:1, at ${describeSpans(spans)}`,
           frames: spans, layer: id, value: roundTo(record.worst, 100), limit: record.limit,
         });
@@ -1228,7 +1228,7 @@ function sceneLint(frameRate) {
   };
 }
 
-const QUALITY_ORDER = ['flashing', 'red-flashing', 'low-contrast-text', 'short-scene', 'short-shot', 'blank-first-frame'];
+const QUALITY_ORDER = ['flashing', 'red_flashing', 'low_contrast_text', 'short_scene', 'short_shot', 'blank_first_frame'];
 function sortIssues(issues) {
   const first = (issue) => issue.frames?.[0]?.from ?? 0;
   return issues.sort((a, b) =>

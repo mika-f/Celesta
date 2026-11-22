@@ -130,7 +130,7 @@ fn check_quality_finds_flashing_short_scenes_and_a_blank_first_frame() {
     assert_eq!(report["status"], "ok", "{report}");
     assert_eq!(code, Some(1), "{report}");
     let codes = codes(&report);
-    for expected in ["flashing", "short-scene", "blank-first-frame"] {
+    for expected in ["flashing", "short_scene", "blank_first_frame"] {
         assert!(codes.contains(&expected), "{expected}: {report}");
     }
     let flashing = issue(&report, "flashing");
@@ -144,7 +144,7 @@ fn check_quality_finds_flashing_short_scenes_and_a_blank_first_frame() {
         flashing["frames"][0]["from"].as_u64().unwrap() <= 6,
         "{flashing}"
     );
-    assert_eq!(issue(&report, "blank-first-frame")["measured"], "pixels");
+    assert_eq!(issue(&report, "blank_first_frame")["measured"], "pixels");
     // The warnings carry the codes too, and nothing is written.
     let warnings = report["warnings"].as_array().unwrap();
     assert!(
@@ -165,7 +165,7 @@ fn check_quality_measures_text_contrast_in_pixels() {
         return;
     };
     assert_eq!(code, Some(1), "{report}");
-    let contrast = issue(&report, "low-contrast-text");
+    let contrast = issue(&report, "low_contrast_text");
     assert_eq!(contrast["measured"], "pixels");
     assert_eq!(contrast["layer"], "title");
     assert!(contrast["value"].as_f64().unwrap() < 1.5, "{contrast}");
@@ -205,8 +205,8 @@ fn info_reports_short_scenes_from_the_timeline() {
     // --info renders nothing, so it needs no GPU.
     let (code, report) = exporter(&["--info", source.to_str().unwrap()]).unwrap();
     assert_eq!(code, Some(0), "{report}");
-    assert_eq!(codes(&report), ["short-scene"]);
-    let short = issue(&report, "short-scene");
+    assert_eq!(codes(&report), ["short_scene"]);
+    let short = issue(&report, "short_scene");
     assert_eq!(short["measured"], "layers");
     assert_eq!(short["value"], 0.4);
     assert_eq!(
@@ -239,7 +239,7 @@ fn a_span_reports_only_the_scenes_it_touches() {
     let Some((_, whole)) = exporter(&["--check-quality", source.to_str().unwrap()]) else {
         return;
     };
-    assert!(codes(&whole).contains(&"short-scene"), "{whole}");
+    assert!(codes(&whole).contains(&"short_scene"), "{whole}");
     // From 1 s the intro is never rendered.
     let (code, report) =
         exporter(&["--check-quality", "--from", "1", source.to_str().unwrap()]).unwrap();

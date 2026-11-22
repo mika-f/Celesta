@@ -230,7 +230,7 @@ export interface ExportErrorReport {
  * renders every frame to measure the rest.
  */
 export interface QualityIssue {
-  code: 'flashing' | 'red-flashing' | 'low-contrast-text' | 'short-scene' | 'short-shot' | 'blank-first-frame';
+  code: 'flashing' | 'red_flashing' | 'low_contrast_text' | 'short_scene' | 'short_shot' | 'blank_first_frame';
   message: string;
   /** From the evaluated layers, or from rendered pixels. */
   measured: 'layers' | 'pixels';

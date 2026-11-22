@@ -190,9 +190,9 @@ produces a video that differs between preview and export.
    - Before the final export, run the quality check:
      `Celesta-export --json --react film.tsx --check-quality` (MCP:
      `check_quality`). It renders every frame and reports, by stable code,
-     `flashing`/`red-flashing` (more than 3 flashes a second, a seizure
-     risk), `low-contrast-text` (under 4.5:1, 3:1 when large),
-     `short-shot`/`short-scene` (under 1 s), and `blank-first-frame` (frame
+     `flashing`/`red_flashing` (more than 3 flashes a second, a seizure
+     risk), `low_contrast_text` (under 4.5:1, 3:1 when large),
+     `short_shot`/`short_scene` (under 1 s), and `blank_first_frame` (frame
      0 is the thumbnail). Fix each one, or tell the user why it stays
      ([verify.md](references/verify.md#check-flashing-contrast-and-pacing)).
      `inspect.mjs` and every export already warn about the layer-level
