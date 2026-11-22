@@ -556,31 +556,15 @@ fn select_nv12(
     stream: u32,
     color: DecodedColor,
 ) -> Result<IMFMediaType, MediaError> {
-    // SAFETY: live reader and a newly created uncompressed media type.
+    let current = select_output(reader, stream, MFMediaType_Video, MFVideoFormat_NV12)?;
+    // SAFETY: live reader and the complete uncompressed media type it selected.
     unsafe {
-        check(
-            "SetStreamSelection",
-            reader.SetStreamSelection(MF_SOURCE_READER_ALL_STREAMS.0 as u32, false),
-        )?;
-        check(
-            "SetStreamSelection",
-            reader.SetStreamSelection(stream, true),
-        )?;
-        let partial = check("MFCreateMediaType", MFCreateMediaType())?;
-        check(
-            "SetGUID",
-            partial.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video),
-        )?;
-        check(
-            "SetGUID",
-            partial.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_NV12),
-        )?;
         for (key, value) in color_attributes(color) {
-            check("SetUINT32(NV12 color)", partial.SetUINT32(&key, value))?;
+            check("SetUINT32(NV12 color)", current.SetUINT32(&key, value))?;
         }
         check(
-            "SetCurrentMediaType(NV12)",
-            reader.SetCurrentMediaType(stream, None, &partial),
+            "SetCurrentMediaType(NV12 color)",
+            reader.SetCurrentMediaType(stream, None, &current),
         )?;
         check(
             "GetCurrentMediaType(NV12)",

@@ -539,8 +539,33 @@ fn aligned_1080p_nv12_matches_ffmpeg() {
 fn odd_avi(output: &Path) {
     let output = CString::new(output.to_str().unwrap()).unwrap();
     // SAFETY: contexts and packet storage are checked before use, and freed
-    // after the single uncompressed, DWORD-padded DIB frame is muxed.
+    // after the single odd-sized MJPEG frame is muxed.
     unsafe {
+        let encoder = av::avcodec_find_encoder(av::AVCodecID::AV_CODEC_ID_MJPEG);
+        assert!(!encoder.is_null());
+        let mut codec = av::avcodec_alloc_context3(encoder);
+        assert!(!codec.is_null());
+        (*codec).width = 63;
+        (*codec).height = 35;
+        (*codec).pix_fmt = av::AVPixelFormat::AV_PIX_FMT_YUVJ444P;
+        (*codec).time_base = av::AVRational { num: 1, den: 4 };
+        assert_eq!(av::avcodec_open2(codec, encoder, null_mut()), 0);
+        let mut frame = av::av_frame_alloc();
+        assert!(!frame.is_null());
+        (*frame).width = 63;
+        (*frame).height = 35;
+        (*frame).format = av::AVPixelFormat::AV_PIX_FMT_YUVJ444P as i32;
+        (*frame).pts = 0;
+        assert_eq!(av::av_frame_get_buffer(frame, 32), 0);
+        for plane in 0..3 {
+            for row in 0..35 {
+                std::slice::from_raw_parts_mut(
+                    (*frame).data[plane].add(row * (*frame).linesize[plane] as usize),
+                    63,
+                )
+                .fill(if plane == 0 { 100 } else { 128 });
+            }
+        }
         let mut context = null_mut();
         assert_eq!(
             av::avformat_alloc_output_context2(
@@ -554,14 +579,11 @@ fn odd_avi(output: &Path) {
         assert!(!context.is_null());
         let stream = av::avformat_new_stream(context, null_mut());
         assert!(!stream.is_null());
-        (*stream).time_base = av::AVRational { num: 1, den: 4 };
-        let par = &mut *(*stream).codecpar;
-        par.codec_type = av::AVMediaType::AVMEDIA_TYPE_VIDEO;
-        par.codec_id = av::AVCodecID::AV_CODEC_ID_RAWVIDEO;
-        par.format = av::AVPixelFormat::AV_PIX_FMT_BGR24 as i32;
-        par.width = 63;
-        par.height = 35;
-        par.bits_per_coded_sample = 24;
+        (*stream).time_base = (*codec).time_base;
+        assert_eq!(
+            av::avcodec_parameters_from_context((*stream).codecpar, codec),
+            0
+        );
         assert_eq!(
             av::avio_open(&mut (*context).pb, output.as_ptr(), av::AVIO_FLAG_WRITE),
             0
@@ -569,15 +591,15 @@ fn odd_avi(output: &Path) {
         assert_eq!(av::avformat_write_header(context, null_mut()), 0);
         let mut packet = av::av_packet_alloc();
         assert!(!packet.is_null());
-        assert_eq!(av::av_new_packet(packet, 192 * 35), 0);
-        std::slice::from_raw_parts_mut((*packet).data, 192 * 35).fill(100);
-        (*packet).pts = 0;
-        (*packet).dts = 0;
+        assert_eq!(av::avcodec_send_frame(codec, frame), 0);
+        assert_eq!(av::avcodec_receive_packet(codec, packet), 0);
         (*packet).duration = 1;
-        (*packet).flags = av::AV_PKT_FLAG_KEY;
+        av::av_packet_rescale_ts(packet, (*codec).time_base, (*stream).time_base);
         assert_eq!(av::av_interleaved_write_frame(context, packet), 0);
         assert_eq!(av::av_write_trailer(context), 0);
         av::av_packet_free(&mut packet);
+        av::av_frame_free(&mut frame);
+        av::avcodec_free_context(&mut codec);
         assert_eq!(av::avio_closep(&mut (*context).pb), 0);
         av::avformat_free_context(context);
     }
