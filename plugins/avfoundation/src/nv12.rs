@@ -1,7 +1,11 @@
 use celesta_media::{DecodedColor, DecodedMatrix, DecodedRange, VideoColor};
 
 pub(crate) fn color(tags: &VideoColor, range: DecodedRange) -> Option<DecodedColor> {
-    if tags.dynamic_range().is_hdr() || tags.primaries.as_deref() == Some("bt2020") {
+    if !matches!(
+        tags.primaries.as_deref(),
+        None | Some("bt709" | "smpte170m" | "bt470bg")
+    ) || !matches!(tags.transfer.as_deref(), None | Some("bt709" | "smpte170m"))
+    {
         return None;
     }
     let matrix = match tags.matrix.as_deref() {
@@ -62,6 +66,38 @@ mod tests {
             },
         ] {
             assert!(color(&tags, DecodedRange::Limited).is_none());
+        }
+    }
+
+    #[test]
+    fn only_untagged_or_601_709_primaries_and_transfer_are_native() {
+        for primaries in [None, Some("bt709"), Some("smpte170m"), Some("bt470bg")] {
+            for transfer in [None, Some("bt709"), Some("smpte170m")] {
+                let tags = VideoColor {
+                    primaries: primaries.map(str::to_owned),
+                    transfer: transfer.map(str::to_owned),
+                    ..Default::default()
+                };
+                assert!(color(&tags, DecodedRange::Limited).is_some(), "{tags:?}");
+            }
+        }
+        for (primaries, transfer) in [
+            ("smpte432", "bt709"),
+            ("smpte431", "bt709"),
+            ("bt2020", "bt709"),
+            ("unknown", "bt709"),
+            ("bt709", "linear"),
+            ("bt709", "iec61966-2-1"),
+            ("bt709", "gamma22"),
+            ("bt709", "smpte2084"),
+            ("bt709", "unknown"),
+        ] {
+            let tags = VideoColor {
+                primaries: Some(primaries.into()),
+                transfer: Some(transfer.into()),
+                ..Default::default()
+            };
+            assert!(color(&tags, DecodedRange::Limited).is_none(), "{tags:?}");
         }
     }
 }

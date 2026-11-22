@@ -39,7 +39,9 @@ pub(crate) fn source_8bit420(codec: Codec, header: &[u8]) -> bool {
             return false;
         }
         if crate::vui::sps_colour(codec, unit).is_some_and(|c| {
-            c.primaries == 9 || matches!(c.transfer, 16 | 18) || !matches!(c.matrix, 1 | 2 | 5 | 6)
+            !matches!(c.primaries, 1 | 2 | 5 | 6)
+                || !matches!(c.transfer, 1 | 2 | 6)
+                || !matches!(c.matrix, 1 | 2 | 5 | 6)
         }) {
             return false;
         }
@@ -63,8 +65,10 @@ pub(crate) fn source_8bit420(codec: Codec, header: &[u8]) -> bool {
 }
 
 pub(crate) fn color(tags: &VideoColor, range: u32, chroma: u32) -> Option<DecodedColor> {
-    if tags.dynamic_range().is_hdr()
-        || tags.primaries.as_deref() == Some("bt2020")
+    if !matches!(
+        tags.primaries.as_deref(),
+        None | Some("bt709" | "smpte170m" | "bt470bg")
+    ) || !matches!(tags.transfer.as_deref(), None | Some("bt709" | "smpte170m"))
         || !matches!(chroma, 0 | 5)
     {
         return None;
@@ -227,5 +231,37 @@ mod tests {
         let avcc = [1, 66, 0, 30, 0xff, 0xe1, 0, 5, 0x67, 66, 0, 30, 0x80, 0];
         assert!(source_8bit420(Codec::H264, &avcc));
         assert!(!source_8bit420(Codec::H264, &avcc[..10]));
+    }
+
+    #[test]
+    fn only_untagged_or_601_709_primaries_and_transfer_are_native() {
+        for primaries in [None, Some("bt709"), Some("smpte170m"), Some("bt470bg")] {
+            for transfer in [None, Some("bt709"), Some("smpte170m")] {
+                let tags = VideoColor {
+                    primaries: primaries.map(str::to_owned),
+                    transfer: transfer.map(str::to_owned),
+                    ..Default::default()
+                };
+                assert!(color(&tags, 2, 5).is_some(), "{tags:?}");
+            }
+        }
+        for (primaries, transfer) in [
+            ("smpte432", "bt709"),
+            ("smpte431", "bt709"),
+            ("bt2020", "bt709"),
+            ("unknown", "bt709"),
+            ("bt709", "linear"),
+            ("bt709", "iec61966-2-1"),
+            ("bt709", "gamma22"),
+            ("bt709", "smpte2084"),
+            ("bt709", "unknown"),
+        ] {
+            let tags = VideoColor {
+                primaries: Some(primaries.into()),
+                transfer: Some(transfer.into()),
+                ..Default::default()
+            };
+            assert!(color(&tags, 2, 5).is_none(), "{tags:?}");
+        }
     }
 }

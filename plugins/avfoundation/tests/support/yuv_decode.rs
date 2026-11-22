@@ -105,6 +105,32 @@ fn generated(output: &Path, component: &str, ten: bool) -> Result<(), MediaError
 
 /// Retags both H.264 VUI and container metadata without requiring a CLI or x264.
 fn retag(input: &Path, output: &Path, tagged: bool, full: bool) {
+    retag_colors(
+        input,
+        output,
+        tagged,
+        full,
+        if tagged {
+            av::AVColorPrimaries::AVCOL_PRI_BT709
+        } else {
+            av::AVColorPrimaries::AVCOL_PRI_UNSPECIFIED
+        },
+        if tagged {
+            av::AVColorTransferCharacteristic::AVCOL_TRC_BT709
+        } else {
+            av::AVColorTransferCharacteristic::AVCOL_TRC_UNSPECIFIED
+        },
+    );
+}
+
+fn retag_colors(
+    input: &Path,
+    output: &Path,
+    tagged: bool,
+    full: bool,
+    primaries: av::AVColorPrimaries,
+    transfer: av::AVColorTransferCharacteristic,
+) {
     let input = CString::new(input.to_str().unwrap()).unwrap();
     let output = CString::new(output.to_str().unwrap()).unwrap();
     // SAFETY: libavformat owns the contexts and packet storage; every allocation
@@ -127,18 +153,13 @@ fn retag(input: &Path, output: &Path, tagged: bool, full: bool) {
             0
         );
         (*filter).time_base_in = (*stream).time_base;
-        for name in [
-            c"colour_primaries",
-            c"transfer_characteristics",
-            c"matrix_coefficients",
+        for (name, value) in [
+            (c"colour_primaries", primaries as i64),
+            (c"transfer_characteristics", transfer as i64),
+            (c"matrix_coefficients", if tagged { 1 } else { 2 }),
         ] {
             assert_eq!(
-                av::av_opt_set_int(
-                    (*filter).priv_data,
-                    name.as_ptr(),
-                    if tagged { 1 } else { 2 },
-                    0
-                ),
+                av::av_opt_set_int((*filter).priv_data, name.as_ptr(), value, 0),
                 0
             );
         }
@@ -170,16 +191,8 @@ fn retag(input: &Path, output: &Path, tagged: bool, full: bool) {
             0
         );
         let parameters = &mut *(*out).codecpar;
-        parameters.color_primaries = if tagged {
-            av::AVColorPrimaries::AVCOL_PRI_BT709
-        } else {
-            av::AVColorPrimaries::AVCOL_PRI_UNSPECIFIED
-        };
-        parameters.color_trc = if tagged {
-            av::AVColorTransferCharacteristic::AVCOL_TRC_BT709
-        } else {
-            av::AVColorTransferCharacteristic::AVCOL_TRC_UNSPECIFIED
-        };
+        parameters.color_primaries = primaries;
+        parameters.color_trc = transfer;
         parameters.color_space = if tagged {
             av::AVColorSpace::AVCOL_SPC_BT709
         } else {
@@ -529,5 +542,42 @@ fn odd_prores_and_alpha_prores_use_rgba() {
                     .any(|p| p[3] > 0 && p[3] < 255)
             );
         }
+    }
+}
+
+#[test]
+fn wide_primaries_and_linear_transfer_keep_rgba() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("source.mp4");
+    generated(&source, "h264", false).unwrap();
+    for (name, primaries, transfer, primary_name, transfer_name) in [
+        (
+            "p3",
+            av::AVColorPrimaries::AVCOL_PRI_SMPTE432,
+            av::AVColorTransferCharacteristic::AVCOL_TRC_BT709,
+            "smpte432",
+            "bt709",
+        ),
+        (
+            "linear",
+            av::AVColorPrimaries::AVCOL_PRI_BT709,
+            av::AVColorTransferCharacteristic::AVCOL_TRC_LINEAR,
+            "bt709",
+            "linear",
+        ),
+    ] {
+        let output = directory.path().join(format!("{name}.mp4"));
+        retag_colors(&source, &output, true, false, primaries, transfer);
+        let tags = celesta_codec_ffmpeg::FfmpegCodec::default()
+            .decoder()
+            .unwrap()
+            .probe(celesta_codec_ffmpeg::DECODER_ID, &output)
+            .unwrap()
+            .video
+            .unwrap()
+            .color;
+        assert_eq!(tags.primaries.as_deref(), Some(primary_name));
+        assert_eq!(tags.transfer.as_deref(), Some(transfer_name));
+        fallback(&output);
     }
 }

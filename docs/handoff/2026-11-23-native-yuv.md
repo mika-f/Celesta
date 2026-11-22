@@ -100,6 +100,28 @@ Native gate numbers must be inspected there before claiming pixel parity.
 
 ## Step B: Media Foundation
 
+### PR 888 review correction: primaries and transfer
+
+Confirmed the PR head was cff8ed5 before changing it. Native NV12 now
+requires primaries absent/BT.709/SMPTE170M/BT470BG, and transfer absent/
+BT.709/SMPTE170M. P3, linear, sRGB, gamma and unknown colour descriptions
+use the original RGBA path, preserving its colour conversion. Both native
+plugins share this policy; Media Foundation also checks the SPS VUI when
+attributes omit its source colour. No pixel gate is weakened.
+
+Portable tests cover accepted, absent and rejected tags and AVC/HEVC VUI
+descriptions. Native fallback fixtures retag both MP4 metadata and H.264
+VUI to P3-D65 or linear using the linked FFmpeg h264_metadata filter,
+verify those tags with FFmpeg, then compare NV12 offers with legacy RGBA
+over both transports. EN/JA guides and the skill document the restriction.
+
+Review-fix checks on Linux: AVFoundation portable tests 25 passed;
+Media Foundation portable tests 69 passed. Both-plugin Clippy, native-test
+helper metadata checks, Windows API audit (with a live decoder entry
+point), plugin formatting and diff checks passed. Fixture-only tests for
+each helper verified the new P3/linear tags with linked FFmpeg; native
+fallback execution is deferred to PR 888 CI.
+
 The same branch adds offered NV12 for even-sized, upright, alpha-free
 8-bit 4:2:0 SDR H.264/HEVC Main. Unknown headers, unsupported source colour,
 range or chroma siting retain the RGB32 path. No host/GPU/protocol changes.
