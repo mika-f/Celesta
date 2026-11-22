@@ -15,6 +15,7 @@ import {
   runtimeFrame,
   useCurrentFrame,
 } from './hooks';
+import { FrameClockContext, frameClockMs } from './determinism';
 import { markTransparent } from './source-chain';
 import { secondsToTime } from './time';
 
@@ -105,10 +106,17 @@ function moment(
   const base = runtimeFrame(context.time, context.fps, offset);
   const time = secondsToTime(frame / context.fps);
   const sample = React.createElement('time-sample', { ...hostProps, time }, momentChildren(children));
-  return React.createElement(
+  const drawn = React.createElement(
     CompositionRuntimeContext.Provider,
-    { key, value: { ...context, time, frameOffset: offset + (frame - base) } },
+    { value: { ...context, time, frameOffset: offset + (frame - base) } },
     scope ? React.createElement(FreezeFrameContext.Provider, { value: scope }, sample) : sample,
+  );
+  // `Date.now()` and `Math.random()` inside follow the sample's moment.
+  const clock = frameClockMs();
+  return React.createElement(
+    FrameClockContext.Provider,
+    { key, value: clock === null ? null : clock + ((frame - base) * 1000) / context.fps },
+    drawn,
   );
 }
 

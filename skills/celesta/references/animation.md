@@ -25,6 +25,11 @@ Celesta holds every frame to this while it renders (the preview, exports,
   the frame's time in milliseconds: `Date.now()` is `1500` at 1.5 s, as if
   the film started at 1970-01-01T00:00:00Z. `new Date(value)`,
   `Date.parse()`, and `Date.UTC()` are unchanged.
+- Inside a `<FreezeFrame>`, a `<MotionBlur>` sample, or a `<Trail>` copy,
+  both follow that subtree's moment: a frozen subtree keeps its values.
+- A `Math.random()` value kept across renders (`useMemo`, state) shifts the
+  numbers drawn after it depending on which frames rendered before, so
+  still exports and videos can differ; seed by index instead.
 - A call from the entry, the packages it bundles, or a plugin module warns
   once per run, `nondeterministic_render: the entry calls Math.random() …`
   ([errors.md](errors.md#entry-and-components-react)).

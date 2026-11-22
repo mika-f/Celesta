@@ -16,6 +16,23 @@ While a frame is evaluated:
   evaluation (a render pass inside the frame's walk) leaves the outer
   sequence where it was, so a frame that took two passes (fonts changed, a
   ref was read) draws what a one-pass frame draws.
+- A subtree drawn at another time has its own clock and sequence:
+  `<FreezeFrame>` provides `FrameClockContext` with its frame's time, and
+  each `<MotionBlur>` sample and `<Trail>` copy the enclosing clock plus its
+  offset. The guard reads the context's current value
+  (`FrameClockContext._currentValue`, which React sets while it renders a
+  provider's subtree) instead of calling `useContext`, which would add a
+  dependency on every `Math.random()` call; a React upgrade that changes
+  this fails `test/determinism.test.mts`. Seeds hash the time in
+  milliseconds, so a `<FreezeFrame frame={60}>` draws what frame 60 draws at
+  the top.
+- Known limit: a `Math.random()` value kept across renders (`useMemo`,
+  state) shifts the values drawn after it depending on render history: a
+  frame that needed a second pass (a font discovered) skips the memo there,
+  and so does a frame rendered after another with the same dependencies.
+  Restarting the sequence per pass keeps the common case (no memo) identical
+  between one and two passes; continuing it would make every two-pass frame
+  differ. The warning covers the memo case.
 - `Date.now()` is `floor(time × 1000)` milliseconds after
   1970-01-01T00:00:00Z (`FROZEN_EPOCH_MS = 0`); `performance.now()` is
   `time × 1000` with its fraction; `new Date()` and `Date()` read

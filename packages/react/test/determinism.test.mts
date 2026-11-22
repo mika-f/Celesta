@@ -6,7 +6,8 @@ import { afterEach, beforeEach, test } from 'vitest';
 import * as React from 'react';
 import type { ReactElement } from 'react';
 
-import { Composition, Text } from '../src/index.js';
+import { Composition, FreezeFrame, Text } from '../src/index.js';
+import { MotionBlur } from '../src/motion-blur.js';
 import type { Time } from '../src/index.js';
 import {
   evaluateDeterministically,
@@ -152,4 +153,44 @@ test('resolved components render with the runtime time', () => {
   assert.ok(later.startsWith('2000 '));
   assert.equal(resolve(60), later);
   assert.notEqual(resolve(30), later);
+});
+
+/** Every text layer's text, depth first. */
+function texts(layers: readonly { content: { type: string; text?: string; layers?: unknown } }[]): string[] {
+  return layers.flatMap((layer) => {
+    if (layer.content.type === 'text') return [layer.content.text ?? ''];
+    const children = (layer.content as { layers?: unknown }).layers;
+    return Array.isArray(children) ? texts(children) : [];
+  });
+}
+
+test('a <FreezeFrame> keeps its clock and random values at its frame', () => {
+  function Values(): ReactElement {
+    return h(Text, null, `${Date.now()} ${performance.now()} ${Math.random()}`);
+  }
+  const mounted = mount(() => h(Composition, { width: 8, height: 8, fps: 30, durationInFrames: 90 },
+    h(FreezeFrame, { frame: 60 }, h(Values)),
+    h(Values)));
+  const at10 = texts(mounted.renderAt(at(10), null).scene.layers);
+  const at40 = texts(mounted.renderAt(at(40), null).scene.layers);
+  assert.equal(at10[0], at40[0], 'the frozen subtree does not move');
+  assert.ok(at10[0].startsWith('2000 2000 '), at10[0]);
+  assert.ok(at10[1].startsWith('333 333.3'), at10[1]);
+  assert.notEqual(at10[1], at40[1]);
+  // The frozen subtree draws what frame 60 draws at the top.
+  const top = mount(film(() => [Date.now(), performance.now(), Math.random()]));
+  assert.equal(textAt(top, 60), at10[0]);
+});
+
+test('<MotionBlur> samples read their own moment', () => {
+  function Clock(): ReactElement {
+    return h(Text, null, String(performance.now()));
+  }
+  const mounted = mount(() => h(Composition, { width: 8, height: 8, fps: 10, durationInFrames: 90 },
+    h(MotionBlur, { samples: 2, shutterAngle: 180 }, h(Clock))));
+  const samples = texts(mounted.renderAt({ value: 2, timescale: 10 }, null).scene.layers).map(Number);
+  assert.equal(samples.length, 2);
+  // Frame 2 at 10 fps is 200 ms; a 180° shutter spans half a frame around
+  // it, sampled at the middles of its halves: frames 1.875 and 2.125.
+  assert.deepEqual(samples, [187.5, 212.5]);
 });

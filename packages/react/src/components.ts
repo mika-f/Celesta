@@ -11,6 +11,7 @@ import {
   resolveFontFallback,
   resolveTextLanguage,
 } from './hooks';
+import { FrameClockContext } from './determinism';
 import type { Animatable, BackfaceVisibility, BlendMode, FontFallbackMode, LineCap, Paint, PathCommand, TextStyle, LayerShadow, LayerGlow } from './scene';
 import type {
   LayerChromaKey, LayerChromaticAberration, LayerHalftone, LayerNoise, LayerPixelate, LayerScanlines, LayerTint,
@@ -905,19 +906,24 @@ export function FreezeFrame(props: FreezeFrameProps): React.ReactElement {
     time,
     openEnd: secondsFromTime(time) >= root.durationInFrames / root.fps,
   };
+  // `Date.now()` and `Math.random()` inside follow the frozen frame too.
   return React.createElement(
-    RootRuntimeContext.Provider,
-    { value: frozen },
+    FrameClockContext.Provider,
+    { value: (time.value * 1000) / time.timescale },
     React.createElement(
-      CompositionRuntimeContext.Provider,
+      RootRuntimeContext.Provider,
       { value: frozen },
       React.createElement(
-        FreezeFrameContext.Provider,
-        { value: scope },
+        CompositionRuntimeContext.Provider,
+        { value: frozen },
         React.createElement(
-          FreezeFrameChainContext.Provider,
-          { value: chain },
-          React.createElement('freeze-frame', props),
+          FreezeFrameContext.Provider,
+          { value: scope },
+          React.createElement(
+            FreezeFrameChainContext.Provider,
+            { value: chain },
+            React.createElement('freeze-frame', props),
+          ),
         ),
       ),
     ),

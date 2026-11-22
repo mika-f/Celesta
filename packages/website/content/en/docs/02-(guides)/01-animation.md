@@ -184,6 +184,7 @@ Celesta holds every frame to this while it renders, in the preview, in exports, 
 
 - `Math.random()` starts again on every frame from a seed made from that frame’s time. A frame always gets the same numbers, whatever order frames render in, and the next frame gets different ones, so a shape placed with `Math.random()` jumps every frame.
 - `Date.now()`, `performance.now()`, and `new Date()` read the frame’s time in milliseconds, as if the video started at 1970-01-01 00:00 UTC: at 1.5 seconds, `Date.now()` is `1500`. A `new Date()` with a value, `Date.parse()`, and `Date.UTC()` work as usual.
+- Inside a `<FreezeFrame>`, a `<MotionBlur>` sample, or a `<Trail>` copy, both follow that moment instead, so a frozen scene keeps its values.
 - When the composition (or a package or plugin it uses) calls one of them while rendering, Celesta warns once: `nondeterministic_render: the entry calls Math.random() …`. The app lists it with the preview’s warnings in **Problems**, and `celesta-exporter` prints it (`warnings` in `--json`).
 
 Module scope and `prepare()` run before any frame, with the real clock and `Math.random()`. Read today’s date or time a request there, and keep the result in a module variable so every frame reads the same value.
