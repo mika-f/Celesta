@@ -107,10 +107,13 @@ codes.
 Every half second's worth of frames (and the first), each visible text layer
 that holds still from the frame before to the frame after is rendered three
 times more: twice as probes (`with_probe_fill`: the whole frame with the
-text's fill solid black, then white, its color runs and its own filters
-dropped, so a tint cannot paint both alike, and its own opacity 1) and once without it (`without_layer`). Where the probes differ is
-where the glyphs show (a text whose fill and color runs are fully
-transparent draws nothing and is not sampled): a layer drawn over the text makes them equal there,
+text's fill solid black, then white, with its color runs dropped, or for
+an outline-only text (transparent fill, visible stroke) its strokes; its own
+color filters dropped, so a tint cannot paint both alike, while filters
+that move pixels (wave, pixelate, chromatic aberration, zoom blur,
+halftone, chroma key, custom shaders) stay; and its own opacity 1) and once without it (`without_layer`). Where the probes differ is
+where the glyphs show (a text whose fill, color runs, and strokes are
+all fully transparent draws nothing and is not sampled): a layer drawn over the text makes them equal there,
 so covered text is not measured, and a faded text is found at its full
 extent. Halos (strokes, shadows, glows) are the same in both probes and
 drop out. Over the pixels that differ by at least 90 % of the largest

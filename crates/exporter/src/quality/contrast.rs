@@ -6,7 +6,9 @@
 
 use std::collections::BTreeMap;
 
-use celesta_composition::{Color, Layer, LayerContent, Paint, Rational, Scene, TextStyle};
+use celesta_composition::{
+    Color, Layer, LayerContent, LayerFilter, Paint, Rational, Scene, TextStroke, TextStyle,
+};
 
 use super::luminance::{contrast_ratio, relative_luminance};
 use super::scene::{Affine, halo_colors};
@@ -94,7 +96,7 @@ fn collect(
                     Some(visible) => text.chars().take(visible).collect(),
                     None => text.clone(),
                 };
-                if shown.trim().is_empty() || layer.id.is_empty() || !fill_shows(style) {
+                if shown.trim().is_empty() || layer.id.is_empty() || !draws(style) {
                     continue;
                 }
                 out.push(TextSample {
@@ -111,18 +113,43 @@ fn collect(
     }
 }
 
-/// Whether any of a text's fill is drawn: a fully transparent one (and no
-/// color run) draws nothing for the probes to find, though they paint it.
-fn fill_shows(style: &TextStyle) -> bool {
-    let alpha = |color: &str| Color::from_hex(color).is_none_or(|color| color.alpha > 0);
-    let fill = match &style.fill {
-        None => true,
-        Some(Paint::Solid { color }) => alpha(color),
-        Some(Paint::Linear { stops, .. } | Paint::Radial { stops, .. }) => {
-            stops.is_empty() || stops.iter().any(|stop| alpha(&stop.color))
+/// Whether a text draws anything: its fill or color runs, or else its
+/// strokes. A text with neither draws nothing for the probes to find,
+/// though they paint it.
+fn draws(style: &TextStyle) -> bool {
+    fill_shows(style) || stroke_shows(style)
+}
+
+/// Whether a color, as written, is drawn: not fully transparent.
+fn opaque_at_all(color: &str) -> bool {
+    Color::from_hex(color).is_none_or(|color| color.alpha > 0)
+}
+
+/// Whether a paint draws anything.
+fn paint_shows(paint: &Paint) -> bool {
+    match paint {
+        Paint::Solid { color } => opaque_at_all(color),
+        Paint::Linear { stops, .. } | Paint::Radial { stops, .. } => {
+            stops.is_empty() || stops.iter().any(|stop| opaque_at_all(&stop.color))
         }
-    };
-    fill || style.color_runs.iter().any(|run| alpha(&run.color))
+    }
+}
+
+/// Whether a text's strokes draw anything.
+fn stroke_shows(style: &TextStyle) -> bool {
+    style.stroke.as_ref().is_some_and(|stroke| {
+        stroke
+            .strokes()
+            .iter()
+            .any(|stroke| stroke.width > 0.0 && paint_shows(&stroke.paint))
+    })
+}
+
+/// Whether any of a text's fill is drawn: a fully transparent one (and no
+/// color run) is not.
+fn fill_shows(style: &TextStyle) -> bool {
+    style.fill.as_ref().is_none_or(paint_shows)
+        || style.color_runs.iter().any(|run| opaque_at_all(&run.color))
 }
 
 fn snippet(text: &str) -> String {
@@ -176,21 +203,35 @@ pub fn without_layer(scene: &Scene, id: &str) -> Scene {
     }
 }
 
-/// `scene` with text layer `id` filled solid `color`, without color runs or
-/// filters of its own, at full opacity of its own (its groups keep theirs):
-/// a probe for where its glyphs show. `None` without such a text layer.
+/// `scene` with text layer `id` painted solid `color` where it draws: its
+/// fill, without color runs, or for a text with a transparent fill and a
+/// stroke (an outline), its strokes. Its own color filters are dropped
+/// (filters that move pixels stay, as they move the glyphs) and its own
+/// opacity is 1 (its groups keep theirs): a probe for where it shows.
+/// `None` without such a text layer.
 pub fn with_probe_fill(scene: &Scene, id: &str, color: &str) -> Option<Scene> {
     fn paint(layers: &mut [Layer], id: &str, color: &str) -> bool {
         layers.iter_mut().any(|layer| match &mut layer.content {
             LayerContent::Text { style, .. } if layer.id == id => {
-                style.fill = Some(Paint::Solid {
+                let solid = Paint::Solid {
                     color: color.to_owned(),
-                });
-                style.color_runs.clear();
+                };
+                if fill_shows(style) {
+                    style.fill = Some(solid);
+                    style.color_runs.clear();
+                } else if let Some(stroke) = &mut style.stroke {
+                    let strokes = match stroke {
+                        TextStroke::One(stroke) => std::slice::from_mut(stroke),
+                        TextStroke::Many(strokes) => strokes.as_mut_slice(),
+                    };
+                    for stroke in strokes {
+                        stroke.paint = solid.clone();
+                    }
+                }
                 layer.opacity = 1.0;
                 // A tint or another color filter could paint both probes
                 // the same; where the glyphs are does not depend on it.
-                layer.effects.filters.clear();
+                layer.effects.filters.retain(moves_pixels);
                 true
             }
             LayerContent::Group { layers, .. } => paint(layers, id, color),
@@ -199,6 +240,31 @@ pub fn with_probe_fill(scene: &Scene, id: &str, color: &str) -> Option<Scene> {
     }
     let mut probe = scene.clone();
     paint(&mut probe.layers, id, color).then_some(probe)
+}
+
+/// Whether `filter` moves pixels rather than only changing their colors, so
+/// a probe keeps it to find the glyphs where they show. A custom shader may
+/// do either, so it stays.
+fn moves_pixels(filter: &LayerFilter) -> bool {
+    match filter {
+        LayerFilter::Shader(_)
+        | LayerFilter::Pixelate { .. }
+        | LayerFilter::Halftone { .. }
+        | LayerFilter::ChromaticAberration { .. }
+        | LayerFilter::Wave { .. }
+        | LayerFilter::ZoomBlur { .. }
+        | LayerFilter::ChromaKey { .. } => true,
+        LayerFilter::Brightness { .. }
+        | LayerFilter::Contrast { .. }
+        | LayerFilter::Saturation { .. }
+        | LayerFilter::Hue { .. }
+        | LayerFilter::Grayscale { .. }
+        | LayerFilter::Invert { .. }
+        | LayerFilter::Tint { .. }
+        | LayerFilter::Vignette { .. }
+        | LayerFilter::Noise { .. }
+        | LayerFilter::Scanlines { .. } => false,
+    }
 }
 
 /// Text contrast over the sampled frames of a check.
@@ -377,6 +443,32 @@ mod tests {
             .map(|sample| sample.id)
             .collect();
         assert_eq!(ids, ["title"]);
+        // An outline of a transparent fill draws, and the probes paint it.
+        scene.layers[2] = serde_json::from_value(json!({
+            "id": "outline", "transform": {},
+            "content": { "type": "text", "text": "Outline", "style": {
+                "fill": { "type": "solid", "color": "#00000000" },
+                "stroke": { "paint": { "type": "solid", "color": "#DDDDDD" }, "width": 3 },
+            } },
+        }))
+        .unwrap();
+        assert_eq!(TextSample::of(&scene).len(), 2);
+        let probe = with_probe_fill(&scene, "outline", "#000000").unwrap();
+        let LayerContent::Text { style, .. } = &probe.layers[2].content else {
+            panic!("a text");
+        };
+        assert_eq!(
+            style.fill,
+            Some(Paint::Solid {
+                color: "#00000000".into()
+            })
+        );
+        assert_eq!(
+            style.stroke.as_ref().unwrap().strokes()[0].paint,
+            Paint::Solid {
+                color: "#000000".into()
+            }
+        );
         // Half transparent, it draws and is measured.
         scene.layers[2] = serde_json::from_value(json!({
             "id": "faint", "transform": {},
@@ -426,15 +518,24 @@ mod tests {
         let LayerContent::Group { layers, .. } = &mut tinted.layers[1].content else {
             panic!("a group");
         };
+        // A wave moves the glyphs, so it stays.
         layers[0].effects.filters = vec![
             serde_json::from_value(json!({ "type": "tint", "color": "#FF0000", "amount": 1 }))
                 .unwrap(),
+            serde_json::from_value(json!({
+                "type": "wave", "amplitude": 20, "wavelength": 400, "phase": 90, "angle": 0,
+            }))
+            .unwrap(),
         ];
         let probe = with_probe_fill(&tinted, "title", "#FFFFFF").unwrap();
         let LayerContent::Group { layers, .. } = &probe.layers[1].content else {
             panic!("a group");
         };
-        assert!(layers[0].effects.filters.is_empty());
+        assert_eq!(layers[0].effects.filters.len(), 1);
+        assert!(matches!(
+            layers[0].effects.filters[0],
+            LayerFilter::Wave { .. }
+        ));
         assert!(with_probe_fill(&scene, "badge", "#000000").is_none());
 
         let hidden = without_layer(&scene, "title");
