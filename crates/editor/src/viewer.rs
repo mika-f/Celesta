@@ -790,7 +790,7 @@ impl EditorView {
         let leading = div()
             .flex()
             .flex_1()
-            .when(!show_jumps, |group| group.min_w_0())
+            .when(!show_jumps, |group| group.min_w(rems(7.0)))
             .items_center()
             .gap_1()
             .child(timecode)
