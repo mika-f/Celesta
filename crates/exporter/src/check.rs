@@ -262,9 +262,11 @@ impl Exporter {
         );
         let mut scenes = ReactScenes::new(bridge, project)?;
         let mut renderer = self.export_renderer(asset_root, metadata.frame_rate, cancellation)?;
-        check_frames(&run, &mut renderer, cancellation, &mut progress, |frame| {
+        let checked = check_frames(&run, &mut renderer, cancellation, &mut progress, |frame| {
             scenes.scene_at(frame)
-        })
+        });
+        crate::react_entry::report_nondeterminism(&scenes.bridge, &mut progress);
+        checked
     }
 
     /// The frames a check of a `width`×`height` composition of `duration`
