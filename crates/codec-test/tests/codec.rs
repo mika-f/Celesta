@@ -179,6 +179,7 @@ fn frame_at(codec: &mut TestCodec, path: &Path, time: f64) -> Result<VideoFrame,
     codec.decode_video(
         DECODER_ID,
         &VideoRequest {
+            accepted_pixel_formats: &[],
             path,
             time,
             sequential: None,
@@ -865,6 +866,7 @@ fn decodes_rgba_frames_at_their_times() {
         .decode_video(
             DECODER_ID,
             &VideoRequest {
+                accepted_pixel_formats: &[],
                 path: &path,
                 time: 0.5,
                 sequential: Some(Sequential {

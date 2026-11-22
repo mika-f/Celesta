@@ -515,6 +515,11 @@ impl EditorView {
         .with_asset_root(document.asset_root())
         .with_video_decoder(
             MediaBackend::new()
+                .with_accepted_pixel_formats(&[
+                    celesta_media::DecodedPixelFormat::Nv12,
+                    celesta_media::DecodedPixelFormat::Yuv420p,
+                    celesta_media::DecodedPixelFormat::Rgba8,
+                ])
                 .with_sequential_video(frame_rate_value)
                 .with_kill_switch(preview_plugins.clone()),
         )

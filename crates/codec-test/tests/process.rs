@@ -140,6 +140,7 @@ fn frames_through_shared_memory_are_the_frames_through_the_pipe() {
     );
     for (time, session) in times {
         let request = VideoRequest {
+            accepted_pixel_formats: &[],
             path: &video,
             time,
             sequential: session.map(|session| Sequential {
@@ -196,6 +197,7 @@ fn sequential_prefetch_matches_disabled_decoding() {
             disabled.set_decode_prefetch(false);
             for &(session, index) in sequence {
                 let request = VideoRequest {
+                    accepted_pixel_formats: &[],
                     path: if session == "b" { &other_video } else { &video },
                     time: f64::from(index) / 24.0,
                     sequential: Some(Sequential {
@@ -231,6 +233,61 @@ fn sequential_prefetch_matches_disabled_decoding() {
 
 #[cfg(unix)]
 #[test]
+fn prefetch_does_not_reuse_a_different_pixel_format_offer() {
+    use celesta_media::DecodedPixelFormat as F;
+    let directory = tempfile::tempdir().unwrap();
+    let video = directory.path().join("formats.ctst");
+    write_rgba_video(
+        &video,
+        2,
+        2,
+        Rational::new(24, 1),
+        &(0..12).map(|n| vec![n; 16]).collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let (program, log) = logged_program(directory.path());
+    let mut process = MediaProcess::start(&program, directory.path(), &Default::default()).unwrap();
+    process.set_decode_prefetch(true);
+    for index in 0..4 {
+        let request = VideoRequest {
+            path: &video,
+            time: f64::from(index) / 24.,
+            sequential: Some(Sequential {
+                session: "layer",
+                frame_rate: Rational::new(24, 1),
+            }),
+            accepted_pixel_formats: if index < 3 {
+                &[F::Yuv420p]
+            } else {
+                &[F::Rgba8]
+            },
+        };
+        let frame = process.decode_video(DECODER_ID, &request).unwrap();
+        assert_eq!(frame.pixel_format, F::Rgba8);
+        assert_eq!(*frame.pixels, vec![index as u8; 16]);
+    }
+    process.probe(DECODER_ID, &video).unwrap();
+    let decoded: Vec<_> = headers(&std::fs::read(log).unwrap())
+        .into_iter()
+        .filter(|header| header["type"] == "decodeVideo")
+        .collect();
+    assert_eq!(
+        decoded.len(),
+        5,
+        "the fourth real frame must not reuse the different offer's speculation"
+    );
+    assert_eq!(
+        decoded[3]["acceptedPixelFormats"],
+        serde_json::json!(["yuv420p", "rgba8"])
+    );
+    assert_eq!(
+        decoded[4]["acceptedPixelFormats"],
+        serde_json::json!(["rgba8"])
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn prefetch_predicts_constant_steps_but_not_pauses_seeks_or_changing_steps() {
     for (times, expected, sequential, enabled) in [
         (vec![0, 1, 2, 3, 4], vec![0, 1, 2, 3, 4, 5], true, true),
@@ -259,6 +316,7 @@ fn prefetch_predicts_constant_steps_but_not_pauses_seeks_or_changing_steps() {
                 .decode_video(
                     DECODER_ID,
                     &VideoRequest {
+                        accepted_pixel_formats: &[],
                         path: &video,
                         time: f64::from(time) / 24.0,
                         sequential: sequential.then_some(Sequential {
@@ -326,6 +384,7 @@ fn speculative_errors_are_discarded_but_killed_hangs_surface_and_drop_is_safe() 
                 .decode_video(
                     DECODER_ID,
                     &VideoRequest {
+                        accepted_pixel_formats: &[],
                         path: &video,
                         time: f64::from(index) / 24.0,
                         sequential: Some(Sequential {
@@ -349,6 +408,7 @@ fn speculative_errors_are_discarded_but_killed_hangs_surface_and_drop_is_safe() 
                     .decode_video(
                         DECODER_ID,
                         &VideoRequest {
+                            accepted_pixel_formats: &[],
                             path: &video,
                             time: 3.0 / 24.0,
                             sequential: Some(Sequential {
@@ -395,6 +455,7 @@ fn the_program_answers_decoding_as_the_codec_in_process_does() {
     );
     for time in [0.0, 0.5] {
         let request = VideoRequest {
+            accepted_pixel_formats: &[],
             path: &video,
             time,
             sequential: None,
@@ -871,6 +932,7 @@ fn a_process_with_a_ring_refuses_to_decode_video() {
     let result = shared.decode_video(
         "ctst",
         &VideoRequest {
+            accepted_pixel_formats: &[],
             path: &dir.path().join("x.ctst"),
             time: 0.0,
             sequential: None,

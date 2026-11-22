@@ -236,6 +236,7 @@ fn a_text_file_is_unsupported() {
     ));
     // A decode does not: `unsupported` answers only a probe.
     let request = celesta_media::VideoRequest {
+        accepted_pixel_formats: &[],
         path: &text,
         time: 0.0,
         sequential: None,

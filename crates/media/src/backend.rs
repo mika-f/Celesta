@@ -28,6 +28,7 @@ pub struct MediaBackend {
     routes: HashMap<PathBuf, (usize, ComponentRef)>,
     probes: HashMap<PathBuf, MediaProbe>,
     sequential_frame_rate: Option<Rational>,
+    accepted_pixel_formats: Vec<crate::DecodedPixelFormat>,
 }
 
 impl MediaBackend {
@@ -50,6 +51,7 @@ impl MediaBackend {
             routes: HashMap::new(),
             probes: HashMap::new(),
             sequential_frame_rate: None,
+            accepted_pixel_formats: vec![crate::DecodedPixelFormat::Rgba8],
         }
     }
 
@@ -59,6 +61,31 @@ impl MediaBackend {
     pub fn with_sequential_video(mut self, frame_rate: Rational) -> Self {
         if frame_rate.is_valid() {
             self.sequential_frame_rate = Some(frame_rate);
+        }
+        self
+    }
+
+    /// Offers `formats` plus RGBA8, or RGBA8 alone when `CELESTA_DECODE_YUV` is `0`.
+    pub fn with_accepted_pixel_formats(self, formats: &[crate::DecodedPixelFormat]) -> Self {
+        self.with_decode_yuv(formats, std::env::var_os("CELESTA_DECODE_YUV").as_deref())
+    }
+
+    fn with_decode_yuv(
+        mut self,
+        formats: &[crate::DecodedPixelFormat],
+        setting: Option<&std::ffi::OsStr>,
+    ) -> Self {
+        self.accepted_pixel_formats = if setting.is_some_and(|value| value == "0") {
+            Vec::new()
+        } else {
+            formats.to_vec()
+        };
+        if !self
+            .accepted_pixel_formats
+            .contains(&crate::DecodedPixelFormat::Rgba8)
+        {
+            self.accepted_pixel_formats
+                .push(crate::DecodedPixelFormat::Rgba8);
         }
         self
     }
@@ -279,10 +306,12 @@ impl VideoFrameDecoder for MediaBackend {
         path: &Path,
         source_time_seconds: f64,
     ) -> Result<VideoFrame, MediaError> {
+        let accepted = self.accepted_pixel_formats.clone();
         self.decoding(path, |provider, decoder| {
             provider.decode_video(
                 decoder,
                 &VideoRequest {
+                    accepted_pixel_formats: &accepted,
                     path,
                     time: source_time_seconds,
                     sequential: None,
@@ -301,10 +330,12 @@ impl VideoFrameDecoder for MediaBackend {
             session: request_id,
             frame_rate,
         });
+        let accepted = self.accepted_pixel_formats.clone();
         self.decoding(path, |provider, decoder| {
             provider.decode_video(
                 decoder,
                 &VideoRequest {
+                    accepted_pixel_formats: &accepted,
                     path,
                     time: source_time_seconds,
                     sequential,
@@ -355,5 +386,39 @@ impl AudioDecoder for MediaBackend {
             });
         }
         Ok(audio)
+    }
+}
+
+#[cfg(test)]
+mod format_tests {
+    use super::*;
+    use crate::DecodedPixelFormat::{Nv12, Rgba8, Yuv420p};
+    use std::ffi::OsStr;
+
+    #[test]
+    fn decode_yuv_only_zero_overrides_the_offered_formats() {
+        for (formats, enabled) in [
+            (&[Nv12, Yuv420p, Rgba8][..], &[Nv12, Yuv420p, Rgba8][..]),
+            (&[Yuv420p][..], &[Yuv420p, Rgba8][..]),
+            (&[Rgba8][..], &[Rgba8][..]),
+            (&[][..], &[Rgba8][..]),
+        ] {
+            for setting in [
+                None,
+                Some("0"),
+                Some("1"),
+                Some(""),
+                Some("false"),
+                Some("00"),
+            ] {
+                let backend = MediaBackend::new().with_decode_yuv(formats, setting.map(OsStr::new));
+                let expected = if setting == Some("0") {
+                    &[Rgba8][..]
+                } else {
+                    enabled
+                };
+                assert_eq!(backend.accepted_pixel_formats, expected, "{setting:?}");
+            }
+        }
     }
 }

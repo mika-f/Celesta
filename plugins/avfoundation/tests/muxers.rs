@@ -362,6 +362,7 @@ fn ffmpeg_frame(path: &Path) -> (u32, u32, Vec<u8>) {
         .decode_video(
             celesta_codec_ffmpeg::DECODER_ID,
             &VideoRequest {
+                accepted_pixel_formats: &[],
                 path,
                 time: 0.0,
                 sequential: None,

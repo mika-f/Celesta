@@ -16,6 +16,7 @@ mod decoder;
 mod ffi;
 mod h264;
 mod muxer;
+mod native;
 mod probe;
 mod process;
 mod sequential;
@@ -297,6 +298,8 @@ impl Decoder for FfmpegCodec {
             return Err(no_component(self.profile, "decoder", decoder));
         }
         check_decoder(decoder)?;
+        self.decoder
+            .set_accepted_pixel_formats(request.accepted_pixel_formats);
         decoded(match request.sequential {
             Some(sequential) => self.decoder.decode_sequential(
                 sequential.session,

@@ -197,7 +197,7 @@ impl ConversionSink {
     }
 }
 
-fn pts_us(frame: &AVFrame) -> Option<i64> {
+pub(crate) fn pts_us(frame: &AVFrame) -> Option<i64> {
     if frame.pts == AV_NOPTS_VALUE || frame.time_base.den == 0 {
         return None;
     }

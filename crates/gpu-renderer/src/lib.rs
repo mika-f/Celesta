@@ -34,6 +34,7 @@ mod text;
 mod texture;
 mod transform;
 mod types;
+mod video_yuv;
 mod wgsl;
 mod yuv;
 

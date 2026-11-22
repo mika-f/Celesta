@@ -716,6 +716,8 @@ fn convert(sample: &IMFSample, layout: Layout) -> Result<VideoFrame, MediaError>
         );
     }
     Ok(VideoFrame {
+        pixel_format: celesta_media::DecodedPixelFormat::Rgba8,
+        color: None,
         width,
         height,
         pixels: Arc::new(pixels),

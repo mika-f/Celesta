@@ -385,6 +385,8 @@ impl Decoder for TestCodec {
         let index = first_frame_at_or_after(request.time, fps).min(last);
         let frame = scanned.frame(index)?;
         Ok(VideoFrame {
+            pixel_format: celesta_media::DecodedPixelFormat::Rgba8,
+            color: None,
             width: video.width,
             height: video.height,
             pixels: Arc::new(rgba8(path, video.format, frame)?),

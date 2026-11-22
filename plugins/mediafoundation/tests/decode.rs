@@ -304,6 +304,7 @@ fn probe(path: &Path) -> Result<MediaProbe, MediaError> {
 
 fn request(path: &Path, time: f64) -> VideoRequest<'_> {
     VideoRequest {
+        accepted_pixel_formats: &[],
         path,
         time,
         sequential: None,
@@ -456,6 +457,7 @@ fn decodes_the_frame_shown_at_each_time() {
             .decode_video(
                 DECODER_ID,
                 &VideoRequest {
+                    accepted_pixel_formats: &[],
                     path: &output,
                     time,
                     sequential,
@@ -822,6 +824,7 @@ fn probing_does_not_lock_the_file() {
         .decode_video(
             DECODER_ID,
             &VideoRequest {
+                accepted_pixel_formats: &[],
                 path: &output,
                 time: 0.0,
                 sequential: sequential("first"),
@@ -845,6 +848,7 @@ fn probing_does_not_lock_the_file() {
             .decode_video(
                 DECODER_ID,
                 &VideoRequest {
+                    accepted_pixel_formats: &[],
                     path: &other,
                     time: 0.0,
                     sequential: sequential("second"),

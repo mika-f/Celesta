@@ -151,6 +151,8 @@ impl Decoder for Fake {
             });
         }
         Ok(VideoFrame {
+            pixel_format: crate::DecodedPixelFormat::Rgba8,
+            color: None,
             width: 2,
             height: 1,
             pixels: Arc::new(vec![0; 8]),
