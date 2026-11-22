@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use celesta_composition::{Layer, LayerContent, Paint, Rational, Scene, TextStyle};
+use celesta_composition::{Color, Layer, LayerContent, Paint, Rational, Scene, TextStyle};
 
 use super::luminance::{contrast_ratio, relative_luminance};
 use super::scene::{Affine, halo_colors};
@@ -94,7 +94,7 @@ fn collect(
                     Some(visible) => text.chars().take(visible).collect(),
                     None => text.clone(),
                 };
-                if shown.trim().is_empty() || layer.id.is_empty() {
+                if shown.trim().is_empty() || layer.id.is_empty() || !fill_shows(style) {
                     continue;
                 }
                 out.push(TextSample {
@@ -109,6 +109,20 @@ fn collect(
             _ => {}
         }
     }
+}
+
+/// Whether any of a text's fill is drawn: a fully transparent one (and no
+/// color run) draws nothing for the probes to find, though they paint it.
+fn fill_shows(style: &TextStyle) -> bool {
+    let alpha = |color: &str| Color::from_hex(color).is_none_or(|color| color.alpha > 0);
+    let fill = match &style.fill {
+        None => true,
+        Some(Paint::Solid { color }) => alpha(color),
+        Some(Paint::Linear { stops, .. } | Paint::Radial { stops, .. }) => {
+            stops.is_empty() || stops.iter().any(|stop| alpha(&stop.color))
+        }
+    };
+    fill || style.color_runs.iter().any(|run| alpha(&run.color))
 }
 
 fn snippet(text: &str) -> String {
@@ -162,9 +176,9 @@ pub fn without_layer(scene: &Scene, id: &str) -> Scene {
     }
 }
 
-/// `scene` with text layer `id` filled solid `color`, without color runs,
-/// at full opacity of its own (its groups keep theirs): a probe for where
-/// its glyphs show. `None` without such a text layer.
+/// `scene` with text layer `id` filled solid `color`, without color runs or
+/// filters of its own, at full opacity of its own (its groups keep theirs):
+/// a probe for where its glyphs show. `None` without such a text layer.
 pub fn with_probe_fill(scene: &Scene, id: &str, color: &str) -> Option<Scene> {
     fn paint(layers: &mut [Layer], id: &str, color: &str) -> bool {
         layers.iter_mut().any(|layer| match &mut layer.content {
@@ -174,6 +188,9 @@ pub fn with_probe_fill(scene: &Scene, id: &str, color: &str) -> Option<Scene> {
                 });
                 style.color_runs.clear();
                 layer.opacity = 1.0;
+                // A tint or another color filter could paint both probes
+                // the same; where the glyphs are does not depend on it.
+                layer.effects.filters.clear();
                 true
             }
             LayerContent::Group { layers, .. } => paint(layers, id, color),
@@ -348,6 +365,28 @@ mod tests {
     }
 
     #[test]
+    fn a_fully_transparent_fill_is_not_sampled() {
+        let mut scene = scene();
+        scene.layers[2] = serde_json::from_value(json!({
+            "id": "clear", "transform": {},
+            "content": { "type": "text", "text": "Hidden", "style": { "fill": { "type": "solid", "color": "#00000000" } } },
+        }))
+        .unwrap();
+        let ids: Vec<String> = TextSample::of(&scene)
+            .into_iter()
+            .map(|sample| sample.id)
+            .collect();
+        assert_eq!(ids, ["title"]);
+        // Half transparent, it draws and is measured.
+        scene.layers[2] = serde_json::from_value(json!({
+            "id": "faint", "transform": {},
+            "content": { "type": "text", "text": "Faint", "style": { "fill": { "type": "solid", "color": "#FFFFFF40" } } },
+        }))
+        .unwrap();
+        assert_eq!(TextSample::of(&scene).len(), 2);
+    }
+
+    #[test]
     fn samples_carry_their_groups_opacity_and_scale() {
         let samples = TextSample::of(&scene());
         assert_eq!(samples.len(), 1, "{samples:?}");
@@ -382,6 +421,20 @@ mod tests {
             })
         );
         assert!(with_probe_fill(&scene, "missing", "#000000").is_none());
+        // A tint on the text would paint both probes alike: it is dropped.
+        let mut tinted = scene.clone();
+        let LayerContent::Group { layers, .. } = &mut tinted.layers[1].content else {
+            panic!("a group");
+        };
+        layers[0].effects.filters = vec![
+            serde_json::from_value(json!({ "type": "tint", "color": "#FF0000", "amount": 1 }))
+                .unwrap(),
+        ];
+        let probe = with_probe_fill(&tinted, "title", "#FFFFFF").unwrap();
+        let LayerContent::Group { layers, .. } = &probe.layers[1].content else {
+            panic!("a group");
+        };
+        assert!(layers[0].effects.filters.is_empty());
         assert!(with_probe_fill(&scene, "badge", "#000000").is_none());
 
         let hidden = without_layer(&scene, "title");

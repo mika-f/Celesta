@@ -16,7 +16,7 @@ Every issue is a warning with a stable code (`celesta_exporter::quality::Quality
 | `flashing` | More than 3 general flashes in any one-second window (WCAG 2.3.1). | pixels |
 | `red-flashing` | More than 3 saturated-red flashes in a second (WCAG 2.3.1's red flash). | pixels |
 | `low-contrast-text` | Text below 4.5:1 against what is behind it, 3:1 for large text (WCAG 1.4.3). | layers and pixels |
-| `short-scene` | An outermost React chapter, or an enabled item on an enabled JSON video track, under 1 s. | layers |
+| `short-scene` | An outermost React chapter, or an enabled item on an enabled JSON video track, under 1 s; an item's frames are those whose time falls in its range, as the evaluator shows it. | layers |
 | `short-shot` | The picture between two hard cuts lasts under 1 s. | pixels |
 | `blank-first-frame` | Frame 0 has nothing but solid rectangles (layers) or is one flat color (pixels). | layers and pixels |
 
@@ -107,9 +107,10 @@ codes.
 Every half second's worth of frames (and the first), each visible text layer
 that holds still from the frame before to the frame after is rendered three
 times more: twice as probes (`with_probe_fill`: the whole frame with the
-text's fill solid black, then white, its color runs dropped and its own
-opacity 1) and once without it (`without_layer`). Where the probes differ is
-where the glyphs show: a layer drawn over the text makes them equal there,
+text's fill solid black, then white, its color runs and its own filters
+dropped, so a tint cannot paint both alike, and its own opacity 1) and once without it (`without_layer`). Where the probes differ is
+where the glyphs show (a text whose fill and color runs are fully
+transparent draws nothing and is not sampled): a layer drawn over the text makes them equal there,
 so covered text is not measured, and a faded text is found at its full
 extent. Halos (strokes, shadows, glows) are the same in both probes and
 drop out. Over the pixels that differ by at least 90 % of the largest

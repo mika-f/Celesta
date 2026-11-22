@@ -92,8 +92,14 @@ pub fn short_items(project: &Project) -> Vec<QualityIssue> {
             if length <= 0.0 || length >= MIN_SCENE_SECONDS {
                 continue;
             }
-            let from = (start * fps).round().max(0.0) as u64;
-            let to = ((start + length) * fps).round().max(from as f64 + 1.0) as u64;
+            // The frames whose time falls in `[start, end)`, as the
+            // evaluator shows the item; one that falls between two frames
+            // shows on none.
+            let first_at = |seconds: f64| (seconds * fps - 1e-9).ceil().max(0.0) as u64;
+            let (from, to) = (first_at(start), first_at(start + length));
+            if to <= from {
+                continue;
+            }
             let name = item.name.as_deref().map_or_else(
                 || format!("{:?}", item.id.to_string()),
                 |name| format!("{name:?}"),
@@ -1058,5 +1064,15 @@ mod tests {
         let issues = short_items(&project);
         assert_eq!(issues.len(), 1, "{issues:?}");
         assert_eq!(issues[0].value, Some(0.5));
+        // At 60 fps an item ending at 30.25 frames shows on frames 0–30.
+        project.tracks[0].items[0].range.duration = celesta_composition::Time::new(121, 240);
+        let issues = short_items(&project);
+        assert_eq!((issues[0].frames[0].from, issues[0].frames[0].to), (0, 31));
+        // One between two frames shows on none.
+        project.tracks[0].items[0].range = celesta_composition::TimeRange {
+            start: celesta_composition::Time::new(1, 240),
+            duration: celesta_composition::Time::new(1, 480),
+        };
+        assert!(short_items(&project).is_empty());
     }
 }
