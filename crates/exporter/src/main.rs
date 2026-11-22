@@ -917,6 +917,11 @@ fn output_kind(cli: &Cli, explicit: &dyn Fn(&str) -> bool) -> Result<OutputKind,
         if cli.looping {
             return Err("--loop applies to video output, not still frames".into());
         }
+        // Stills never check for rough scenes (a contact sheet is how a
+        // rough cut is reviewed), so the flag would be ignored.
+        if cli.final_cut {
+            return Err("--final applies to video output, not still frames".into());
+        }
         if let Some(flag) = COMPONENT_FLAGS
             .iter()
             .filter(|(id, _)| !STILL_COMPONENT_FLAGS.contains(id))
@@ -977,6 +982,7 @@ fn subtitles_only_choice(explicit: &dyn Fn(&str) -> bool) -> Result<OutputKind, 
         ("debug_guides", "--debug-guides"),
         ("quality", "--quality"),
         ("looping", "--loop"),
+        ("final_cut", "--final"),
         ("loudness", "--loudness"),
         ("render_quality", "--render-quality"),
         ("driver", "--driver"),
@@ -1262,6 +1268,28 @@ mod tests {
             let message = error(args);
             assert!(message.contains("--loop"), "{message}");
         }
+    }
+
+    #[test]
+    fn final_applies_to_react_video_only() {
+        assert_eq!(choice(&["--react", "--final", "out.mp4"]), video());
+        for args in [
+            ["--react", "--final", "--frame", "90", "out.png"].as_slice(),
+            &[
+                "--react",
+                "--final",
+                "--every",
+                "30",
+                "--contact-sheet",
+                "out.png",
+            ],
+            &["--react", "--final", "--subtitles", "a.srt"],
+        ] {
+            let message = error(args);
+            assert!(message.contains("--final"), "{message}");
+        }
+        // A JSON project has no rough scenes to refuse.
+        assert!(!parses(&["project.celesta.json", "--final", "out.mp4"]));
     }
 
     fn reference(text: &str) -> ComponentRef {

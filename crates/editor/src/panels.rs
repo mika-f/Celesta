@@ -912,7 +912,7 @@ impl EditorView {
                                         .overflow_hidden()
                                         .whitespace_nowrap()
                                         .text_ellipsis()
-                                        .text_xs()
+                                        .text_sm()
                                         .text_color(muted)
                                         .child(desc),
                                 )

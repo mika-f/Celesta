@@ -82,17 +82,24 @@ pub fn run(
     };
     let mut output = io::stdout().lock();
     let metadata = bridge.metadata();
+    let mut config = json!({
+        "width": metadata.width,
+        "height": metadata.height,
+        "frameRate": metadata.frame_rate,
+        "durationInFrames": metadata.duration_in_frames,
+    });
+    // As the runtime's own ready message has them: absent when none are
+    // declared, so inspect.mjs lists them (and warns about rough ones) in
+    // either mode.
+    if !metadata.chapters.is_empty() {
+        config["chapters"] = json!(metadata.chapters);
+    }
     let mut sent = Vec::new();
     let handshake = with_new_calls(
         json!({
             "compositionId": metadata.composition_id,
             "compositions": metadata.compositions,
-            "config": {
-                "width": metadata.width,
-                "height": metadata.height,
-                "frameRate": metadata.frame_rate,
-                "durationInFrames": metadata.duration_in_frames,
-            },
+            "config": config,
             "componentSchemas": metadata.component_schemas,
             "propertySchema": metadata.project_property_schema,
         }),
