@@ -46,10 +46,11 @@ fn write_rgb(p: vec2<u32>, chroma_value: vec2<f32>) {
     if params.color.y==0u {y=(y-16.0)*255.0/219.0;scale=255.0/224.0;}
     let u=uv.x*scale;
     let v=uv.y*scale;
-    let rgb=vec3<f32>(y+2.0*(1.0-kr)*v,
-        y-2.0*kb*(1.0-kb)/(1.0-kr-kb)*u-2.0*kr*(1.0-kr)/(1.0-kr-kb)*v,
-        y+2.0*(1.0-kb)*u);
-    textureStore(output,vec2<i32>(p),vec4<f32>(clamp(floor(rgb),vec3<f32>(0.0),vec3<f32>(255.0))/255.0,1.0));
+    let r=y+2.0*(1.0-kr)*v;
+    let b=y+2.0*(1.0-kb)*u;
+    let g=(y-kr*r-kb*b)/(1.0-kr-kb);
+    let rgb=vec3<f32>(r,g,b);
+    textureStore(output,vec2<i32>(p),vec4<f32>(clamp(round(rgb),vec3<f32>(0.0),vec3<f32>(255.0))/255.0,1.0));
 }
 
 @compute @workgroup_size(8,8)

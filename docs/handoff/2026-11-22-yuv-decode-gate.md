@@ -1,5 +1,31 @@
 # YUV decode handoff A: parity preflight
 
+## Superseding acceptance gate: owner option 2
+
+The historical <=2 swscale gate in this note is no longer the owner's target.
+The new gate is exact alpha and RGB max 0 for both `to_rgba()` and GPU texture
+readback against an independent f64 BT.601/709 reference, supporting limited
+and full range, I420 2x2 replication and NV12 vertical bicubic with matching
+border normalization, nearest rounding and clamping. Comparisons with plugin
+RGBA/swscale and end-to-end RGBA-offer scenes instead permit max 4/255 with
+exact alpha; max/mean/differing counts remain required on every platform.
+
+CPU and shader now use nearest rounding. All six YUV fixture first frames
+match the independent reference exactly on lavapipe, with exact alpha.
+The shader evaluates green as `(Y - Kr*R - Kb*B) / Kg`, using unclamped R/B,
+to avoid one f32 half-integer boundary error. No epsilon or relaxed tolerance
+is used. See `2026-11-22-yuv-independent-reference.md` for measurements.
+
+The swscale CPU-path controls are retained at
+`/home/ubuntu/research/yuv-gate/cpu-flags-report.md`: identical native payloads
+produce plugin RGBA C-vs-auto differences up to 3 (I420) and 4 (NV12).
+The macOS odd-chroma failure matches C fallback for width 1918, which cannot
+use the 16-pixel-aligned NEON unscaled path. Windows NV12 matches the C
+aggregate signature, without a native function-pointer capture. This finding
+motivates separating deterministic correctness from swscale compatibility.
+
+Everything below is the historical preflight, not the current gate policy.
+
 ## Specification
 
 Handoff A proposes per-request RGBA8/NV12/I420 decode negotiation, validated

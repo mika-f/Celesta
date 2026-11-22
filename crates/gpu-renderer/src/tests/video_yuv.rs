@@ -9,6 +9,9 @@ use celesta_plugin_host::{MediaManifest, MediaOrigin};
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
+#[path = "../../../media/src/tests/yuv_reference.rs"]
+mod yuv_reference;
+
 const YUV: &[F] = &[F::Nv12, F::Yuv420p, F::Rgba8];
 
 fn read_texture(renderer: &GpuRenderer, texture: &LayerTexture) -> Vec<u8> {
@@ -320,6 +323,50 @@ fn backend(program: &Path, formats: &[F]) -> MediaBackend {
 }
 
 #[test]
+fn ffmpeg_fixtures_match_independent_nearest_reference() {
+    let Some(program) = program() else {
+        eprintln!("set CELESTA_TEST_FFMPEG for the independent-reference pixel gate");
+        return;
+    };
+    let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+        panic!("the independent-reference pixel gate requires a GPU");
+    };
+    let mut exact = true;
+    for name in [
+        "yuv-709-limited.mp4",
+        "yuv-untagged.mp4",
+        "yuv-709-full.mp4",
+        "yuv-odd-chroma.mp4",
+        "yuv-native-nv12.nut",
+        "yuv-sequence.mp4",
+    ] {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../plugins/ffmpeg/tests/fixtures")
+            .join(name);
+        let mut decoder = backend(&program, YUV);
+        let frame = decoder.decode_frame(&path, 0.0).unwrap();
+        assert_ne!(frame.pixel_format, F::Rgba8);
+        let reference = yuv_reference::rgba(&frame).unwrap();
+        renderer.video_uploads.begin_render();
+        let texture = upload(&mut renderer, &frame);
+        exact &= yuv_reference::exact(
+            &format!("{name} CPU"),
+            &frame.to_rgba().unwrap().pixels,
+            &reference.pixels,
+        );
+        exact &= yuv_reference::exact(
+            &format!("{name} GPU"),
+            &read_texture(&renderer, &texture),
+            &reference.pixels,
+        );
+    }
+    assert!(
+        exact,
+        "conversion differs from the nearest-rounded reference"
+    );
+}
+
+#[test]
 fn ffmpeg_fixtures_meet_texture_and_scene_gates() {
     let Some(program) = program() else {
         eprintln!("set CELESTA_TEST_FFMPEG for the real-plugin pixel gate");
@@ -389,7 +436,7 @@ fn ffmpeg_fixtures_meet_texture_and_scene_gates() {
                 &format!("{name} scene effects={effects}"),
                 actual.pixels(),
                 reference.pixels(),
-                2,
+                4,
             );
             assert!(renderer.video_uploads.yuv_allocations() > 0);
             if name == "yuv-709-limited.mp4"

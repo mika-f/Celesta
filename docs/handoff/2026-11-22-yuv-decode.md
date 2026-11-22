@@ -1,5 +1,36 @@
 # Negotiated SDR YUV decode — handoff A
 
+## Current gate: owner option 2
+
+The owner superseded the historical swscale <=2 gate below with two separate
+checks: both CPU materialization and GPU converted-texture readback must match
+an independent f64 BT.601/709, limited/full-range converter exactly (max 0,
+exact alpha), using nearest rounding and clamping. Reconstruction remains I420
+2x2 replication and NV12 vertical bicubic with the existing border normalization.
+Plugin RGBA/swscale and end-to-end RGBA-offer scene comparisons allow max 4/255,
+with exact alpha and max/mean/differing-pixel reporting on every platform.
+
+CPU and GPU conversion now round to nearest and clamp. Both match the
+independent reference exactly on all six fixture first frames on lavapipe.
+The initial nearest shader had one odd-chroma green-channel boundary error;
+evaluating green as `(Y - Kr*R - Kb*B) / Kg` removes it without a bias or
+tolerance change. R and B here are the unclamped reconstructed code values.
+See `2026-11-22-yuv-independent-reference.md` for counts and check results.
+The test-only reference lives in `crates/media/src/tests/yuv_reference.rs` and
+is included only by FFmpeg and GPU tests. Swscale compatibility assertions now
+use the approved max 4. Exact alpha is required by both gates.
+
+The independent reference avoids using CPU-dependent swscale as the definition
+of correct matrix conversion. `/home/ubuntu/research/yuv-gate/cpu-flags-report.md`
+records the controls: native YUV bytes stayed identical across CPU masks;
+plugin RGBA C-vs-auto differed by max 3 on I420 and 4 on NV12. The macOS
+1918-wide fixture rejects the width-aligned NEON path and matches the C-path
+failure signature; Windows NV12 also matches the C signature, but its exact
+dispatch was not instrumented. Neither BITEXACT nor a C-only reference passes
+the old <=2 gate, and ACCURATE_RND changes I420 reconstruction substantially.
+
+The remaining sections retain historical implementation and measurement data.
+
 ## Specification
 
 Branch `devin/1795326315-yuv-decode`, based on main
@@ -63,7 +94,8 @@ reference. I420 uses 2×2 chroma replication. NV12 uses vertical bicubic
 reconstruction (B=0, C=0.6), horizontal replication, centered vertical position
 `y/2 - 0.25`, normalized coefficients and clamped edge samples. The finite
 filter window, including truncation toward zero at the top edge, matches the
-legacy swscale filter setup. Matrix/range conversion floors and clips RGB.
+legacy swscale filter setup. Matrix/range conversion now rounds to nearest and
+clips RGB (the initial implementation used floor).
 See `to_rgba()` for the exact CPU oracle to reproduce in the GPU shader.
 No transfer-function decoding, gamut transform or sRGB texture interpretation
 is added. The output remains nonlinear RGB code values like current RGBA.
@@ -176,7 +208,7 @@ subsequent overwrite. Output textures remain distinct while layers hold them.
 
 The shader reproduces the handoff-A oracle: nearest 2×2 I420 chroma, the NV12
 finite bicubic window and border normalization, BT.601/709, full/limited range,
-floor/clip and exact opaque alpha. It writes nonlinear code values to
+nearest rounding/clipping and exact opaque alpha. It writes nonlinear code values to
 Rgba8Unorm, with no sRGB conversion. Effects, masks, blending and readback
 continue to consume ordinary RGBA layer textures. Final-quality CPU mipmaps
 and oversized-source CPU downsizing materialize via `to_rgba()` and retain

@@ -218,7 +218,7 @@ impl VideoFrame {
                 ];
                 let offset = (y * w + x) * 4;
                 for (channel, value) in rgb.into_iter().enumerate() {
-                    let value = value.floor();
+                    let value = value.round();
                     pixels[offset + channel] = value.clamp(0., 255.) as u8;
                 }
                 pixels[offset + 3] = 255;

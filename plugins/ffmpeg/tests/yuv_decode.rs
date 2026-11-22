@@ -6,6 +6,37 @@ use celesta_media::{
 };
 use std::path::{Path, PathBuf};
 
+#[path = "../../../crates/media/src/tests/yuv_reference.rs"]
+mod yuv_reference;
+
+#[test]
+fn native_yuv_matches_independent_nearest_reference() {
+    let mut exact = true;
+    for name in [
+        "yuv-709-limited.mp4",
+        "yuv-untagged.mp4",
+        "yuv-709-full.mp4",
+        "yuv-odd-chroma.mp4",
+        "yuv-native-nv12.nut",
+        "yuv-sequence.mp4",
+    ] {
+        let mut backend = FfmpegBackend::new();
+        backend.set_accepted_pixel_formats(&[F::Yuv420p, F::Nv12]);
+        let frame = backend.decode_frame(&fixture(name), 0.0).unwrap();
+        assert_ne!(frame.pixel_format, F::Rgba8);
+        let reference = yuv_reference::rgba(&frame).unwrap();
+        exact &= yuv_reference::exact(
+            &format!("{name} CPU"),
+            &frame.to_rgba().unwrap().pixels,
+            &reference.pixels,
+        );
+    }
+    assert!(
+        exact,
+        "CPU conversion differs from the nearest-rounded reference"
+    );
+}
+
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
@@ -39,7 +70,7 @@ fn diff(name: &str, actual: &VideoFrame, reference: &VideoFrame) {
         actual.pixel_format,
         total as f64 / (rgba.width as f64 * rgba.height as f64 * 3.)
     );
-    assert!(maximum <= 2, "{name}: max RGB difference {maximum}");
+    assert!(maximum <= 4, "{name}: max RGB difference {maximum}");
 }
 
 #[test]
