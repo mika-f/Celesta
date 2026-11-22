@@ -111,3 +111,4 @@ Celesta は Remotion のようにパッケージに分かれています。コ�
 | `loadProject`, `ProjectProvider`, `useProjectProperty` | `@celesta.studio/project` | JSON プロジェクトから値を読みます。 |
 | `ProjectTimeline` / `ProjectTrack` | `@celesta.studio/project` | 対応する JSON のタイムライン全体、または 1 トラックを描画します。 |
 | `registerComponent` / `defineProjectProperties` | `@celesta.studio/react` | JSON プロジェクトや Inspector でコンポーネント・プロパティを使えるようにします。 |
+| `definePalettes` / `mix` / `alpha` / `contrastRatio` | `@celesta.studio/react` | フィルムのパレットを役割（`ground`、`main`、`second`、`accent`）と派生色で定義し、`<Theme palette>` とパレットのプロパティで使えるようにします（[ガイド](/ja/docs/data/#コードを変えずにパレットを切り替える)）。 |

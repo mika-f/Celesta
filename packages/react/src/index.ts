@@ -149,6 +149,17 @@ export { Span } from './rich-text';
 export type { SpanProps, SpanStyle } from './rich-text';
 export { Theme, useTheme } from './theme';
 export type { ResolvedTheme, TextShorthand, ThemeProps, ThemeValues } from './theme';
+export { MIN_TEXT_CONTRAST, PALETTE_ROLES, alpha, contrastRatio, definePalettes, mix } from './palette';
+export type {
+  DefinePalettesOptions,
+  DerivedColor,
+  Palette,
+  PaletteIssue,
+  PalettePropertyField,
+  PaletteRole,
+  PaletteRoles,
+  PaletteSet,
+} from './palette';
 
 export { Subtitles, formatSubtitles, parseSubtitles } from './subtitles';
 export type {

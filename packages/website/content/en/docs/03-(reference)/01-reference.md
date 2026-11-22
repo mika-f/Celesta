@@ -111,3 +111,4 @@ The following APIs remain for compatibility with existing JSON timelines. New co
 | `loadProject`, `ProjectProvider`, `useProjectProperty` | `@celesta.studio/project` | Read values from a JSON project. |
 | `ProjectTimeline` / `ProjectTrack` | `@celesta.studio/project` | Draw a companion JSON project’s timeline, or one of its tracks. |
 | `registerComponent` / `defineProjectProperties` | `@celesta.studio/react` | Make components and properties available to JSON projects and the Inspector. |
+| `definePalettes` / `mix` / `alpha` / `contrastRatio` | `@celesta.studio/react` | Declare a film's palettes by role (`ground`, `main`, `second`, `accent`) with derived colors, for `<Theme palette>` and a palette property ([guide](/en/docs/data/#switch-palettes-without-editing-code)). |

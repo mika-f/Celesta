@@ -8,6 +8,7 @@ import type { ReactNode } from 'react';
 import { isHexColor } from '@celesta.studio/math';
 
 import { checkFontFeatures } from './font-features';
+import type { Palette } from './palette';
 import type { FontFamily, Paint, TextStyle } from './scene';
 import { markTransparent } from './source-chain';
 
@@ -17,12 +18,19 @@ export interface ThemeValues {
   fonts?: Readonly<Record<string, FontFamily>>;
   /** A name for a `#RRGGBB` or `#RRGGBBAA` color, such as `{ paper: '#f4f1ea' }`. */
   colors?: Readonly<Record<string, string>>;
+  /**
+   * A palette from `definePalettes()`: its roles and derived colors become
+   * color names, under any `colors` given with it.
+   */
+  palette?: Palette;
 }
 
 /** The fonts and colors in effect, every enclosing `<Theme>` merged. */
 export interface ResolvedTheme {
   fonts: Readonly<Record<string, FontFamily>>;
   colors: Readonly<Record<string, string>>;
+  /** The nearest `<Theme>`'s palette, if any gives one. */
+  palette?: Palette;
 }
 
 export interface ThemeProps extends ThemeValues {
@@ -47,15 +55,30 @@ function checkEntries(theme: ThemeValues): void {
       throw new Error(`<Theme> color "${name}" must be a #RRGGBB or #RRGGBBAA color, got ${JSON.stringify(color)}`);
     }
   }
+  if (theme.palette !== undefined) {
+    const colors = (theme.palette as Partial<Palette> | null)?.colors;
+    if (colors === null || typeof colors !== 'object') {
+      throw new Error('<Theme> palette must be a palette from definePalettes(), such as palettes.get(name)');
+    }
+    for (const [name, color] of Object.entries(colors)) {
+      if (!isHexColor(color)) {
+        throw new Error(`<Theme> palette color "${name}" must be a #RRGGBB or #RRGGBBAA color, got ${JSON.stringify(color)}`);
+      }
+    }
+  }
 }
 
 /** `inner`'s names over `outer`'s. */
 export function mergeTheme(outer: ResolvedTheme, inner: ThemeValues): ResolvedTheme {
   checkEntries(inner);
-  return {
+  const merged: ResolvedTheme = {
     fonts: inner.fonts ? { ...outer.fonts, ...inner.fonts } : outer.fonts,
-    colors: inner.colors ? { ...outer.colors, ...inner.colors } : outer.colors,
+    colors: inner.colors || inner.palette
+      ? { ...outer.colors, ...inner.palette?.colors, ...inner.colors }
+      : outer.colors,
   };
+  const palette = inner.palette ?? outer.palette;
+  return palette ? { ...merged, palette } : merged;
 }
 
 /**
@@ -63,20 +86,21 @@ export function mergeTheme(outer: ResolvedTheme, inner: ThemeValues): ResolvedTh
  * color="paper">`, the same names in `style` and in `<Span>`, and colors in
  * `<Rect>` and `<Path>` `fill` and `stroke`, gradient stops included. A
  * nested `<Theme>` adds to the names around it, its own winning where both
- * name the same thing. A name no theme defines is used as it is: a font
+ * name the same thing. `palette` (from `definePalettes()`) names its roles
+ * and derived colors, `colors` given with it winning. A name no theme defines is used as it is: a font
  * name as a family name, a color as a color, so the `color` shorthand and a
  * shape's colors throw unless they are hex colors.
  */
-export function Theme({ fonts, colors, children }: ThemeProps): React.ReactElement {
+export function Theme({ fonts, colors, palette, children }: ThemeProps): React.ReactElement {
   const outer = React.useContext(ThemeContext);
-  const value = React.useMemo(() => mergeTheme(outer, { fonts, colors }), [outer, fonts, colors]);
+  const value = React.useMemo(() => mergeTheme(outer, { fonts, colors, palette }), [outer, fonts, colors, palette]);
   return React.createElement(ThemeContext.Provider, { value }, children);
 }
 
 // Hands its caller's children a context and draws nothing of its own.
 markTransparent(Theme);
 
-/** The fonts and colors the nearest `<Theme>`s define; empty outside any. */
+/** The fonts, colors, and palette the nearest `<Theme>`s define; empty outside any. */
 export function useTheme(): ResolvedTheme {
   return React.useContext(ThemeContext);
 }

@@ -23,6 +23,7 @@ imported from `@celesta.studio/react`; `useProjectProperty`, `ProjectProvider`,
 | You want… | Do this |
 | --- | --- |
 | One source rendered with different titles, colors, or data files | `defineProjectProperties` + `useProjectProperty`/`getProjectProperty`, with values in a `props.json` beside the entry or passed with `--props-file`/`--props`; `templates/ranking` is a worked example |
+| Several color palettes for one film, picked in the Properties panel or with `--props` | `definePalettes` + `palettes.property()` in `defineProjectProperties`; see [text.md](text.md#palettes) |
 | A React video whose title/colors come from a JSON project file | `ProjectProvider` + `useProjectProperty` |
 | A hand-placed JSON timeline with React overlays drawn over or under it | `<ProjectTimeline />` / `<ProjectTrack id>`, exported with `--react … --project …` |
 | JSON items that render a React component (lower thirds, cards) | `registerComponent` + a JSON `component` item, exported with `--react … --project …` |
@@ -68,6 +69,11 @@ export default function Card() {
   </Composition>;
 }
 ```
+
+A palette menu is a `select` field too:
+`palette: palettes.property({ label: 'Palette' })` from
+[`definePalettes()`](text.md#palettes), read back with
+`palettes.get(getProjectProperty('palette'))`.
 
 `min`, `max`, `step`, and `unit` guide the Inspector: it refuses a typed
 value outside `min`/`max` and stops a drag at them, a drag moves by `step`,
