@@ -148,6 +148,8 @@ frame 105):
 - `SceneBoundary` and `SceneRenderError` are exported from the browser
   entry (`browser.ts`) too, which `<TransitionSeries>` imports from in
   `@celesta.studio/web`.
+- A rough-cut scene's `<ScenePlaceholder>` (`status: 'rough'`, or no
+  `Scene`) sits in the scene's boundary too.
 - `<Sequence>` is not wrapped: it also times media and small parts inside
   scenes, and has no name for a card. `SceneBoundary` is public for the
   cases that want it.
@@ -156,10 +158,10 @@ frame 105):
 
 On macOS (Apple silicon), Node 26.13, after `pnpm run build:runtime`:
 
-- Vitest, after rebasing onto `main` at eaeb0c16: `packages/react` (379,
+- Vitest, after rebasing onto `main` at 8c782f23: `packages/react` (400,
   including `test/scene-boundary.test.mts`),
   `packages/transitions` (30, including the TransitionSeries card case),
-  `packages/cli` (129, including `test/scene-errors.test.mts` and
+  `packages/cli` (130, including `test/scene-errors.test.mts` and
   `test/determinism.test.mts`), and `packages/web` (154) pass, with
   `tsc -b test` for each. `pnpm run test:runtime` passed every package but
   `packages/voicevox`'s "packaged CLI …" case, which timed out: the esbuild
