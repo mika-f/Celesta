@@ -833,11 +833,6 @@ impl GpuRenderer {
                         frame
                     }
                 };
-                let frame = if frame.pixel_format == celesta_media::DecodedPixelFormat::Rgba8 {
-                    frame
-                } else {
-                    frame.to_rgba()?
-                };
                 let (width, height) =
                     fit_within(frame.width, frame.height, self.max_texture_dimension);
                 let (display_width, display_height) = display_size(
@@ -857,10 +852,27 @@ impl GpuRenderer {
                 state.transform.b *= x;
                 state.transform.c *= y;
                 state.transform.d *= y;
+                let mipmaps = self.render_quality == RenderQuality::Final
+                    && state.transform.texels_per_pixel(1.0) >= 2.0;
                 let texture = if self.measuring_plane {
                     // Only its size counts there: the frame is not uploaded.
                     self.stand_in_texture(width, height)
+                } else if frame.pixel_format != celesta_media::DecodedPixelFormat::Rgba8
+                    && !mipmaps
+                    && (width, height) == (frame.width, frame.height)
+                {
+                    self.video_uploads.upload_yuv(
+                        &self.device,
+                        &self.queue,
+                        &self.texture_bind_group_layout,
+                        &frame,
+                    )?
                 } else {
+                    let frame = if frame.pixel_format == celesta_media::DecodedPixelFormat::Rgba8 {
+                        frame
+                    } else {
+                        frame.to_rgba()?
+                    };
                     // Checked against its size before anything reads it.
                     let mut image = DecodedImage::shared(frame.width, frame.height, frame.pixels)?;
                     if (width, height) != (frame.width, frame.height) {
@@ -873,8 +885,6 @@ impl GpuRenderer {
                     // `VideoUploads`), and its mipmaps would be rebuilt every
                     // frame: only a final render of a frame shrunk to half
                     // size or less pays for them.
-                    let mipmaps = self.render_quality == RenderQuality::Final
-                        && state.transform.texels_per_pixel(1.0) >= 2.0;
                     self.video_uploads.upload(
                         &self.device,
                         &self.queue,

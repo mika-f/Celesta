@@ -157,3 +157,118 @@ Logs remain under `/home/ubuntu/research/yuv-gate/`: `media-tests-final.log`,
 Native macOS/Windows execution is not checked locally. No screenshots or
 visual check were performed in this handoff; there is no GPU YUV upload or
 conversion implementation or opt-in here. No performance claim is made.
+
+## Handoff B — GPU upload and conversion
+
+The sections above record handoff A. Handoff B adds GPU-only offers at the
+editor preview and exporter `MediaBackend` construction sites. The backend
+default, CPU renderer and other callers remain RGBA-only. No composition API,
+wire format, native-platform decode behavior or export pixel format changes.
+
+`video_yuv.rs` / `video_yuv.wgsl` implement decoded-plane pooling and compute
+conversion. NV12 uploads R8 + RG8; I420 uploads three R8 planes. `VideoUploads`
+now stages arbitrary tightly packed plane rows through its existing mapped
+buffer pool, including alignment padding, map failure fallback and asynchronous
+remapping. Converted Rgba8Unorm output textures use the existing retained
+layer-texture pool and ownership checks. Plane textures are reusable after a
+conversion has been submitted: ordered copy/compute submissions precede any
+subsequent overwrite. Output textures remain distinct while layers hold them.
+
+The shader reproduces the handoff-A oracle: nearest 2×2 I420 chroma, the NV12
+finite bicubic window and border normalization, BT.601/709, full/limited range,
+floor/clip and exact opaque alpha. It writes nonlinear code values to
+Rgba8Unorm, with no sRGB conversion. Effects, masks, blending and readback
+continue to consume ordinary RGBA layer textures. Final-quality CPU mipmaps
+and oversized-source CPU downsizing materialize via `to_rgba()` and retain
+the existing path. Plane measurement uploads nothing; no GPU mips were added.
+
+Tests in `tests/video_yuv.rs` cover both matrices/ranges/formats, odd dimensions,
+padded rows, stable allocation counts, malformed frames, multiple queued
+conversions, and exact CPU mip/downsize fallbacks. Real-plugin fixture tests
+use `CELESTA_TEST_FFMPEG` (otherwise explicitly print a skip notice); local
+runs set it to `plugins/target/debug/celesta-codec-ffmpeg`. Each end-to-end
+scene uses a real shared-memory `MediaBackend`, switching only its offer.
+
+### GPU gates (lavapipe)
+
+All alpha samples match exactly. Means are over RGB channels; differing is
+the number of pixels with any difference. Converted-texture readback vs
+`to_rgba()` is **max 0, mean 0, differing 0** for each of the five YUV fixtures:
+709 limited, untagged 601 limited, 709 full, 1918×1078 odd chroma, and raw NV12.
+The ≤1 requirement is retained. Synthetic cases also meet ≤1.
+
+End-to-end render vs the RGBA-offer path (≤2 required):
+
+| Fixture | Plain max / mean / differing | Effects + blend max / mean / differing |
+| --- | --- | --- |
+| 709 limited, 1920×1080 | 2 / 0.292687 / 1,394,520 | 2 / 0.159816 / 924,318 |
+| Untagged, 1920×1080 | 2 / 0.400221 / 1,721,668 | 2 / 0.214545 / 1,055,326 |
+| 709 full, 1920×1080 | 1 / 0.161292 / 1,003,367 | 1 / 0.083997 / 522,526 |
+| 709 limited, 1918×1078 | 2 / 0.293076 / 1,391,230 | 2 / 0.160083 / 923,314 |
+| NV12, 128×72 | 2 / 0.438874 / 7,799 | 2 / 0.244900 / 5,260 |
+
+Effects scene: brightness 0.8, Screen blending, opacity 0.75 over the default
+background. Screenshots of the same 709-limited scene were saved and visually
+checked as a matched pair, not committed:
+
+- `/home/ubuntu/research/yuv-shots/rgba-effects-false.png`
+- `/home/ubuntu/research/yuv-shots/yuv-effects-false.png`
+- `/home/ubuntu/research/yuv-shots/rgba-effects-true.png`
+- `/home/ubuntu/research/yuv-shots/yuv-effects-true.png`
+
+Gate output: `/home/ubuntu/research/yuv-gate/gpu-b-gates-2.log`.
+
+### Completed-texture benchmark
+
+FFmpeg 8.1.3 external plugin, shared memory asserted, `MediaBackend` sequential
+decode with prefetch enabled in both cases. Four warmup + 120 timed frames;
+three interleaved RGBA/YUV pairs at each workload. Medians below include
+decode, staging upload, compute where applicable, GPU completion via
+`Device::poll(Wait)`, and the stated CPU busy work. No readback copy is timed.
+The benchmark is an ignored Rust test, `benchmark_completed_video_texture`;
+set `CELESTA_TEST_FFMPEG` and `CELESTA_YUV_BENCH_INPUT`, then run it with
+`cargo test --release -p celesta-gpu-renderer benchmark_completed_video_texture -- --ignored --nocapture`.
+
+Adapter: **Vulkan lavapipe / llvmpipe**, Mesa 23.2.1, LLVM 15.0.7 (CPU).
+These are software-GPU numbers, not evidence of a hardware-GPU speedup.
+
+| Resolution | Host work | RGBA ms/frame (range) | YUV ms/frame (range) | RGBA slot bytes | YUV slot bytes |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1920×1080 | 0 ms | 2.068 (2.054–2.105) | 9.437 (9.147–9.689) | 8,294,400 | 3,110,400 |
+| 1920×1080 | 15 ms | 17.080 (17.057–17.125) | 24.329 (23.848–24.611) | 8,294,400 | 3,110,400 |
+| 3840×2160 | 0 ms | 13.693 (12.996–14.043) | 33.332 (31.783–36.801) | 33,177,600 | 12,441,600 |
+| 3840×2160 | 15 ms | 25.498 (24.693–25.800) | 49.533 (48.847–56.587) | 33,177,600 | 12,441,600 |
+
+**YUV is slower on this software GPU**, despite 62.5% fewer slot bytes. The
+compute work runs on the CPU in this configuration. No end-to-end speedup
+claim is made, and no timed encoded-composition export was obtained. Logs:
+`b-bench-1080.log` and `b-bench-4k.log` under the same research directory.
+Native hardware GPU, macOS/Windows and interactive editor execution remain
+unchecked. The saved images are actual offscreen GPU scene renders.
+
+### Handoff-B checks
+
+Environment: `XDG_RUNTIME_DIR=/tmp`, lavapipe ICD from the blueprint,
+`CELESTA_TEST_FFMPEG` as above; plugin runner uses the FFmpeg 8.1.3 standard
+prefix via `PKG_CONFIG_PATH` (x264 prefix configured separately).
+
+| Command | Result |
+| --- | --- |
+| `cargo test --release -p celesta-gpu-renderer` (blueprint environment, real-plugin gate enabled) | 441 passed, 0 failed, 2 ignored (existing fixture writer and new benchmark) |
+| `cargo test -p celesta-media` | 148 passed, 0 failed |
+| `cargo test -p celesta-codec-test --test process` | 20 passed, 0 failed |
+| `cargo test -p celesta-exporter --lib` | 191 passed, 0 failed |
+| `node scripts/plugins/run-cargo.mts plugins test -p celesta-codec-ffmpeg --locked` | 103 passed, 0 failed across nonempty suites |
+| Targeted root Clippy (`celesta-media`, `celesta-codec-test`, `celesta-gpu-renderer`, `celesta-exporter`), all targets, `-D warnings` | passed |
+| `cargo clippy -p celesta-editor --all-targets -- -D warnings` | passed |
+| FFmpeg plugin runner Clippy, all targets, `-D warnings` | passed |
+| Root/plugin rustfmt checks; `git diff --check` | passed |
+
+Detailed outputs are `/home/ubuntu/research/yuv-gate/b-*-tests.log`,
+`b-root-clippy.log`, and `b-plugin-clippy.log`. The first compile of the new
+test helper caught fallible mapped-buffer access and a wrapper-borrow error;
+both were fixed before gates ran. There were no pixel-gate failures.
+The additional editor Clippy check initially found missing desktop system
+development packages (`fontconfig.pc`, then `alsa.pc`). The standard pkg-config
+search path was correct; installing `libfontconfig1-dev` and `libasound2-dev`
+resolved this environment issue. Its final output is `b-editor-clippy-final.log`.

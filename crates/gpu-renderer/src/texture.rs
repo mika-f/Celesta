@@ -3,7 +3,9 @@ use crate::error::GpuRenderError;
 use crate::layer::PreparedItem;
 use crate::renderer::GpuRenderer;
 use crate::text::{PendingText, rasterize_text, text_layer};
+use crate::video_yuv::VideoYuv;
 use celesta_composition::ResolvedAsset;
+use celesta_media::{DecodedPixelFormat, VideoFrame};
 use celesta_remote::resolve_asset_path;
 use celesta_renderer::TextRasterizer;
 use celesta_renderer::resample::{Coverage, box_downscale};
@@ -157,29 +159,8 @@ fn layer_texture(
     image: &DecodedImage,
     mip_levels: u32,
 ) -> LayerTexture {
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("Celesta layer texture"),
-        size: wgpu::Extent3d {
-            width: image.width,
-            height: image.height,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: mip_levels,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8Unorm,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
-    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("Celesta layer texture bind group"),
-        layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: wgpu::BindingResource::TextureView(&view),
-        }],
-    });
+    let (texture, bind_group) =
+        layer_texture_storage(device, layout, image.width, image.height, mip_levels);
     LayerTexture(Arc::new(TextureData {
         _texture: texture,
         bind_group,
@@ -192,6 +173,42 @@ fn layer_texture(
         raster_scale: image.raster_scale,
         premultiplied: false,
     }))
+}
+
+fn layer_texture_storage(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    width: u32,
+    height: u32,
+    mip_levels: u32,
+) -> (wgpu::Texture, wgpu::BindGroup) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Celesta layer texture"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: mip_levels,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_DST
+            | wgpu::TextureUsages::STORAGE_BINDING
+            | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Celesta layer texture bind group"),
+        layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::TextureView(&view),
+        }],
+    });
+    (texture, bind_group)
 }
 
 /// Writes `levels` into `texture` through `Queue::write_texture`.
@@ -237,6 +254,7 @@ fn write_levels(queue: &wgpu::Queue, texture: &wgpu::Texture, levels: &Levels) {
 pub(crate) struct VideoUploads {
     textures: Vec<KeptTexture>,
     staging: Vec<Staging>,
+    yuv: Option<VideoYuv>,
     /// The textures and staging buffers created, ever.
     pub(crate) allocations: u64,
 }
@@ -257,9 +275,21 @@ struct Staging {
     used: bool,
 }
 
+struct PlaneUpload<'a> {
+    texture: &'a wgpu::Texture,
+    level: u32,
+    width: u32,
+    height: u32,
+    row_bytes: u32,
+    pixels: &'a [u8],
+}
+
 impl VideoUploads {
     /// Starts a render: what the last render did not use goes.
     pub(crate) fn begin_render(&mut self) {
+        if let Some(yuv) = &mut self.yuv {
+            yuv.begin_render();
+        }
         self.textures
             .retain_mut(|texture| std::mem::take(&mut texture.used));
         self.staging
@@ -270,6 +300,11 @@ impl VideoUploads {
     #[cfg(test)]
     pub(crate) fn kept(&self) -> (usize, usize) {
         (self.textures.len(), self.staging.len())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn yuv_allocations(&self) -> u64 {
+        self.yuv.as_ref().map_or(0, |yuv| yuv.allocations)
     }
 
     /// `image`, with `mipmaps` its smaller levels too, as a layer texture.
@@ -304,16 +339,105 @@ impl VideoUploads {
             }
         };
 
+        let planes: Vec<_> = levels
+            .iter()
+            .enumerate()
+            .map(|(level, (width, height, pixels))| PlaneUpload {
+                texture: &texture._texture,
+                level: level as u32,
+                width: *width,
+                height: *height,
+                row_bytes: width * BYTES_PER_PIXEL,
+                pixels,
+            })
+            .collect();
+        self.stage(device, queue, &planes);
+        texture
+    }
+
+    pub(crate) fn upload_yuv(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        layout: &wgpu::BindGroupLayout,
+        frame: &VideoFrame,
+    ) -> Result<LayerTexture, GpuRenderError> {
+        frame.validate()?;
+        if frame.pixel_format == DecodedPixelFormat::Rgba8 {
+            return Err(
+                celesta_media::MediaError::Codec("expected a YUV video frame".into()).into(),
+            );
+        }
+        let mut yuv = self.yuv.take().unwrap_or_else(|| VideoYuv::new(device));
+        let before = yuv.allocations;
+        let sources = yuv.planes(device, frame.width, frame.height, frame.pixel_format);
+        self.allocations += yuv.allocations - before;
+        let mut offset = 0;
+        let planes: Vec<_> = sources
+            .iter()
+            .map(|source| {
+                let row_bytes = source.width * source.channels;
+                let size = (row_bytes * source.height) as usize;
+                let pixels = &frame.pixels[offset..offset + size];
+                offset += size;
+                PlaneUpload {
+                    texture: &source.texture,
+                    level: 0,
+                    width: source.width,
+                    height: source.height,
+                    row_bytes,
+                    pixels,
+                }
+            })
+            .collect();
+        self.stage(device, queue, &planes);
+        let key = (frame.width, frame.height, 1);
+        let output = if let Some(kept) = self
+            .textures
+            .iter_mut()
+            .find(|kept| kept.key == key && kept.texture.unshared())
+        {
+            kept.used = true;
+            kept.texture.clone()
+        } else {
+            let (texture, bind_group) =
+                layer_texture_storage(device, layout, frame.width, frame.height, 1);
+            let texture = LayerTexture::from_data(TextureData {
+                _texture: texture,
+                bind_group,
+                width: frame.width,
+                height: frame.height,
+                baseline_anchor: 0.,
+                anchor_origin: (0., 0.),
+                anchor_span: (1., 1.),
+                text_box: None,
+                raster_scale: 1.,
+                premultiplied: false,
+            });
+            self.textures.push(KeptTexture {
+                key,
+                texture: texture.clone(),
+                used: true,
+            });
+            self.allocations += 1;
+            texture
+        };
+        yuv.convert(device, queue, &sources, &output._texture, frame);
+        self.yuv = Some(yuv);
+        Ok(output)
+    }
+
+    fn stage(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, planes: &[PlaneUpload<'_>]) {
         // Each level at an offset and with rows padded as a copy from a
         // buffer to a texture needs.
         let alignment = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let mut offsets = Vec::with_capacity(levels.len());
+        let mut offsets = Vec::with_capacity(planes.len());
         let mut size = 0u64;
-        for (width, height, _) in &levels {
+        for plane in planes {
             size = wgpu::util::align_to(size, u64::from(alignment));
             offsets.push(size);
-            let row = wgpu::util::align_to(width * BYTES_PER_PIXEL, alignment);
-            size += u64::from(row) * u64::from(*height);
+            let row = wgpu::util::align_to(plane.row_bytes, alignment);
+            size += u64::from(row) * u64::from(plane.height);
         }
         let index = match self.staging.iter().position(|staging| {
             staging.buffer.size() == size && staging.mapped.load(Ordering::Acquire)
@@ -340,13 +464,34 @@ impl VideoUploads {
             // Not mapped after all: this frame goes the plain way, and the
             // buffer is not offered again.
             self.staging.swap_remove(index);
-            write_levels(queue, &texture._texture, &levels);
-            return texture;
+            for plane in planes {
+                queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: plane.texture,
+                        mip_level: plane.level,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    plane.pixels,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(plane.row_bytes),
+                        rows_per_image: Some(plane.height),
+                    },
+                    wgpu::Extent3d {
+                        width: plane.width,
+                        height: plane.height,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            }
+            return;
         };
-        for ((width, _, pixels), offset) in levels.iter().zip(&offsets) {
+        for (plane, offset) in planes.iter().zip(&offsets) {
             let offset = *offset as usize;
-            let row = (width * BYTES_PER_PIXEL) as usize;
-            let padded = wgpu::util::align_to(width * BYTES_PER_PIXEL, alignment) as usize;
+            let pixels = plane.pixels;
+            let row = plane.row_bytes as usize;
+            let padded = wgpu::util::align_to(plane.row_bytes, alignment) as usize;
             if row == padded {
                 mapped
                     .slice(offset..offset + pixels.len())
@@ -365,28 +510,25 @@ impl VideoUploads {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Celesta video upload"),
         });
-        for (level, ((width, height, _), offset)) in levels.iter().zip(&offsets).enumerate() {
+        for (plane, offset) in planes.iter().zip(&offsets) {
             encoder.copy_buffer_to_texture(
                 wgpu::TexelCopyBufferInfo {
                     buffer: &staging.buffer,
                     layout: wgpu::TexelCopyBufferLayout {
                         offset: *offset,
-                        bytes_per_row: Some(wgpu::util::align_to(
-                            width * BYTES_PER_PIXEL,
-                            alignment,
-                        )),
-                        rows_per_image: Some(*height),
+                        bytes_per_row: Some(wgpu::util::align_to(plane.row_bytes, alignment)),
+                        rows_per_image: Some(plane.height),
                     },
                 },
                 wgpu::TexelCopyTextureInfo {
-                    texture: &texture._texture,
-                    mip_level: level as u32,
+                    texture: plane.texture,
+                    mip_level: plane.level,
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
                 },
                 wgpu::Extent3d {
-                    width: *width,
-                    height: *height,
+                    width: plane.width,
+                    height: plane.height,
                     depth_or_array_layers: 1,
                 },
             );
@@ -403,7 +545,6 @@ impl VideoUploads {
                     mapped.store(true, Ordering::Release);
                 }
             });
-        texture
     }
 }
 

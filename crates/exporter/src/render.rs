@@ -269,6 +269,11 @@ impl Exporter {
         .with_asset_root(asset_root)
         .with_video_decoder(
             MediaBackend::with_registry(self.media())
+                .with_accepted_pixel_formats(&[
+                    celesta_media::DecodedPixelFormat::Nv12,
+                    celesta_media::DecodedPixelFormat::Yuv420p,
+                    celesta_media::DecodedPixelFormat::Rgba8,
+                ])
                 .with_sequential_video(frame_rate)
                 .with_kill_switch(cancellation.plugins()),
         )

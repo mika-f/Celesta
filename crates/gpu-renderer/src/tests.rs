@@ -43,6 +43,7 @@ mod readback;
 mod scene;
 mod shader;
 mod transform_3d;
+mod video_yuv;
 
 fn empty_scene(width: u32, height: u32) -> Scene {
     Scene {
