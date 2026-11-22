@@ -217,6 +217,7 @@ not `registerHostElement()`.
 | `packages/code` (`@celesta.studio/code`) | Syntax-highlighted code components; the `code` plugin's module. |
 | `packages/voicevox` (`@celesta.studio/voicevox`) | VOICEVOX AudioQuery lip sync; the `voicevox` plugin's module. |
 | `packages/aivis-speech` (`@celesta.studio/aivis-speech`) | AivisSpeech AudioQuery and WAV lip sync; the `aivis-speech` plugin's module. |
+| `packages/score` (`@celesta.studio/score`) | Sound effects, drums, and notes written as data and synthesized deterministically to a WAV in `prepare()`; the `score` plugin's module, not bundled in the runtime. See [`docs/handoff/2026-11-22-score-synth.md`](docs/handoff/2026-11-22-score-synth.md). |
 | `packages/cli` (`@celesta.studio/cli`) | Entry CLI the bridge spawns; depends on every package it serves. |
 | `packages/exporter` (`@celesta.studio/exporter`) | Node.js API that runs `celesta-exporter --json` for scripts (`exportVideo` with `preset`, `presetFile`, `muxer`, `videoEncoder`, `audioEncoder`; `exportStills` with `muxer` and `videoEncoder`; `listComponents`, `describeComponent`); not part of the runtime. |
 | `packages/web` (`@celesta.studio/web`) | Browser evaluator, Canvas preview, and WebCodecs MP4 export; see [`packages/web/README.md`](packages/web/README.md). |

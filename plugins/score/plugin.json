@@ -1,0 +1,8 @@
+{
+  "id": "score",
+  "name": "Score",
+  "version": "0.10.0",
+  "license": "MIT OR Apache-2.0",
+  "module": "../../packages/score/src/index.ts",
+  "licenses": ["../../LICENSE-MIT", "../../LICENSE-APACHE"]
+}

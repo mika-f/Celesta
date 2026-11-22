@@ -72,6 +72,10 @@ By default an `Audio`'s pitch follows its speed, like tape: `playbackRate={1.25}
 - The pitch you hear is multiplied by `2^(pitch / 12)`, times `playbackRate` unless `preservePitch` is set. `pitch={12}` is one octave up.
 - Only `Audio` takes these props. The soundtrack of a `Video` and the voices of a `Dialogue` do not. The preview and the export sound the same, but the browser exporter in `@celesta.studio/web` rejects a clip that uses them, with the error "Audio pitch and preservePitch are not supported by browser export yet."
 
+## Sound effects without files
+
+For ticks, pops, whooshes, and simple music, write the sound as data instead of placing files: [`@celesta-plugin/score`](/en/docs/score/) records them against the composition's frames, seconds, and beats, renders them to a WAV in `prepare()`, and plays it through an `<Audio>`, the same bytes every run.
+
 ## Size a scene to its media
 
 The optional `prepare()` export runs once before rendering and may be `async`. In the example, `preloadMedia()` reads the clip’s length and `mediaDurationInFrames()` converts it to frames, so the end card always follows the footage.

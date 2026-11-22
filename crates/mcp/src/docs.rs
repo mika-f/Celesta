@@ -57,6 +57,10 @@ pub static TOPICS: &[Topic] = &[
         "Syntax-highlighted and typed code (the code plugin, @celesta-plugin/code)"
     ),
     reference!(
+        "score",
+        "Sound effects, drums, and simple music written as data and synthesized without audio files (the score plugin, @celesta-plugin/score)"
+    ),
+    reference!(
         "helpers",
         "The API to use before writing a helper: clamp, eased progress, random, timecodes, text widths, cues"
     ),

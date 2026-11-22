@@ -499,10 +499,11 @@ describe("the repository's plugins", () => {
       'ffmpeg-x264',
       'lottie',
       'mediafoundation',
+      'score',
       'voicevox',
       'vrm',
     ]);
-    const [aivis, avfoundation, code, ffmpeg, gpl, lottie, mediafoundation, voicevox, vrm] = plugins;
+    const [aivis, avfoundation, code, ffmpeg, gpl, lottie, mediafoundation, score, voicevox, vrm] = plugins;
 
     // The component-only plugins are made from the workspace packages their
     // modules are in.
@@ -512,6 +513,8 @@ describe("the repository's plugins", () => {
     );
     expect(lottie).toMatchObject({ jsPackage: '@celesta.studio/lottie' });
     expect(lottie.inputs).toEqual(expect.arrayContaining(['plugins/lottie', 'packages/lottie', 'packages/shapes']));
+    expect(score).toMatchObject({ jsPackage: '@celesta.studio/score' });
+    expect(score.inputs).toEqual(expect.arrayContaining(['plugins/score', 'packages/score', 'packages/react']));
     for (const [plugin, name] of [[aivis, 'aivis-speech'], [voicevox, 'voicevox']] as const) {
       expect(plugin).toMatchObject({ jsPackage: `@celesta.studio/${name}` });
       expect(plugin.inputs).toEqual(expect.arrayContaining([`plugins/${name}`, `packages/${name}`, 'packages/character']));

@@ -1,0 +1,42 @@
+{
+  "name": "@celesta.studio/score",
+  "version": "0.10.0",
+  "private": true,
+  "description": "Sound effects and simple music written as data and synthesized deterministically for Celesta compositions.",
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -b test && vitest run",
+    "clean": "rm -rf dist"
+  },
+  "peerDependencies": {
+    "@celesta.studio/react": "0.0.0",
+    "react": "^19.3.0"
+  },
+  "devDependencies": {
+    "@celesta.studio/react": "workspace:*",
+    "@types/node": "^26.0.0",
+    "@types/react": "^19.3.0",
+    "react": "^19.3.0",
+    "typescript": "^5.7.3",
+    "vitest": "^5.0.3"
+  }
+}

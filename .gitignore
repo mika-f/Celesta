@@ -26,6 +26,7 @@ node_modules/
 
 # Voices prepareNarration() synthesized for the examples.
 **/.celesta/voices/
+**/.celesta/score/
 
 # Repository files copied into crates for publishing (scripts/bundle-crate-files.mjs).
 /crates/*/bundled/

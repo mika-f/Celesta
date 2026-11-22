@@ -7,7 +7,7 @@
  * The plugin folders, relative to the repository root, that give Celesta's
  * version: every first-party plugin the registry publishes. Those with a
  * process give it in their Cargo.toml too; the component-only ones
- * (aivis-speech, code, lottie, voicevox) have no Cargo.toml.
+ * (aivis-speech, code, lottie, score, voicevox) have no Cargo.toml.
  */
 export const FOLLOWS_CELESTA = [
   'plugins/aivis-speech',
@@ -17,6 +17,7 @@ export const FOLLOWS_CELESTA = [
   'plugins/ffmpeg-x264',
   'plugins/lottie',
   'plugins/mediafoundation',
+  'plugins/score',
   'plugins/voicevox',
   'plugins/vrm',
 ];

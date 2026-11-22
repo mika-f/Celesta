@@ -41,6 +41,7 @@ const files: Record<string, string> = {
   'plugins/aivis-speech/plugin.json': '{\n  "id": "aivis-speech",\n  "version": "0.9.0"\n}\n',
   'plugins/code/plugin.json': '{\n  "id": "code",\n  "version": "0.9.0"\n}\n',
   'plugins/lottie/plugin.json': '{\n  "id": "lottie",\n  "version": "0.9.0"\n}\n',
+  'plugins/score/plugin.json': '{\n  "id": "score",\n  "version": "0.9.0"\n}\n',
   'plugins/voicevox/plugin.json': '{\n  "id": "voicevox",\n  "version": "0.9.0"\n}\n',
 };
 
@@ -196,8 +197,8 @@ describe('bump-version.mts', () => {
         'plugins/code/plugin.json, plugins/ffmpeg/Cargo.toml; ' +
         'failed: plugins/ffmpeg/plugin.json; ' +
         'not written: plugins/ffmpeg-x264/Cargo.toml, plugins/ffmpeg-x264/plugin.json, plugins/lottie/plugin.json, ' +
-        'plugins/mediafoundation/Cargo.toml, plugins/mediafoundation/plugin.json, plugins/voicevox/plugin.json, ' +
-        'plugins/vrm/Cargo.toml, plugins/vrm/plugin.json',
+        'plugins/mediafoundation/Cargo.toml, plugins/mediafoundation/plugin.json, plugins/score/plugin.json, ' +
+        'plugins/voicevox/plugin.json, plugins/vrm/Cargo.toml, plugins/vrm/plugin.json',
     );
     expect(result.stderr).toContain('the bump was undone, every file is as it was');
     expect(existsSync(join(root, 'ran-update'))).toBe(false);
@@ -231,7 +232,7 @@ describe('bump-version.mts', () => {
       'restored: Cargo.toml, plugins/aivis-speech/plugin.json, plugins/avfoundation/Cargo.toml, plugins/avfoundation/plugin.json, ' +
         'plugins/code/plugin.json, plugins/ffmpeg/Cargo.toml, plugins/ffmpeg-x264/Cargo.toml, plugins/ffmpeg-x264/plugin.json, ' +
         'plugins/lottie/plugin.json, plugins/mediafoundation/Cargo.toml, plugins/mediafoundation/plugin.json, ' +
-        'plugins/voicevox/plugin.json, plugins/vrm/Cargo.toml, plugins/vrm/plugin.json, Cargo.lock, plugins/Cargo.lock',
+        'plugins/score/plugin.json, plugins/voicevox/plugin.json, plugins/vrm/Cargo.toml, plugins/vrm/plugin.json, Cargo.lock, plugins/Cargo.lock',
     );
     expect(result.stderr).toMatch(/not restored: plugins\/ffmpeg\/plugin\.json \(.+\)/);
     expect(read('plugins/ffmpeg/plugin.json')).toBe(files['plugins/ffmpeg/plugin.json'].replace('0.9.0', '0.9.1'));

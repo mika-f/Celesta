@@ -72,6 +72,10 @@ export async function prepare() { clip = await preloadMedia("./demo.mp4"); }
 - 聞こえる音は `2^(pitch / 12)` 倍の周波数になり、`preservePitch` を指定しないときはさらに `playbackRate` 倍になります。`pitch={12}` で 1 オクターブ上がります。
 - 指定できるのは `Audio` だけです。`Video` の音声や `Dialogue` の声には使えません。プレビューと書き出しは同じ音になりますが、`@celesta.studio/web` のブラウザ書き出しは、これらを使ったクリップを「Audio pitch and preservePitch are not supported by browser export yet.」のエラーで拒否します。
 
+## ファイルなしの効果音
+
+tick・pop・whoosh やシンプルな音楽は、ファイルを置く代わりにデータで書けます。[`@celesta-plugin/score`](/ja/docs/score/) はそれらをコンポジションのフレーム・秒・拍に対して記録し、`prepare()` で WAV に書き出して `<Audio>` で鳴らします。何度実行しても同じバイト列になります。
+
 ## メディアに合わせてシーンの長さを決める
 
 任意の `prepare()` エクスポートは描画前に一度だけ実行され、`async` にできます。この例は `preloadMedia()` で動画の長さを取得し、`mediaDurationInFrames()` でフレーム数に変換するので、エンドカードが常に映像の直後に来ます。

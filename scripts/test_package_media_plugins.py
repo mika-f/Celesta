@@ -124,7 +124,7 @@ class PluginArchives(unittest.TestCase):
         # Those with a process per target, the others as one archive.
         self.assertEqual(sorted(packaging.PLUGINS), sorted(name for name, plugin in manifests.items() if "cargoPackage" in plugin))
         self.assertEqual(sorted(packaging.COMPONENTS), sorted(name for name, plugin in manifests.items() if "cargoPackage" not in plugin))
-        self.assertEqual(sorted(packaging.COMPONENTS), ["aivis-speech", "code", "lottie", "voicevox"])
+        self.assertEqual(sorted(packaging.COMPONENTS), ["aivis-speech", "code", "lottie", "score", "voicevox"])
 
     def test_a_component_plugin_is_one_archive_for_any_target(self):
         built = {"id": "code", "version": "0.10.0", "protocol": 1, "celesta": ">=0.10.0, <0.11.0",

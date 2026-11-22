@@ -438,7 +438,7 @@ celesta plugin add vrm                  # on a pre-release, name it: vrm@0.10.0-
 
 The desktop app reads the `celesta.lock` of a project you trust (saved trust, with `celesta.config.json`) and runs the locked versions, and offers to download them when you open such a project whose locked plugins are not downloaded.
 
-The same goes for the first-party component plugins `aivis-speech`, `code`, `lottie`, and `voicevox`, each described on its own page.
+The same goes for the first-party component plugins `aivis-speech`, `code`, `lottie`, `score`, and `voicevox`, each described on its own page.
 
 To build it from the repository's `plugins/vrm` instead, build it, then install the folder it writes:
 
