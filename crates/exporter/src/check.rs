@@ -260,6 +260,15 @@ impl Exporter {
             Some((run.first, run.end)),
             &mut progress,
         );
+        // As an export of the span would: a warning, or with --final a
+        // refusal, for each rough scene in it.
+        crate::react_entry::check_rough_scenes(
+            &metadata.chapters,
+            run.first,
+            run.end - run.first,
+            self.options.final_cut,
+            &mut progress,
+        )?;
         let mut scenes = ReactScenes::new(bridge, project)?;
         let mut renderer = self.export_renderer(asset_root, metadata.frame_rate, cancellation)?;
         let checked = check_frames(&run, &mut renderer, cancellation, &mut progress, |frame| {

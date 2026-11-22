@@ -261,3 +261,48 @@ fn check_quality_takes_no_output() {
     assert_eq!(code, Some(2), "{report}");
     assert_eq!(report["error"]["code"], "usage");
 }
+
+#[test]
+fn a_react_check_warns_about_rough_scenes_and_final_refuses_them() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    if !root.join("packages/cli/dist/cli.js").exists() {
+        eprintln!("skipping React quality check test: build packages/cli first");
+        return;
+    }
+    // In the CLI package, where `@celesta.studio/react` resolves.
+    let dir = tempfile::tempdir_in(root.join("packages/cli")).unwrap();
+    let entry = dir.path().join("film.tsx");
+    std::fs::write(
+        &entry,
+        r##"
+import { Composition, Rect, Text } from '@celesta.studio/react';
+const chapters = [
+  { id: 'intro', from: 0, durationInFrames: 30 },
+  { id: 'card', name: 'The card', from: 30, durationInFrames: 30, status: 'rough' },
+];
+export default function Root() {
+  return <Composition width={160} height={90} fps={30} durationInFrames={60} chapters={chapters}>
+    <Rect width={160} height={90} fill="#101018" />
+    <Text x={80} y={45} style={{ fontSize: 24 }}>Title</Text>
+  </Composition>;
+}
+"##,
+    )
+    .unwrap();
+    let entry = entry.to_str().unwrap();
+    let Some((_, report)) = exporter(&["--react", "--check-quality", entry]) else {
+        return;
+    };
+    assert_eq!(report["status"], "ok", "{report}");
+    let coded: Vec<&str> = report["codedWarnings"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{report}"))
+        .iter()
+        .map(|warning| warning["code"].as_str().unwrap())
+        .collect();
+    assert!(coded.contains(&"rough_scenes"), "{report}");
+    // --final refuses the span, as it would refuse to export it.
+    let (code, report) = exporter(&["--react", "--check-quality", "--final", entry]).unwrap();
+    assert_eq!(code, Some(1), "{report}");
+    assert_eq!(report["error"]["code"], "rough_scenes", "{report}");
+}

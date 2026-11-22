@@ -558,8 +558,8 @@ pub(crate) fn check_rough_scenes(
     Ok(())
 }
 
-/// Reports the entry's compositions and the selected one's size and length.
-/// Reports the entry's roots and size, and the legacy imports it uses.
+/// Reports the entry's compositions and the selected one's size and length,
+/// and the legacy imports it uses.
 pub(crate) fn report_composition(
     metadata: &ReactCompositionMetadata,
     progress: &mut impl FnMut(ExportProgress),
