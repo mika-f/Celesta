@@ -64,7 +64,7 @@ interface RenderOptions {
 }
 
 export interface VideoOptions extends SourceOptions, RunOptions, RenderOptions {
-  /** The `.mp4`, `.mov` or `.webm` file. Leave it out to write only `subtitles`. */
+  /** The `.mp4`, `.mov`, `.webm` or `.gif` file. Leave it out to write only `subtitles`. */
   output?: string;
   /** Export from this time. */
   from?: Timecode;

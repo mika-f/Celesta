@@ -2089,3 +2089,184 @@ export default function Root() {
         "the files differ"
     );
 }
+
+/// Exports `project` to `name` in `dir` as a GIF with the built-in
+/// components and `options` (command-line text): the file and the warnings
+/// and output events, or `None` without a GPU.
+fn export_gif(
+    project: &Project,
+    dir: &Path,
+    name: &str,
+    options: &[(&str, &str)],
+) -> Option<(PathBuf, Vec<String>, Vec<ExportedFile>)> {
+    export_gif_as(project, dir, name, video_options(options))
+}
+
+/// [`export_gif`] with `output` chosen.
+fn export_gif_as(
+    project: &Project,
+    dir: &Path,
+    name: &str,
+    output: OutputChoice,
+) -> Option<(PathBuf, Vec<String>, Vec<ExportedFile>)> {
+    let path = dir.join(name);
+    let media = celesta_exporter::with_builtin(vec![celesta_codec_test::registered()]);
+    let exporter = Exporter::with_media(
+        ExportOptions {
+            output,
+            ..ExportOptions::default()
+        },
+        media,
+    );
+    let mut warnings = Vec::new();
+    let mut files = Vec::new();
+    let result = exporter.export_project_with_progress(project, dir, &path, |event| match event {
+        ExportProgress::Warning(warning) => warnings.push(warning),
+        ExportProgress::Wrote(file) => files.push(file),
+        _ => {}
+    });
+    match result {
+        Ok(()) => Some((path, warnings, files)),
+        Err(ExportError::Render(GpuRenderError::RequestAdapter(error))) => {
+            skip_without_gpu(&error);
+            None
+        }
+        Err(error) => panic!("{name} export failed: {error}"),
+    }
+}
+
+/// Each frame of the GIF at `path` as a browser draws it, with its delay.
+fn gif_frames(path: &Path) -> (gif::Repeat, Vec<(u16, Vec<u8>)>) {
+    let mut options = gif::DecodeOptions::new();
+    options.set_color_output(gif::ColorOutput::RGBA);
+    let mut decoder = options
+        .read_info(std::fs::File::open(path).unwrap())
+        .unwrap();
+    let width = usize::from(decoder.width());
+    let mut canvas = vec![0u8; width * usize::from(decoder.height()) * 4];
+    let mut frames = Vec::new();
+    while let Some(frame) = decoder.read_next_frame().unwrap() {
+        let (left, top) = (usize::from(frame.left), usize::from(frame.top));
+        for (index, pixel) in frame.buffer.as_chunks::<4>().0.iter().enumerate() {
+            let (x, y) = (
+                index % usize::from(frame.width),
+                index / usize::from(frame.width),
+            );
+            if pixel[3] != 0 {
+                let at = ((top + y) * width + left + x) * 4;
+                canvas[at..at + 4].copy_from_slice(pixel);
+            }
+        }
+        frames.push((frame.delay, canvas.clone()));
+        if frame.dispose == gif::DisposalMethod::Background {
+            canvas.fill(0);
+        }
+    }
+    (decoder.repeat(), frames)
+}
+
+#[test]
+fn a_named_gif_muxer_writes_a_gif_to_another_extension_with_a_warning() {
+    let directory = tempfile::tempdir().unwrap();
+    let red = [200, 40, 90, 255];
+    let project = solid_video_project(directory.path(), &[red]);
+    let output = OutputChoice {
+        muxer: Some("builtin/gifFile".parse().unwrap()),
+        ..OutputChoice::default()
+    };
+    let Some((path, warnings, files)) =
+        export_gif_as(&project, directory.path(), "preview.mp4", output)
+    else {
+        return;
+    };
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("builtin/gifFile"), "{warnings:?}");
+    let [ExportedFile::Video { muxer, .. }] = files.as_slice() else {
+        panic!("{files:?}")
+    };
+    assert_eq!(muxer.to_string(), "builtin/gifFile");
+    let (_, frames) = gif_frames(&path);
+    assert_solid(&frames[0].1, red, "gif frame");
+    let mut left = files_in(directory.path());
+    left.sort();
+    assert_eq!(left, ["preview.mp4", "source.ctc"]);
+}
+
+#[test]
+fn exports_an_animated_gif_with_the_built_in_components() {
+    let directory = tempfile::tempdir().unwrap();
+    let red = [200, 40, 90, 255];
+    let blue = [30, 160, 220, 255];
+    let green = [40, 200, 60, 255];
+    let project = solid_video_project(directory.path(), &[red, blue, blue, green]);
+    let Some((path, warnings, files)) = export_gif(&project, directory.path(), "loop.gif", &[])
+    else {
+        return;
+    };
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let [
+        ExportedFile::Video {
+            muxer,
+            video,
+            audio,
+            alpha,
+            ..
+        },
+    ] = files.as_slice()
+    else {
+        panic!("{files:?}")
+    };
+    assert_eq!(muxer.to_string(), "builtin/gifFile");
+    assert_eq!(video.component.to_string(), "builtin/gif");
+    assert_eq!(video.codec, "gif");
+    assert!(audio.is_none() && !alpha);
+    let (repeat, frames) = gif_frames(&path);
+    assert_eq!(repeat, gif::Repeat::Infinite);
+    // 2 fps: half a second a frame, the two blue frames as one.
+    let delays: Vec<u16> = frames.iter().map(|(delay, _)| *delay).collect();
+    assert_eq!(delays, [50, 100, 50]);
+    for ((_, frame), color) in frames.iter().zip([red, blue, green]) {
+        assert_solid(frame, color, "gif frame");
+    }
+    // Nothing is left beside it.
+    let mut left = files_in(directory.path());
+    left.sort();
+    assert_eq!(left, ["loop.gif", "source.ctc"]);
+}
+
+#[test]
+fn a_transparent_gif_keeps_one_bit_alpha_at_its_scale() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = transparent_project(directory.path());
+    let Some((path, _, files)) = export_gif(
+        &project,
+        directory.path(),
+        "badge.gif",
+        &[("transparent", "true"), ("scale", "50"), ("plays", "1")],
+    ) else {
+        return;
+    };
+    assert!(matches!(
+        files.as_slice(),
+        [ExportedFile::Video { alpha: true, .. }]
+    ));
+    let (repeat, frames) = gif_frames(&path);
+    assert_eq!(repeat, gif::Repeat::Finite(0));
+    // One unchanged second.
+    let [(delay, frame)] = frames.as_slice() else {
+        panic!("{} frames", frames.len())
+    };
+    assert_eq!(*delay, 100);
+    assert_eq!(frame.len(), 32 * 32 * 4);
+    for (index, pixel) in frame.as_chunks::<4>().0.iter().enumerate() {
+        let (x, y) = (index % 32, index / 32);
+        // Alpha 128 is opaque; the undrawn three quarters are clear. The
+        // scaled edge, blended with what is clear, may go either way.
+        let expected = match (x, y) {
+            (0..15, 0..15) => [255, 0, 0, 255],
+            (15..17, _) | (_, 15..17) => continue,
+            _ => [0; 4],
+        };
+        assert_eq!(*pixel, expected, "({x}, {y})");
+    }
+}

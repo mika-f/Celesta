@@ -248,6 +248,14 @@ impl Exporter {
             self.options.final_cut,
             progress,
         )?;
+        for warning in session.output_warnings(
+            metadata.width,
+            metadata.height,
+            metadata.frame_rate,
+            frame_count,
+        ) {
+            progress(ExportProgress::Warning(warning));
+        }
 
         // Every frame's response reports the `<Audio>` clips its tree
         // declares (see ReactAudioClipDescriptor), which accumulate into the

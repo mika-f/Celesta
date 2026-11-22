@@ -30,7 +30,8 @@ thiserror.workspace = true
 celesta-codec-test.workspace = true
 # A fake content plugin's answers, for the cancel test.
 celesta-plugin.workspace = true
-# Tests decode the stills they write.
+# Tests decode the stills and GIFs they write.
+gif = { version = "0.14.2", default-features = false, features = ["std"] }
 png = "0.18.1"
 webp = { version = "0.3.1", default-features = false }
 image = { version = "0.25.8", default-features = false, features = ["jpeg"] }

@@ -177,6 +177,14 @@ pub(crate) fn still_choice(
         }
         None => builtin(if several { IMAGE_SEQUENCE } else { IMAGE }),
     };
+    if muxer.plugin == RESERVED_PLUGIN_ID
+        && celesta_media_image::muxer_writes_video(&muxer.component)
+    {
+        return Err(invalid(format!(
+            "{muxer} writes an animation, not still frames; export it without --frame, \
+             --frames, --every or --contact-sheet"
+        )));
+    }
     if muxer.plugin == RESERVED_PLUGIN_ID {
         let extension = output.extension().and_then(OsStr::to_str);
         let Some(codec) = extension.and_then(codec_for_extension) else {
@@ -1001,6 +1009,36 @@ mod tests {
         let chosen = choose("other/tiff", &one(output)).unwrap();
         assert_eq!(chosen.muxer, Some(reference("other/tiff")));
         assert_eq!(chosen.video.component, None);
+        // The GIF muxer writes an animation, never a still.
+        for output in ["a.gif", "a.png"] {
+            let error = still_choice(
+                &naming("builtin/gifFile"),
+                None,
+                &one(Path::new(output)),
+                Path::new(output),
+                &registry,
+            )
+            .unwrap_err();
+            assert!(
+                matches!(&error, ExportError::InvalidSelection(message)
+                    if message.starts_with("builtin/gifFile writes an animation, not still frames")),
+                "{output}: {error}"
+            );
+        }
+        // A .gif still keeps the still extension message.
+        let error = still_choice(
+            &OutputChoice::default(),
+            None,
+            &one(Path::new("a.gif")),
+            Path::new("a.gif"),
+            &registry,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&error, ExportError::InvalidSelection(message)
+                if message == "still output must use the .png, .jpg, .jpeg or .webp extension"),
+            "{error}"
+        );
     }
 
     #[test]

@@ -515,8 +515,11 @@ dependencies = [
 name = "celesta-media-image"
 version = "0.10.0"
 dependencies = [
+ "celesta-composition",
  "celesta-media",
  "celesta-plugin-host",
+ "color_quant",
+ "gif",
  "image",
  "png",
  "webp",

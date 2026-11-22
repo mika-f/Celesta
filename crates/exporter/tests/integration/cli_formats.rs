@@ -127,8 +127,8 @@ fn json_lists_the_test_codecs_components() {
 fn the_plain_listing_has_a_line_per_component() {
     let (ok, stdout) = run(&["--list-components", "--check"]);
     assert!(ok);
-    // The five built-in components, then the test codec's four.
-    assert_eq!(stdout.lines().count(), 9, "{stdout}");
+    // The seven built-in components, then the test codec's four.
+    assert_eq!(stdout.lines().count(), 11, "{stdout}");
     assert!(
         stdout.lines().all(|line| line.ends_with("available")),
         "{stdout}"
@@ -146,6 +146,86 @@ fn json_describes_the_test_video_encoder() {
     assert_eq!(described["available"], true);
     assert_eq!(described["settings"][0]["key"], "input");
     assert!(described["inputFormats"].is_array(), "{described}");
+}
+
+#[test]
+fn the_built_in_gif_is_listed_and_described() {
+    let listed = listing(&["--list-components", "--json"]);
+    let gif: Vec<(&str, &str)> = listed["components"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|component| {
+            component["id"] == "builtin/gif" || component["id"] == "builtin/gifFile"
+        })
+        .map(|component| {
+            (
+                component["kind"].as_str().unwrap(),
+                component["origin"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        gif,
+        [("videoEncoder", "built-in"), ("muxer", "built-in")],
+        "{listed}"
+    );
+    let described = listing(&["--describe", "builtin/gif", "--json"]);
+    assert_eq!(described["available"], true);
+    let keys: Vec<&str> = described["settings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|field| field["key"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            "frameRate",
+            "scale",
+            "palette",
+            "colors",
+            "dither",
+            "plays",
+            "transparent"
+        ]
+    );
+    assert_eq!(described["inputFormats"], serde_json::json!(["rgba8"]));
+}
+
+#[test]
+fn a_gif_still_and_a_still_gif_muxer_are_refused() {
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let source = workspace.join("examples/editor-demo.celesta.json");
+    let usage_error = |args: &[&str]| failure(&source, args);
+    let dir = tempfile::tempdir().unwrap();
+    let gif = dir.path().join("out.gif");
+    let report = usage_error(&["--frame", "0", gif.to_str().unwrap()]);
+    assert_eq!(report["error"]["code"], "invalid_selection", "{report}");
+    assert!(
+        report["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("still output must use"),
+        "{report}"
+    );
+    let png = dir.path().join("out.png");
+    let report = usage_error(&[
+        "--frame",
+        "0",
+        "--muxer",
+        "builtin/gifFile",
+        png.to_str().unwrap(),
+    ]);
+    assert_eq!(report["error"]["code"], "invalid_selection", "{report}");
+    assert!(
+        report["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("writes an animation"),
+        "{report}"
+    );
+    assert!(!gif.exists() && !png.exists());
 }
 
 #[test]
@@ -214,10 +294,15 @@ fn a_plain_error_prints_its_hint() {
         "{stderr}"
     );
 
-    // With no media plugin at all, how to install one.
+    // With no media plugin at all, the built-in GIF, and how to install one.
     let empty = tempfile::tempdir().unwrap();
     let stderr = plain_failure(empty.path(), &[output.to_str().unwrap()]);
-    assert!(stderr.contains("hint: install a media plugin"), "{stderr}");
+    assert!(
+        stderr.contains(
+            "hint: write an animated GIF to a .gif path; for other formats, install a media plugin"
+        ),
+        "{stderr}"
+    );
     assert!(!output.exists());
 }
 
@@ -498,6 +583,8 @@ fn stills_need_no_media_plugin() {
         "builtin/webp",
         "builtin/image",
         "builtin/imageSequence",
+        "builtin/gif",
+        "builtin/gifFile",
     ] {
         assert!(ids.contains(&id), "{ids:?}");
     }

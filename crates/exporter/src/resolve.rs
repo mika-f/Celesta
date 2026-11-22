@@ -649,10 +649,10 @@ fn named<'a>(
     })
 }
 
-/// Whether a video export may write with `muxer`: not the built-in
-/// plugin's, not a sequence muxer (deviation 50 of the media components
-/// spec): those write still images. For a component that is not a muxer
-/// this is `true`: only muxers are ever refused.
+/// Whether a video export may write with `muxer`: not a sequence muxer,
+/// and of the built-in plugin's only `builtin/gifFile` (deviation 50 of the
+/// media components spec): the others write still images. For a component
+/// that is not a muxer this is `true`: only muxers are ever refused.
 pub fn serves_video(muxer: &MediaComponentInfo) -> bool {
     match &muxer.entry {
         ComponentEntry::Muxer(entry) => muxer_serves_video(&muxer.reference.plugin, entry),
@@ -661,7 +661,8 @@ pub fn serves_video(muxer: &MediaComponentInfo) -> bool {
 }
 
 pub(crate) fn muxer_serves_video(plugin: &str, entry: &MediaMuxerEntry) -> bool {
-    plugin != RESERVED_PLUGIN_ID && !entry.sequence
+    !entry.sequence
+        && (plugin != RESERVED_PLUGIN_ID || celesta_media_image::muxer_writes_video(&entry.id))
 }
 
 /// The reason a video export refuses a muxer that is not [`serves_video`].
@@ -670,7 +671,7 @@ pub(crate) const STILL_MUXER_REASON: &str =
 
 /// The first muxer writing `output`'s extension (ignoring case): by
 /// [`default_rank`], then in search order; never a project's, and only one
-/// that [`serves_video`] (no built-in or sequence muxer).
+/// that [`serves_video`] (no built-in still or sequence muxer).
 fn default_muxer<'a>(
     registry: &MediaRegistry,
     components: &'a [MediaComponentInfo],
@@ -1184,7 +1185,7 @@ mod tests {
             let error = resolve(&registry, &OutputChoice::default(), output).unwrap_err();
             assert!(
                 matches!(&error, ExportError::UnsupportedOutput { extensions, .. }
-                    if extensions == &["ivf", "mp4"]),
+                    if extensions == &["gif", "ivf", "mp4"]),
                 "{output}: {error:?}"
             );
         }
@@ -1200,6 +1201,24 @@ mod tests {
             .find(|info| info.reference == reference("b/mp4"))
             .unwrap();
         assert!(serves_video(&mp4));
+        // The built-in GIF muxer is the one built-in a video writes with.
+        let gif = registry
+            .components()
+            .into_iter()
+            .find(|info| info.reference == reference("builtin/gifFile"))
+            .unwrap();
+        assert!(serves_video(&gif));
+    }
+
+    #[test]
+    fn a_gif_is_the_built_in_animation() {
+        for plugins in [vec![bundled()], Vec::new()] {
+            let registry = crate::media::with_builtin(plugins);
+            let resolved = resolve(&registry, &OutputChoice::default(), "loop.GIF").unwrap();
+            assert_eq!(resolved.muxer.reference, reference("builtin/gifFile"));
+            assert_eq!(resolved.video.reference, reference("builtin/gif"));
+            assert_eq!(resolved.audio, None);
+        }
     }
 
     #[test]

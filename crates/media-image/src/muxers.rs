@@ -2,7 +2,10 @@
 //! track is a whole image file, which they write as it comes. Celesta stages
 //! and publishes what they write, so they create files where they are told.
 
-use crate::{CODECS, IMAGE, IMAGE_SEQUENCE, ImageComponents, codec_for_extension, sequence_path};
+use crate::{
+    CODECS, GIF_FILE, IMAGE, IMAGE_SEQUENCE, ImageComponents, animated_gif, codec_for_extension,
+    sequence_path,
+};
 use celesta_media::settings::validate;
 use celesta_media::{
     InvalidSetting, MediaError, Muxer, MuxerRequest, SessionId, Track, TrackPacket,
@@ -105,6 +108,12 @@ fn no_session(session: SessionId) -> MediaError {
 impl Muxer for ImageComponents {
     fn open_muxer(&mut self, request: &MuxerRequest<'_>) -> Result<SessionId, MediaError> {
         let component = request.component;
+        if component == GIF_FILE {
+            let open = animated_gif::MuxerSession::open(request)?;
+            let session = self.next_session();
+            self.gif_muxers.insert(session, open);
+            return Ok(session);
+        }
         if component != IMAGE && component != IMAGE_SEQUENCE {
             return Err(MediaError::Codec(format!(
                 "no muxer {component:?} in builtin"
@@ -143,6 +152,9 @@ impl Muxer for ImageComponents {
         session: SessionId,
         packets: &[TrackPacket],
     ) -> Result<(), MediaError> {
+        if let Some(open) = self.gif_muxers.get_mut(&session) {
+            return open.write_packets(packets);
+        }
         let open = self
             .muxers
             .get_mut(&session)
@@ -186,6 +198,9 @@ impl Muxer for ImageComponents {
     }
 
     fn finish_muxer(&mut self, session: SessionId) -> Result<Vec<PathBuf>, MediaError> {
+        if let Some(open) = self.gif_muxers.remove(&session) {
+            return open.finish();
+        }
         let open = self
             .muxers
             .remove(&session)
@@ -197,6 +212,9 @@ impl Muxer for ImageComponents {
     }
 
     fn abort_muxer(&mut self, session: SessionId) -> Vec<PathBuf> {
+        if let Some(open) = self.gif_muxers.remove(&session) {
+            return open.abort();
+        }
         self.muxers
             .remove(&session)
             .map(|open| open.files)
