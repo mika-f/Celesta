@@ -228,3 +228,13 @@ test('a <Trail> copy reads what its frame reads at the top', () => {
   assert.ok(copy.startsWith('1000 1000 '), copy);
   assert.equal(live, textAt(top, 31));
 });
+
+test('a <Trail> copy between frames keeps the exact distance from the time drawn', () => {
+  const trail = mount(() => h(Composition, { width: 8, height: 8, fps: 30, durationInFrames: 90 },
+    h(Trail, { copies: 1, lagInFrames: 1 }, h(() => h(Text, null, String(performance.now()))))));
+  // 1.01 s, between frames 30 and 31 (as a component previewed against a
+  // project timeline at another fps is): the copy reads one frame earlier.
+  const [copy, live] = texts(trail.renderAt({ value: 101, timescale: 100 }, null).scene.layers).map(Number);
+  assert.ok(Math.abs(live - 1010) < 1e-9, String(live));
+  assert.ok(Math.abs(copy - (1010 - 1000 / 30)) < 1e-9, String(copy));
+});

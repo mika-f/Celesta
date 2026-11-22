@@ -125,14 +125,17 @@ function moment(
 
 /**
  * The clock a sample offsets from: the enclosing subtree's, or the frame's,
- * as the root's whole composition frame.
+ * as the root's composition frame. Not rounded to a whole frame: a component
+ * the editor previews against a project timeline of another fps is drawn
+ * between the entry's frames. Multiplied before dividing, so a whole frame
+ * stays whole and reads what the frame reads at the top.
  */
 function useParentClock(): FrameClock {
   const root = React.useContext(RootRuntimeContext);
   const enclosing = enclosingFrameClock();
   if (enclosing) return enclosing;
   if (!root) return { frame: 0, fps: 1 };
-  return { frame: runtimeFrame(root.time, root.fps), fps: root.fps };
+  return { frame: (root.time.value * root.fps) / root.time.timescale, fps: root.fps };
 }
 
 /**
