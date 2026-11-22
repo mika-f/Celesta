@@ -92,6 +92,14 @@ pub(crate) fn color(tags: &VideoColor, range: u32, chroma: u32) -> Option<Decode
     })
 }
 
+pub(crate) fn matrix_matches(value: Option<u32>, expected: DecodedMatrix) -> bool {
+    match value {
+        None | Some(2) => expected == DecodedMatrix::Bt601,
+        Some(1) => expected == DecodedMatrix::Bt709,
+        _ => false,
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Crop {
     pub width: u32,
@@ -210,6 +218,23 @@ mod tests {
         tags.transfer = None;
         tags.matrix = Some("unknown".into());
         assert!(color(&tags, 2, 5).is_none());
+    }
+
+    #[test]
+    fn negotiated_matrix_uses_the_untagged_601_rule() {
+        for expected in [DecodedMatrix::Bt601, DecodedMatrix::Bt709] {
+            for value in [None, Some(0), Some(1), Some(2), Some(3), Some(4), Some(99)] {
+                let matches = match expected {
+                    DecodedMatrix::Bt601 => matches!(value, None | Some(2)),
+                    DecodedMatrix::Bt709 => value == Some(1),
+                };
+                assert_eq!(
+                    matrix_matches(value, expected),
+                    matches,
+                    "{value:?} {expected:?}"
+                );
+            }
+        }
     }
 
     #[test]

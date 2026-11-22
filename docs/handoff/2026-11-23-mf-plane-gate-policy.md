@@ -54,6 +54,17 @@ not yet trigger option 1. The error now includes the negotiated type/color
 values to identify the failing validation, and test errors identify the path,
 transport and time. No decoder behavior or quality setting is changed.
 
+The diagnostic run (`876dd70b`, job `137336972772`) identifies the untagged
+current type as NV12, 320x192, matrix absent, range 2, chroma 5; expected
+BT.601/limited/left. The existing response metadata parser maps an absent
+matrix to BT.601, matching FFmpeg's untagged rule, but the preceding validation
+required an explicit value 2. Validation now uses the same untagged rule:
+absent/2 matches BT.601, 1 matches BT.709, other explicit values and mismatches
+fail. Portable tests cover missing, supported, mismatched and unsupported
+values. Range/chroma/subtype/aperture validation and every pixel gate remain
+unchanged. This fixes the branch's untagged negotiation rejection; it does not
+change pixel data or decoder settings.
+
 Windows/macOS CI determines whether option 2 succeeds or option 1 is needed.
 The final handoff response records signed SHA, metrics, chosen option and all
 settled checks. Native before/after screenshots remain unavailable on Linux;

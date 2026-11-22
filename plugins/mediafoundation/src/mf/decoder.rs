@@ -597,8 +597,10 @@ impl NativeLayout {
             ))
         };
         if guid_of(current, &MF_MT_SUBTYPE) != Some(MFVideoFormat_NV12)
+            || !crate::nv12::matrix_matches(u32_of(current, &MF_MT_YUV_MATRIX), expected.matrix)
             || color_attributes(expected)
                 .iter()
+                .filter(|(key, _)| *key != MF_MT_YUV_MATRIX)
                 .any(|(key, value)| u32_of(current, key) != Some(*value))
             || u32_of(current, &MF_MT_VIDEO_ROTATION).unwrap_or(0) != 0
         {
