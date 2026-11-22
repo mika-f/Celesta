@@ -192,7 +192,8 @@ mod tests {
 
     #[test]
     fn file_urls_become_dir_transports() {
-        let served = TestRegistry::file();
+        let now = at("2026-11-21T00:00:00Z");
+        let served = TestRegistry::file_at(now);
         let remote = Remote::of(served.base()).unwrap();
         assert_eq!(remote, Remote::Dir(served.served_dir().to_path_buf()));
         assert_eq!(Remote::of("https://registry.test"), Some(Remote::Http));
@@ -208,7 +209,7 @@ mod tests {
         .unwrap();
         let cache = TempDir::new().unwrap();
         let registry = access.client(cache.path(), None).unwrap();
-        registry.keyring(at("2026-11-21T00:00:00Z")).unwrap();
+        registry.keyring(now).unwrap();
     }
 
     #[test]

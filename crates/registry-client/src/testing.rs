@@ -138,6 +138,11 @@ impl TestRegistry {
     /// stamps start a day before now, so a client on the real clock (the
     /// `celesta` binary) accepts them.
     pub fn file() -> Self {
+        Self::file_at(OffsetDateTime::now_utc())
+    }
+
+    /// Like `file`, with timestamps relative to the supplied clock.
+    pub fn file_at(now: OffsetDateTime) -> Self {
         let served = TempDir::new().unwrap();
         let path = served.path().to_str().unwrap().replace('\\', "/");
         let base = if path.starts_with('/') {
@@ -145,7 +150,7 @@ impl TestRegistry {
         } else {
             format!("file:///{path}")
         };
-        let first = OffsetDateTime::now_utc().replace_nanosecond(0).unwrap() - Duration::days(1);
+        let first = now.replace_nanosecond(0).unwrap() - Duration::days(1);
         Self::serving(base, served, first)
     }
 
