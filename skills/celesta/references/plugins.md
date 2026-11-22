@@ -254,6 +254,11 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   `CELESTA_CODEC_SHARED_MEMORY=0` keeps every frame, decoded or exported, in
   the pipe, for a media plugin that misbehaves with it.
 
+- To A/B the same export, set `CELESTA_DECODE_YUV=0` before starting Celesta:
+  decoded-frame offers are RGBA8 only, even on GPU paths that accept YUV.
+  Unset or any other value preserves the usual format negotiation. Encoding
+  and the plugin's RGBA conversion are unchanged.
+
 ## The VRM plugin
 
 The `vrm` plugin draws VRM 1.0 avatars (`.vrm`) as a 3D layer,

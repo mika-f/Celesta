@@ -29,6 +29,14 @@ failure signature; Windows NV12 also matches the C signature, but its exact
 dispatch was not instrumented. Neither BITEXACT nor a C-only reference passes
 the old <=2 gate, and ACCURATE_RND changes I420 reconstruction substantially.
 
+## Decode YUV A/B switch
+
+For same-export GPU A/B comparisons, set `CELESTA_DECODE_YUV=0` to make
+`MediaBackend` offer only RGBA8, overriding `with_accepted_pixel_formats`.
+Unset or any other value preserves the configured offer. Like decode prefetch,
+this is a process-environment switch; set it before starting the export.
+It changes decode negotiation, not the plugin's RGBA conversion or encoding.
+
 ## Known issues
 
 - **Unconfirmed:** FFmpeg's aarch64 NEON NV12→RGBA path appears to skip vertical
