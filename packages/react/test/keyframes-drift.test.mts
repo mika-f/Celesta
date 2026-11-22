@@ -114,6 +114,27 @@ test('a value with a field named log takes a per-field drift for it', () => {
   close(keyframes(15, keys, { fps }).log, 2.5);
 });
 
+test('a field named like an Object.prototype member holds without a rate of its own', () => {
+  const keys = [{ frame: 0, value: { constructor: 5, toString: 2 } }, { frame: 30, value: { constructor: 5, toString: 2 } }];
+  assert.deepEqual(keyframes(15, keys, { fps }), { constructor: 5, toString: 2 });
+  assert.deepEqual(keyframes(15, keys), { constructor: 5, toString: 2 });
+  const partial = [{ frame: 0, value: { constructor: 5, x: 0 }, drift: { x: 2 } }, { frame: 30, value: { constructor: 5, x: 0 } }];
+  const at = keyframes(15, partial, { fps });
+  assert.equal(at.constructor, 5);
+  close(at.x, 1);
+});
+
+test('a field whose rate is undefined does not drift, as if it were left out', () => {
+  const rate: number | undefined = undefined;
+  const keys = [
+    { frame: 0, value: { x: 0, y: 0 }, drift: { x: 2, y: rate } },
+    { frame: 30, value: { x: 0, y: 10 } },
+  ];
+  const at = keyframes(15, keys, { fps });
+  close(at.x, 1);
+  close(at.y, 5);
+});
+
 test('keys without drift give the values they gave before, with or without fps', () => {
   const keys = [
     { frame: 0, value: { x: 0, zoom: 1 } },

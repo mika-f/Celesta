@@ -20,6 +20,9 @@ and its whip ease `kit.eox`. Builds on
 - A field drifts only while it holds after its key: up to the next key when
   that key has the same value for the field, or after the last key for
   ever. Holds are per field, so `zoom` may drift while `x` moves.
+- A field given `undefined` as its rate does not drift, as if it were left
+  out. Rates are looked up as own fields only, so a field named like an
+  `Object.prototype` member (`constructor`) has no inherited rate.
 - Where a segment starts: the first key's value; for the second key of a
   cut, that key's value; otherwise where the previous segment ended. A
   drifting hold ends where the drift reached; a move ends exactly on its

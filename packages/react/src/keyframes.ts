@@ -196,28 +196,32 @@ function driftRates<T extends number | Record<string, number>>(
   next: ValueKeyframe<T> | undefined,
   fps: number | undefined,
 ): Rates {
+  // Without a prototype, so a field named like an `Object.prototype` member
+  // (`constructor`) has no rate unless the drift gives one.
+  const rates: Rates = Object.create(null);
   const { drift } = key;
-  if (drift === undefined) return {};
+  if (drift === undefined) return rates;
   if (typeof fps !== 'number' || !Number.isFinite(fps) || fps <= 0) {
     throw new Error(`keyframes() requires a positive fps option to drift (key ${index})`);
   }
   const invalid = () =>
     new Error(`keyframes() requires drift to be a rate per second or { log }, one for each field of the value (key ${index})`);
-  let rates: Rates;
   if (typeof key.value === 'number') {
     if (!isDriftRate(drift)) throw invalid();
-    rates = { '': drift };
+    rates[''] = drift;
   } else {
     // `{ log: r }` is one rate, not a rate per field, unless the value has a
     // field named `log`.
     const oneRate = isDriftRate(drift) && !Object.prototype.hasOwnProperty.call(key.value, 'log');
     if (drift === null || typeof drift !== 'object' || Array.isArray(drift) || oneRate) throw invalid();
-    rates = drift as Rates;
-    for (const field of Object.keys(rates)) {
+    for (const [field, rate] of Object.entries(drift as Record<string, unknown>)) {
+      // A field set to `undefined` is the same as a field left out.
+      if (rate === undefined) continue;
       if (!Object.prototype.hasOwnProperty.call(key.value, field)) {
         throw new Error(`keyframes() got drift for "${field}", which the value does not have (key ${index})`);
       }
-      if (!isDriftRate(rates[field])) throw invalid();
+      if (!isDriftRate(rate)) throw invalid();
+      rates[field] = rate;
     }
   }
   if (next && next.frame === key.frame) {
