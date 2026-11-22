@@ -5,3 +5,7 @@
 [profile.ci.junit]
 path = "junit.xml"
 store-success-output = true
+
+[[profile.ci.overrides]]
+filter = "package(celesta-codec-mediafoundation) & (test(yuv_decode::h264_nv12) | test(yuv_decode::hevc_nv12) | test(yuv_decode::aligned_1080p))"
+success-output = "immediate"

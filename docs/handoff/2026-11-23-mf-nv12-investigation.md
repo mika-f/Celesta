@@ -117,8 +117,19 @@ Full diagnostic logs and signing records are retained outside the repository:
 `/home/ubuntu/research/native-yuv/round{1,2}-windows-job.log`,
 `round{1,2}-signing.log`, and `round{1,2}-signed.json`.
 
-Recommended next authorized action: probe `IMFQualityAdvise` after the first
-sample/initial stream change, then test normal-quality replay from the start
-if it reports a degraded level, with the same exact gate. This is not yet
-performed. Native before/after screenshots remain unavailable on this Linux
-box; the outstanding Devin Review screenshot finding is not resolved.
+## Owner decision after investigation
+
+The owner treats the small-frame difference as a property of MF's decoder,
+which is also used by the RGB32 path, rather than of our copy/crop. The evidence
+is the exact match to FFmpeg with `skip_loop_filter=all`, the single native
+decoder transform, and the correct 64x48 allocation/64x36 crop above.
+
+The MF-only plane gate now accepts exact equality to either normal FFmpeg or
+FFmpeg with `skip_loop_filter=all`, logging which matched. It accepts no
+intermediate error. AVFoundation remains exact against normal FFmpeg only.
+The own-RGBA max <=4/exact-alpha gate remains mandatory for every eligible MF
+fixture, including 64x36. No further quality investigation is added. See
+`2026-11-23-mf-exact-plane-references.md` for the implementation/check handoff.
+
+Native before/after screenshots remain unavailable on this Linux box; the
+outstanding Devin Review screenshot finding is not resolved.
