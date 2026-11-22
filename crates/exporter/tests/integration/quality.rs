@@ -223,6 +223,31 @@ fn info_reports_short_scenes_from_the_timeline() {
 }
 
 #[test]
+fn a_span_reports_only_the_scenes_it_touches() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = project(
+        dir.path(),
+        json!([
+            { "id": "cuts", "name": "Cuts", "kind": "video", "items": [{
+                "id": "intro", "name": "Intro",
+                "range": { "start": time(0), "duration": time(12) },
+                "content": { "type": "image", "asset": "white", "width": WIDTH, "height": HEIGHT },
+            }] },
+            text_track("#FFFFFF", (0, 60)),
+        ]),
+    );
+    let Some((_, whole)) = exporter(&["--check-quality", source.to_str().unwrap()]) else {
+        return;
+    };
+    assert!(codes(&whole).contains(&"short-scene"), "{whole}");
+    // From 1 s the intro is never rendered.
+    let (code, report) =
+        exporter(&["--check-quality", "--from", "1", source.to_str().unwrap()]).unwrap();
+    assert_eq!(report["quality"], json!([]), "{report}");
+    assert_eq!(code, Some(0), "{report}");
+}
+
+#[test]
 fn check_quality_takes_no_output() {
     let dir = tempfile::tempdir().unwrap();
     let source = project(dir.path(), json!([]));

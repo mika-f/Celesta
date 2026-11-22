@@ -410,6 +410,22 @@ impl Backdrop {
     }
 }
 
+/// A group's clip: a box of the group's children's plane, and the map to
+/// it from the canvas. Corners are taken as square.
+#[derive(Clone, Copy)]
+struct ClipBox {
+    inverse: Affine,
+    bounds: [f64; 4],
+}
+
+impl ClipBox {
+    fn contains(&self, point: (f64, f64)) -> bool {
+        let (x, y) = self.inverse.apply(point);
+        let [x0, y0, x1, y1] = self.bounds;
+        x0 <= x && x <= x1 && y0 <= y && y <= y1
+    }
+}
+
 /// One text layer's measurement in one frame.
 #[derive(Clone, Debug)]
 struct TextFinding {
@@ -434,7 +450,11 @@ impl TextFinding {
 struct Walk {
     short_side: f64,
     contrast: bool,
-    backdrops: Vec<Backdrop>,
+    /// What was drawn so far, each with the group clips it was drawn
+    /// through.
+    backdrops: Vec<(Backdrop, Vec<ClipBox>)>,
+    /// The clips of the groups the walk is in.
+    clips: Vec<ClipBox>,
     texts: Vec<TextFinding>,
     /// Whether anything but solid rectangles is visible.
     content: bool,
@@ -448,6 +468,7 @@ impl Walk {
             short_side: f64::from(scene.width.min(scene.height).max(1)),
             contrast,
             backdrops: Vec::new(),
+            clips: Vec::new(),
             texts: Vec::new(),
             content: false,
             flat_rects: false,
@@ -479,12 +500,31 @@ impl Walk {
             ))
         };
         match &layer.content {
-            LayerContent::Group { layers, mask, .. } => {
+            LayerContent::Group {
+                layers, mask, clip, ..
+            } => {
                 let certainty = Certainty {
                     exact: certainty.exact && mask.is_none(),
                     ..certainty
                 };
+                // Under an unknown map, the children are unknown anyway.
+                let clipped = match clip {
+                    Some(clip) if certainty.geometry => {
+                        let Some(inverse) = world.invert() else {
+                            return;
+                        };
+                        self.clips.push(ClipBox {
+                            inverse,
+                            bounds: [clip.x, clip.y, clip.x + clip.width, clip.y + clip.height],
+                        });
+                        true
+                    }
+                    _ => false,
+                };
                 self.layers(layers, world, opacity, certainty);
+                if clipped {
+                    self.clips.pop();
+                }
             }
             LayerContent::Rect {
                 width,
@@ -527,7 +567,7 @@ impl Walk {
                 } else {
                     Backdrop::Everywhere
                 };
-                self.backdrops.push(backdrop);
+                self.drawn(backdrop);
             }
             LayerContent::Image { width, height, .. }
             | LayerContent::Video { width, height, .. } => {
@@ -542,7 +582,7 @@ impl Walk {
                     },
                     _ => Backdrop::Everywhere,
                 };
-                self.backdrops.push(backdrop);
+                self.drawn(backdrop);
             }
             LayerContent::Path { commands, .. } => {
                 self.content = true;
@@ -552,12 +592,12 @@ impl Walk {
                     (Some(_), None, true) => return,
                     (Some(_), _, false) => Backdrop::Everywhere,
                 };
-                self.backdrops.push(backdrop);
+                self.drawn(backdrop);
             }
             LayerContent::Instances { count, .. } => {
                 if *count > 0 {
                     self.content = true;
-                    self.backdrops.push(Backdrop::Everywhere);
+                    self.drawn(Backdrop::Everywhere);
                 }
             }
             LayerContent::Text { text, style, .. } => {
@@ -578,9 +618,14 @@ impl Walk {
             | LayerContent::StaticRef { .. }
             | LayerContent::MissingComponent { .. } => {
                 self.content = true;
-                self.backdrops.push(Backdrop::Everywhere);
+                self.drawn(Backdrop::Everywhere);
             }
         }
+    }
+
+    /// Keeps `backdrop`, drawn through the current clips.
+    fn drawn(&mut self, backdrop: Backdrop) {
+        self.backdrops.push((backdrop, self.clips.clone()));
     }
 
     /// Measures a text layer against the solid colors under its anchor
@@ -598,9 +643,13 @@ impl Walk {
             Some(_) => return,
         };
         let point = world.apply((0.0, 0.0));
+        // Clipped away there, the text shows nothing to measure.
+        if !self.clips.iter().all(|clip| clip.contains(point)) {
+            return;
+        }
         let mut behind = BACKGROUND.map(f64::from);
-        for backdrop in &self.backdrops {
-            if !backdrop.covers(point) {
+        for (backdrop, clips) in &self.backdrops {
+            if !backdrop.covers(point) || !clips.iter().all(|clip| clip.contains(point)) {
                 continue;
             }
             match backdrop {
@@ -939,6 +988,29 @@ mod tests {
                 text("t", "#FFFFFF", 40.0, 1.0)
             ])),
         )]);
+        assert_eq!(issues.len(), 1, "{issues:?}");
+    }
+
+    #[test]
+    fn a_backdrop_clipped_away_is_not_behind_the_text() {
+        // A white full-canvas rect in a group clipped to the left half; the
+        // white text stands on the black right half.
+        let clipped = json!({
+            "id": "left",
+            "transform": { "position": { "x": 0, "y": 0 } },
+            "content": { "type": "group", "clip": { "x": 0, "y": 0, "width": 960, "height": 1080 }, "layers": [rect("white", "#FFFFFF")] },
+        });
+        let mut title = text("t", "#FFFFFF", 40.0, 1.0);
+        title["transform"]["position"] = json!({ "x": 1400, "y": 540 });
+        let issues = lint(&[(
+            1,
+            scene(json!([rect("bg", "#000000"), clipped.clone(), title])),
+        )]);
+        assert!(issues.is_empty(), "{issues:?}");
+        // On the left half the white rect is behind it.
+        let mut title = text("t", "#FFFFFF", 40.0, 1.0);
+        title["transform"]["position"] = json!({ "x": 400, "y": 540 });
+        let issues = lint(&[(1, scene(json!([rect("bg", "#000000"), clipped, title])))]);
         assert_eq!(issues.len(), 1, "{issues:?}");
     }
 

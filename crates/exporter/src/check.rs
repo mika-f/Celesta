@@ -9,7 +9,7 @@ use std::path::Path;
 
 use celesta_composition::{Rational, ResolvedAsset, Scene, Time};
 use celesta_evaluator::{EvaluationError, Evaluator};
-use celesta_gpu_renderer::{Color, GpuFrame, GpuRenderOptions, GpuRenderer};
+use celesta_gpu_renderer::{GpuFrame, GpuRenderer};
 use celesta_project::Project;
 use celesta_react_bridge::{ProjectFrame, ReactBridge};
 
@@ -18,7 +18,8 @@ use crate::error::ExportError;
 use crate::exporter::Exporter;
 use crate::project::{absolutize_fonts, absolutize_layers};
 use crate::quality::{
-    self, PixelLint, QualityCode, SceneLint, TextContrast, TextSample, only_layer, without_layer,
+    self, PROBE_FILLS, PixelLint, QualityCode, SceneLint, TextContrast, TextSample,
+    with_probe_fill, without_layer,
 };
 use crate::range::{ExportRange, resolve_window};
 use crate::react::{CompanionProject, ReactRuntimeOptions};
@@ -115,7 +116,8 @@ impl<'a> ReactScenes<'a> {
 
 /// A sampled frame whose text contrast is measured once the frame after it
 /// is known: only text that holds still from the frame before to the frame
-/// after counts.
+/// after counts. Each such text is rendered with a black and a white fill
+/// (where it shows) and left out (what is behind it).
 struct Pending {
     frame: u64,
     scene: Scene,
@@ -125,7 +127,7 @@ struct Pending {
 }
 
 impl Pending {
-    /// Renders each steady text alone and the frame without it, and
+    /// Renders each steady text's probes and the frame without it, and
     /// measures it; `after` is the next frame's text, `None` past the last.
     fn measure(
         self,
@@ -140,23 +142,29 @@ impl Pending {
         for sample in samples {
             let steady = sample.steady(self.before.get(&sample.id))
                 && sample.steady(after.and_then(|after| after.get(&sample.id)));
-            let Some(alone) = only_layer(&self.scene, &sample.id).filter(|_| steady) else {
+            if !steady {
+                continue;
+            }
+            let mut render = |scene: &Scene| {
+                renderer
+                    .render(scene)
+                    .map_err(ExportError::Render)
+                    .map_err(at_frame)
+            };
+            let probes = PROBE_FILLS.map(|fill| {
+                with_probe_fill(&self.scene, &sample.id, fill).map(|probe| render(&probe))
+            });
+            let [Some(dark), Some(light)] = probes else {
                 continue;
             };
-            let hidden = renderer
-                .render(&without_layer(&self.scene, &sample.id))
-                .map_err(ExportError::Render)
-                .map_err(at_frame)?;
-            renderer.set_background(Color::TRANSPARENT);
-            let alone = renderer.render(&alone);
-            renderer.set_background(GpuRenderOptions::default().background);
-            let alone = alone.map_err(ExportError::Render).map_err(at_frame)?;
+            let (dark, light) = (dark?, light?);
+            let hidden = render(&without_layer(&self.scene, &sample.id))?;
             contrast.measure(
                 self.frame,
                 sample,
                 self.full.pixels(),
                 hidden.pixels(),
-                alone.pixels(),
+                [dark.pixels(), light.pixels()],
             );
         }
         Ok(())
@@ -195,12 +203,15 @@ impl Exporter {
             frame_rate,
             frames: total,
         }));
-        quality::report(quality::short_items(project), &mut progress);
         let run = self.check_run(
             (project.settings.width, project.settings.height),
             frame_rate,
             duration,
         )?;
+        quality::report(
+            quality::within(quality::short_items(project), (run.first, run.end)),
+            &mut progress,
+        );
         let evaluator = Evaluator::new(project).map_err(ExportError::Evaluation)?;
         let mut renderer = self.export_renderer(asset_root, frame_rate, cancellation)?;
         check_frames(&run, &mut renderer, cancellation, &mut progress, |frame| {
@@ -244,6 +255,11 @@ impl Exporter {
             metadata.frame_rate,
             duration,
         )?;
+        crate::react_entry::report_short_chapters(
+            &metadata,
+            Some((run.first, run.end)),
+            &mut progress,
+        );
         let mut scenes = ReactScenes::new(bridge, project)?;
         let mut renderer = self.export_renderer(asset_root, metadata.frame_rate, cancellation)?;
         check_frames(&run, &mut renderer, cancellation, &mut progress, |frame| {

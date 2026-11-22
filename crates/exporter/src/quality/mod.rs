@@ -22,7 +22,7 @@ use std::fmt;
 use celesta_composition::Rational;
 use serde::Serialize;
 
-pub use contrast::{TextContrast, TextSample, only_layer, without_layer};
+pub use contrast::{PROBE_FILLS, TextContrast, TextSample, with_probe_fill, without_layer};
 pub use luminance::{contrast_ratio, relative_luminance};
 pub use pixels::PixelLint;
 pub use scene::{SceneLint, short_chapters, short_items};
@@ -221,14 +221,38 @@ fn describe_spans(spans: &[FrameSpan]) -> String {
     parts.join(", ")
 }
 
-/// Adds frame `frame` to `spans`, extending the last span when it ends
-/// there.
+/// Adds frame `frame` to `spans`, which stay sorted and joined wherever
+/// they touch, whatever order the frames come in.
 fn push_frame(spans: &mut Vec<(u64, u64)>, frame: u64) {
-    match spans.last_mut() {
-        Some((_, to)) if *to == frame => *to = frame + 1,
-        Some((_, to)) if *to > frame => {}
-        _ => spans.push((frame, frame + 1)),
+    // The first span that ends at or after the frame.
+    let index = spans.partition_point(|&(_, to)| to < frame);
+    match spans.get_mut(index) {
+        Some(span) if span.0 <= frame => span.1 = span.1.max(frame + 1),
+        Some(span) if span.0 == frame + 1 => span.0 = frame,
+        _ => spans.insert(index, (frame, frame + 1)),
     }
+    // A span that now reaches the next joins it.
+    if let Some(&(_, to)) = spans.get(index)
+        && spans.get(index + 1).is_some_and(|&(from, _)| from <= to)
+    {
+        let (_, next) = spans.remove(index + 1);
+        spans[index].1 = to.max(next);
+    }
+}
+
+/// The issues that touch composition frames `[from, to)`, and those about
+/// no frames: what an export or check of that span is about.
+pub(crate) fn within(issues: Vec<QualityIssue>, (from, to): (u64, u64)) -> Vec<QualityIssue> {
+    issues
+        .into_iter()
+        .filter(|issue| {
+            issue.frames.is_empty()
+                || issue
+                    .frames
+                    .iter()
+                    .any(|span| span.from < to && from < span.to)
+        })
+        .collect()
 }
 
 /// Reports each of `issues` as an [`ExportProgress::Quality`], in a stable
@@ -285,6 +309,12 @@ mod tests {
             push_frame(&mut spans, frame);
         }
         assert_eq!(spans, [(3, 6), (9, 11)]);
+        // Frames in any order make the same spans.
+        let mut reversed = Vec::new();
+        for frame in [10, 9, 9, 5, 3, 4, 7, 6] {
+            push_frame(&mut reversed, frame);
+        }
+        assert_eq!(reversed, [(3, 8), (9, 11)]);
         let rate = Rational::new(30, 1);
         let spans: Vec<FrameSpan> = spans
             .into_iter()

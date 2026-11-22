@@ -256,6 +256,11 @@ impl Exporter {
         ) {
             progress(ExportProgress::Warning(warning));
         }
+        report_short_chapters(
+            &metadata,
+            Some((start_frame, start_frame + frame_count)),
+            progress,
+        );
 
         // Every frame's response reports the `<Audio>` clips its tree
         // declares (see ReactAudioClipDescriptor), which accumulate into the
@@ -458,6 +463,7 @@ impl Exporter {
             self,
         )?;
         report_composition(bridge.metadata(), &mut progress);
+        report_short_chapters(bridge.metadata(), None, &mut progress);
         Ok(())
     }
 
@@ -553,8 +559,7 @@ pub(crate) fn check_rough_scenes(
 }
 
 /// Reports the entry's compositions and the selected one's size and length.
-/// Reports the entry's roots and size, the legacy imports it uses, and
-/// its scenes (outermost chapters) shorter than a second.
+/// Reports the entry's roots and size, and the legacy imports it uses.
 pub(crate) fn report_composition(
     metadata: &ReactCompositionMetadata,
     progress: &mut impl FnMut(ExportProgress),
@@ -572,8 +577,21 @@ pub(crate) fn report_composition(
     for legacy in &metadata.legacy_imports {
         progress(ExportProgress::Warning(legacy.to_string()));
     }
+}
+
+/// Reports the entry's scenes (outermost chapters) shorter than a second
+/// that touch composition frames `span`, or all of them without one.
+pub(crate) fn report_short_chapters(
+    metadata: &ReactCompositionMetadata,
+    span: Option<(u64, u64)>,
+    progress: &mut impl FnMut(ExportProgress),
+) {
+    let short = crate::quality::short_chapters(&metadata.chapters, metadata.frame_rate);
     crate::quality::report(
-        crate::quality::short_chapters(&metadata.chapters, metadata.frame_rate),
+        match span {
+            Some(span) => crate::quality::within(short, span),
+            None => short,
+        },
         progress,
     );
 }

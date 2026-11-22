@@ -111,7 +111,7 @@ test('both locales have the same tabs and toggles in every chapter', () => {
     'installation': { tabs: 1, tab: 3, accordion: 0, toggle: 0 },
     'build-from-source': { tabs: 1, tab: 3, accordion: 0, toggle: 0 },
     'create-project': { tabs: 1, tab: 2, accordion: 0, toggle: 0 },
-    'export': { tabs: 10, tab: 20, accordion: 0, toggle: 0 },
+    'export': { tabs: 11, tab: 22, accordion: 0, toggle: 0 },
     'timelines': { tabs: 0, tab: 0, accordion: 0, toggle: 3 },
     'troubleshooting': { tabs: 0, tab: 0, accordion: 1, toggle: 13 },
   };
@@ -174,7 +174,7 @@ test('tab labels are the old picker buttons, the same in both locales, and each 
       }
     }
   }
-  assert.equal(groups, 26, 'thirteen tab groups per locale');
+  assert.equal(groups, 28, 'fourteen tab groups per locale');
 });
 
 test('every showcase work has a page and metadata', () => {

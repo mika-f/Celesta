@@ -972,10 +972,19 @@ function describeSpans(spans) {
   return parts.join(', ');
 }
 
+/** Adds `frame` to `spans`, kept sorted and joined, whatever order frames come in. */
 function pushFrame(spans, frame) {
-  const last = spans.at(-1);
-  if (last && last[1] === frame) last[1] = frame + 1;
-  else if (!last || last[1] < frame) spans.push([frame, frame + 1]);
+  let index = spans.findIndex(([, to]) => to >= frame);
+  if (index < 0) index = spans.length;
+  const span = spans[index];
+  if (span && span[0] <= frame) span[1] = Math.max(span[1], frame + 1);
+  else if (span && span[0] === frame + 1) span[0] = frame;
+  else spans.splice(index, 0, [frame, frame + 1]);
+  const next = spans[index + 1];
+  if (next && next[0] <= spans[index][1]) {
+    spans[index][1] = Math.max(spans[index][1], next[1]);
+    spans.splice(index + 1, 1);
+  }
 }
 
 /** The outermost chapters (the scenes) shorter than a second. */
@@ -1050,13 +1059,16 @@ function pathBounds(commands = []) {
 
 /** One frame's walk through its layers in drawing order. */
 function walkScene(scene) {
-  const walk = { backdrops: [], texts: [], content: false, flatRects: false, shortSide: Math.max(1, Math.min(scene.width, scene.height)) };
-  const covers = (backdrop, point) => {
-    if (backdrop.everywhere) return true;
-    const [x, y] = applyAffine(backdrop.inverse, point);
-    const [x0, y0, x1, y1] = backdrop.bounds;
+  // `clips` are the clips of the groups the walk is in; each backdrop keeps
+  // those it was drawn through.
+  const walk = { backdrops: [], clips: [], texts: [], content: false, flatRects: false, shortSide: Math.max(1, Math.min(scene.width, scene.height)) };
+  const inBox = ({ inverse, bounds: [x0, y0, x1, y1] }, point) => {
+    const [x, y] = applyAffine(inverse, point);
     return x0 <= x && x <= x1 && y0 <= y && y <= y1;
   };
+  const covers = (backdrop, point) =>
+    (backdrop.everywhere || inBox(backdrop, point)) && backdrop.clips.every((clip) => inBox(clip, point));
+  const drawn = (backdrop) => walk.backdrops.push({ ...backdrop, clips: [...walk.clips] });
   const measureText = (layer, shown, style, world, opacity) => {
     if (!isNormal(layer) || style.colorRuns?.length) return;
     let fill = [255, 255, 255, 255];
@@ -1066,6 +1078,8 @@ function walkScene(scene) {
       if (!fill) return;
     }
     const point = applyAffine(world, [0, 0]);
+    // Clipped away there, the text shows nothing to measure.
+    if (!walk.clips.every((clip) => inBox(clip, point))) return;
     let behind = [...EXPORT_BACKGROUND];
     for (const backdrop of walk.backdrops) {
       if (!covers(backdrop, point)) continue;
@@ -1097,19 +1111,26 @@ function walkScene(scene) {
       const anchored = (width, height) => multiply(world, [1, 0, 0, 1, -anchor.x * width, -anchor.y * height]);
       const content = layer.content ?? {};
       switch (content.type) {
-        case 'group':
+        case 'group': {
+          // Under an unknown map, the children are unknown anyway.
+          const clip = content.clip && known ? content.clip : null;
+          const inverse = clip ? invertAffine(world) : null;
+          if (clip && !inverse) break;
+          if (clip) walk.clips.push({ inverse, bounds: [clip.x, clip.y, clip.x + clip.width, clip.y + clip.height] });
           visit(content.layers, world, opacity, known, certain && !content.mask);
+          if (clip) walk.clips.pop();
           break;
+        }
         case 'rect': {
           const solid = content.fill?.type === 'solid' ? parseHex(content.fill.color) : null;
           if ((content.fill && !solid) || content.stroke) walk.content = true;
           else if (solid && solid[3] > 0) walk.flatRects = true;
           if (!content.fill) break;
-          if (!known) { walk.backdrops.push({ everywhere: true }); break; }
+          if (!known) { drawn({ everywhere: true }); break; }
           const inverse = invertAffine(anchored(content.width, content.height));
           if (!inverse) break;
           const filtered = (layer.effects?.filters?.length ?? 0) > 0 || (layer.effects?.blur ?? 0) > 0;
-          walk.backdrops.push({
+          drawn({
             inverse, bounds: [0, 0, content.width, content.height],
             color: solid && certain && !filtered ? [solid[0], solid[1], solid[2], (solid[3] / 255) * opacity] : null,
           });
@@ -1120,20 +1141,20 @@ function walkScene(scene) {
           walk.content = true;
           const inverse = known && content.width !== undefined && content.height !== undefined ? invertAffine(anchored(content.width, content.height)) : undefined;
           if (inverse === null) break;
-          walk.backdrops.push(inverse ? { inverse, bounds: [0, 0, content.width, content.height] } : { everywhere: true });
+          drawn(inverse ? { inverse, bounds: [0, 0, content.width, content.height] } : { everywhere: true });
           break;
         }
         case 'path': {
           walk.content = true;
           const bounds = pathBounds(content.commands);
           if (!bounds) break;
-          if (!known) { walk.backdrops.push({ everywhere: true }); break; }
+          if (!known) { drawn({ everywhere: true }); break; }
           const inverse = invertAffine(world);
-          if (inverse) walk.backdrops.push({ inverse, bounds });
+          if (inverse) drawn({ inverse, bounds });
           break;
         }
         case 'instances':
-          if (content.count > 0) { walk.content = true; walk.backdrops.push({ everywhere: true }); }
+          if (content.count > 0) { walk.content = true; drawn({ everywhere: true }); }
           break;
         case 'text': {
           const style = content.style ?? {};
@@ -1146,7 +1167,7 @@ function walkScene(scene) {
         }
         default:
           walk.content = true;
-          walk.backdrops.push({ everywhere: true });
+          drawn({ everywhere: true });
       }
     }
   };

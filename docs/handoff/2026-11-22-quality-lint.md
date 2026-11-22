@@ -41,6 +41,10 @@ The cost decides it:
   mode the layer contrast is off (pixels replace it) and a layer
   `blank-first-frame` is dropped when frame 0 is rendered.
 
+The timeline checks report only scenes and items that touch the frames an
+export or check covers (`--from`/`--to`, or the stills selected, from the
+first to the last); `--info` reports them all.
+
 `--check-quality` exits 1 when it reports anything, 0 when not, 2 for usage
 errors; its `--json` status stays `ok`. It conflicts with an output, frame
 selections, encoder, preset, subtitle, loudness, and loop flags.
@@ -57,7 +61,9 @@ size, a path's bounding box, a gradient or filtered rect, or anything of
 unknown extent: instances, plugins, PSDs, sizeless images) makes the
 backdrop unknown and the text is skipped. Text under a skew, 3D turn,
 perspective, mask, or non-normal blend, gradient text, and text with color
-runs are skipped too. The text color is its fill (white by default)
+runs are skipped too, and so is text whose anchor point its groups' clips
+cut away; a rect counts as behind the point only inside every clip it was
+drawn through (corners taken as square). The text color is its fill (white by default)
 composited at its effective opacity. A stroke (the innermost), shadow, or
 glow of at least 50 % alpha counts as a backdrop: the ratio is the best of
 them. Large text is a font size times the groups' scale of at least 24 px
@@ -66,7 +72,8 @@ them. Large text is a font size times the groups' scale of at least 24 px
 A frame counts only when the text holds still: its opacity and scale equal
 those of the adjacent frames before and after (when those were observed), so
 fades and pop-ins do not warn. One warning per layer, with the failing
-frames joined into spans and the worst ratio.
+frames joined into sorted spans (frames may come in any order, as
+`--frames 90,0` gives them) and the worst ratio.
 
 ### Pixel checks (`quality/pixels.rs`)
 
@@ -75,14 +82,19 @@ linear light onto a grid at most 160 cells across (every second source
 pixel above 960 px wide). Per cell:
 
 - A general transition: relative luminance moved at least 0.1 from the last
-  extreme against the previous direction, the darker side below 0.8.
+  extreme against the previous direction, the darker side below 0.8. A
+  move of 0.1 that does not count (both sides at 0.8 or above) still turns
+  the path, so a flash that starts after a bright lead-in is measured from
+  where it turned.
 - A red transition: `(R − G − B) · 320` (linear, negatives 0) moved more
   than 20, one side saturated red (`R / (R + G + B) ≥ 0.8`).
 
 Windows a third of the grid wide and high slide in quarter steps (WCAG's
 10° field: 341×256 at 1024×768). A window counts a transition in a frame
-when cells that made one cover more than a quarter of it. More than six
-transitions (three flashes) within `round(fps)` frames is a violation;
+when cells that made one cover more than a quarter of it. A flash is a pair
+of opposing transitions, so eight transitions (four whole flashes) within
+`round(fps)` frames is a violation, and a seventh that stays is not; the
+reported `value` is whole flashes;
 overlapping violations join, their regions united. A hard cut is a frame
 where at least 60 % of the cells moved 0.2 (encoded) in some channel; shots
 between cuts shorter than a second warn, runs of them joined, except shots
@@ -93,14 +105,19 @@ codes.
 ### Rendered text contrast (`quality/contrast.rs`, `check.rs`)
 
 Every half second's worth of frames (and the first), each visible text layer
-that holds still from the frame before to the frame after is rendered twice
-more: alone (`only_layer`: the layer and its groups, transforms, opacity,
-clips, masks, and effects, on a transparent background) and the frame
-without it (`without_layer`). Over the pixels the lone render covers at
-least 230/255 (128 when fewer than 16 do), each pixel's contrast between the
-frame and the frame without the text is taken, credited with the halo colors
-as above; the 10th percentile is the measure. The check holds one sampled
-frame's render until the next frame says whether its texts moved.
+that holds still from the frame before to the frame after is rendered three
+times more: twice as probes (`with_probe_fill`: the whole frame with the
+text's fill solid black, then white, its color runs dropped and its own
+opacity 1) and once without it (`without_layer`). Where the probes differ is
+where the glyphs show: a layer drawn over the text makes them equal there,
+so covered text is not measured, and a faded text is found at its full
+extent. Halos (strokes, shadows, glows) are the same in both probes and
+drop out. Over the pixels that differ by at least 90 % of the largest
+difference (45 % when fewer than 16 do; none below 16 codes), each pixel's
+contrast between the frame and the frame without the text is taken,
+credited with the halo colors as above; the 10th percentile is the
+measure. The check holds one sampled frame's render until the next frame
+says whether its texts moved.
 
 ## Implementation
 

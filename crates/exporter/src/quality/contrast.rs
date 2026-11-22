@@ -1,11 +1,12 @@
-//! Text contrast measured on rendered pixels: each text layer is rendered
-//! alone (for where its glyphs are) and the frame without it (for what is
-//! behind them), and the frame's own pixels over the glyphs are compared
-//! with that backdrop pixel by pixel.
+//! Text contrast measured on rendered pixels. Each text layer's frame is
+//! rendered three more times: with the text's fill black and then white,
+//! fully opaque (the pixels that differ are where its glyphs show, past
+//! whatever covers them), and without the text (what is behind them). The
+//! frame's own pixels there are compared with that backdrop pixel by pixel.
 
 use std::collections::BTreeMap;
 
-use celesta_composition::{Layer, LayerContent, Rational, Scene, TextStyle};
+use celesta_composition::{Layer, LayerContent, Paint, Rational, Scene, TextStyle};
 
 use super::luminance::{contrast_ratio, relative_luminance};
 use super::scene::{Affine, halo_colors};
@@ -14,11 +15,17 @@ use super::{
     describe_spans, push_frame,
 };
 
-/// A glyph pixel is one the text alone covers at least this much (of 255).
-const CORE_ALPHA: u8 = 230;
-/// With fewer core pixels than this (thin or small text), half-covered
-/// ones count too.
+/// A glyph pixel is one whose black and white probes differ by at least
+/// this share of the most any pixel does: where the glyph shows whole.
+const CORE_SHARE: u32 = 90;
+/// With fewer core pixels than this (thin or small text), pixels at half
+/// of it count too.
 const MIN_CORE_PIXELS: usize = 16;
+/// Probes differing by less than this anywhere show no glyph: the text is
+/// covered or off the canvas.
+const MIN_PROBE_DIFFERENCE: u8 = 16;
+/// The fills the probes paint the text with.
+pub const PROBE_FILLS: [&str; 2] = ["#000000", "#FFFFFF"];
 /// The share of glyph pixels allowed below the limit: the measure is the
 /// 10th percentile of their ratios.
 const PERCENTILE: f64 = 0.1;
@@ -155,39 +162,26 @@ pub fn without_layer(scene: &Scene, id: &str) -> Scene {
     }
 }
 
-/// `scene` with only layer `id` and the groups it is in, each keeping its
-/// transform, opacity, clip, mask, and effects; `None` without such a layer.
-pub fn only_layer(scene: &Scene, id: &str) -> Option<Scene> {
-    fn keep(layers: &[Layer], id: &str) -> Option<Layer> {
-        layers.iter().find_map(|layer| {
-            if layer.id == id {
-                return Some(layer.clone());
+/// `scene` with text layer `id` filled solid `color`, without color runs,
+/// at full opacity of its own (its groups keep theirs): a probe for where
+/// its glyphs show. `None` without such a text layer.
+pub fn with_probe_fill(scene: &Scene, id: &str, color: &str) -> Option<Scene> {
+    fn paint(layers: &mut [Layer], id: &str, color: &str) -> bool {
+        layers.iter_mut().any(|layer| match &mut layer.content {
+            LayerContent::Text { style, .. } if layer.id == id => {
+                style.fill = Some(Paint::Solid {
+                    color: color.to_owned(),
+                });
+                style.color_runs.clear();
+                layer.opacity = 1.0;
+                true
             }
-            let LayerContent::Group {
-                layers,
-                clip,
-                mask,
-                motion_blur,
-            } = &layer.content
-            else {
-                return None;
-            };
-            let child = keep(layers, id)?;
-            Some(Layer {
-                content: LayerContent::Group {
-                    layers: vec![child],
-                    clip: *clip,
-                    mask: mask.clone(),
-                    motion_blur: *motion_blur,
-                },
-                ..layer.clone()
-            })
+            LayerContent::Group { layers, .. } => paint(layers, id, color),
+            _ => false,
         })
     }
-    Some(Scene {
-        layers: vec![keep(&scene.layers, id)?],
-        ..scene.clone()
-    })
+    let mut probe = scene.clone();
+    paint(&mut probe.layers, id, color).then_some(probe)
 }
 
 /// Text contrast over the sampled frames of a check.
@@ -211,20 +205,20 @@ impl TextContrast {
         }
     }
 
-    /// Measures `sample` at composition frame `frame` from three renders of
-    /// the same size, as RGBA8: `full`, the frame; `hidden`, the frame
-    /// without the text; `alone`, the text by itself on a transparent
-    /// background. Returns the measured ratio, `None` when the text drew
-    /// nothing.
+    /// Measures `sample` at composition frame `frame` from renders of the
+    /// same size, as RGBA8: `full`, the frame; `hidden`, the frame without
+    /// the text; `probes`, the frame with the text's fill as
+    /// [`PROBE_FILLS`] ([`with_probe_fill`]). Returns the measured ratio,
+    /// `None` when none of the text shows.
     pub fn measure(
         &mut self,
         frame: u64,
         sample: &TextSample,
         full: &[u8],
         hidden: &[u8],
-        alone: &[u8],
+        probes: [&[u8]; 2],
     ) -> Option<f64> {
-        let ratio = glyph_contrast(full, hidden, alone, &sample.halos)?;
+        let ratio = glyph_contrast(full, hidden, probes, &sample.halos)?;
         let record = self
             .records
             .entry(sample.id.clone())
@@ -281,14 +275,34 @@ fn pixels(rgba: &[u8]) -> std::slice::Iter<'_, [u8; 4]> {
 }
 
 /// The 10th percentile of the contrast between `full` and `hidden` over the
-/// pixels `alone` covers, each pixel also credited with its contrast
-/// against the text's `halos`.
-fn glyph_contrast(full: &[u8], hidden: &[u8], alone: &[u8], halos: &[[u8; 3]]) -> Option<f64> {
+/// pixels where the probes differ (the glyphs that show), each pixel also
+/// credited with its contrast against the text's `halos`.
+fn glyph_contrast(
+    full: &[u8],
+    hidden: &[u8],
+    [dark, light]: [&[u8]; 2],
+    halos: &[[u8; 3]],
+) -> Option<f64> {
     let halos: Vec<f64> = halos.iter().map(|&halo| relative_luminance(halo)).collect();
-    let ratios_at = |threshold: u8| -> Vec<f64> {
-        pixels(alone)
+    let shown: Vec<u8> = pixels(dark)
+        .zip(pixels(light))
+        .map(|(dark, light)| {
+            (0..3)
+                .map(|channel| dark[channel].abs_diff(light[channel]))
+                .max()
+                .unwrap_or(0)
+        })
+        .collect();
+    let most = shown.iter().copied().max().unwrap_or(0);
+    if most < MIN_PROBE_DIFFERENCE {
+        return None;
+    }
+    let ratios_at = |share: u32| -> Vec<f64> {
+        let threshold = u32::from(most) * share / 100;
+        shown
+            .iter()
             .zip(pixels(full).zip(pixels(hidden)))
-            .filter(|(alone, _)| alone[3] >= threshold)
+            .filter(|(shown, _)| u32::from(**shown) >= threshold)
             .map(|(_, (full, hidden))| {
                 let glyph = relative_luminance([full[0], full[1], full[2]]);
                 let behind = relative_luminance([hidden[0], hidden[1], hidden[2]]);
@@ -300,9 +314,9 @@ fn glyph_contrast(full: &[u8], hidden: &[u8], alone: &[u8], halos: &[[u8; 3]]) -
             })
             .collect()
     };
-    let mut ratios = ratios_at(CORE_ALPHA);
+    let mut ratios = ratios_at(CORE_SHARE);
     if ratios.len() < MIN_CORE_PIXELS {
-        ratios = ratios_at(128);
+        ratios = ratios_at(CORE_SHARE / 2);
     }
     if ratios.len() < 4 {
         return None;
@@ -349,18 +363,26 @@ mod tests {
     }
 
     #[test]
-    fn only_and_without_keep_the_path_to_the_layer() {
+    fn probes_paint_the_text_and_without_removes_it() {
         let scene = scene();
-        let alone = only_layer(&scene, "title").unwrap();
-        assert_eq!(alone.layers.len(), 1);
-        assert_eq!(alone.layers[0].id, "card");
-        assert_eq!(alone.layers[0].opacity, 0.5);
-        let LayerContent::Group { layers, .. } = &alone.layers[0].content else {
+        let probe = with_probe_fill(&scene, "title", "#000000").unwrap();
+        let LayerContent::Group { layers, .. } = &probe.layers[1].content else {
             panic!("a group");
         };
-        assert_eq!(layers.len(), 1);
-        assert_eq!(layers[0].id, "title");
-        assert!(only_layer(&scene, "missing").is_none());
+        // The group keeps its opacity; the text is opaque and solid.
+        assert_eq!(probe.layers[1].opacity, 0.5);
+        assert_eq!(layers[0].opacity, 1.0);
+        let LayerContent::Text { style, .. } = &layers[0].content else {
+            panic!("a text");
+        };
+        assert_eq!(
+            style.fill,
+            Some(Paint::Solid {
+                color: "#000000".into()
+            })
+        );
+        assert!(with_probe_fill(&scene, "missing", "#000000").is_none());
+        assert!(with_probe_fill(&scene, "badge", "#000000").is_none());
 
         let hidden = without_layer(&scene, "title");
         let LayerContent::Group { layers, .. } = &hidden.layers[1].content else {
@@ -376,22 +398,46 @@ mod tests {
         color.repeat(n)
     }
 
+    /// Black and white probes of `n` pixels, the text showing on the first
+    /// `shown` of them.
+    fn probes(n: usize, shown: usize) -> [Vec<u8>; 2] {
+        let probe = |color: u8| {
+            let mut pixels = pixels(shown, [color, color, color, 255]);
+            pixels.extend(pixels_of(n - shown, [90, 90, 90, 255]));
+            pixels
+        };
+        [probe(0), probe(255)]
+    }
+
+    fn pixels_of(n: usize, color: [u8; 4]) -> Vec<u8> {
+        color.repeat(n)
+    }
+
+    fn contrast(
+        full: &[u8],
+        hidden: &[u8],
+        probes: &[Vec<u8>; 2],
+        halos: &[[u8; 3]],
+    ) -> Option<f64> {
+        glyph_contrast(full, hidden, [&probes[0], &probes[1]], halos)
+    }
+
     #[test]
     fn glyph_pixels_are_compared_with_what_is_behind_them() {
         let n = 100;
-        let alone = pixels(n, [255, 255, 255, 255]);
+        let probes = probes(n, n);
         // Grey text on a slightly lighter grey.
         let full = pixels(n, [110, 110, 110, 255]);
         let hidden = pixels(n, [140, 140, 140, 255]);
-        let ratio = glyph_contrast(&full, &hidden, &alone, &[]).unwrap();
+        let ratio = contrast(&full, &hidden, &probes, &[]).unwrap();
         assert!(ratio < 1.6, "{ratio}");
         // A black outline makes white-on-white text read.
         let white = pixels(n, [255, 255, 255, 255]);
-        assert!(glyph_contrast(&white, &white, &alone, &[[0, 0, 0]]).unwrap() > 20.0);
-        // Nothing drawn: nothing to measure.
-        assert!(glyph_contrast(&full, &hidden, &pixels(n, [0; 4]), &[]).is_none());
+        assert!(contrast(&white, &white, &probes, &[[0, 0, 0]]).unwrap() > 20.0);
+        // Covered by a card, the probes match: nothing shows to measure.
+        assert!(contrast(&full, &hidden, &self::probes(n, 0), &[]).is_none());
 
-        let mut contrast = TextContrast::new(Rational::new(30, 1));
+        let mut text = TextContrast::new(Rational::new(30, 1));
         let sample = TextSample {
             id: "t".into(),
             text: "Hi".into(),
@@ -400,26 +446,45 @@ mod tests {
             scale: 1.0,
             halos: Vec::new(),
         };
-        for frame in [15, 30] {
-            contrast.measure(frame, &sample, &full, &hidden, &alone);
+        for frame in [30, 15] {
+            text.measure(frame, &sample, &full, &hidden, [&probes[0], &probes[1]]);
         }
-        let issues = contrast.finish();
+        let issues = text.finish();
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].code, QualityCode::LowContrastText);
         assert_eq!(issues[0].measured, Measured::Pixels);
         assert_eq!(issues[0].frames.len(), 2);
+        assert_eq!(issues[0].frames[0].from, 15);
+    }
+
+    #[test]
+    fn faded_text_is_measured_where_it_shows() {
+        // White text held at 20 % on black: its pixels are a dark grey,
+        // though the probes, drawn opaque, find all of them.
+        let n = 100;
+        let full = pixels(n, [51, 51, 51, 255]);
+        let hidden = pixels(n, [0, 0, 0, 255]);
+        let ratio = contrast(&full, &hidden, &probes(n, n), &[]).unwrap();
+        assert!(ratio < 2.5, "{ratio}");
+        // Only the part that shows counts: 30 pixels peek out from under a
+        // card and are white on black.
+        let mut full = pixels(30, [255, 255, 255, 255]);
+        full.extend(pixels(70, [200, 30, 30, 255]));
+        let mut hidden = pixels(30, [0, 0, 0, 255]);
+        hidden.extend(pixels(70, [200, 30, 30, 255]));
+        assert!(contrast(&full, &hidden, &probes(n, 30), &[]).unwrap() > 20.0);
     }
 
     #[test]
     fn the_worst_tenth_of_the_glyphs_decides() {
         // 80 pixels over black, 20 over white: white text.
-        let alone = pixels(100, [255, 255, 255, 255]);
+        let probes = probes(100, 100);
         let full = pixels(100, [255, 255, 255, 255]);
         let mut hidden = pixels(80, [0, 0, 0, 255]);
         hidden.extend(pixels(20, [255, 255, 255, 255]));
-        assert!(glyph_contrast(&full, &hidden, &alone, &[]).unwrap() < 1.01);
+        assert!(contrast(&full, &hidden, &probes, &[]).unwrap() < 1.01);
         let mut hidden = pixels(95, [0, 0, 0, 255]);
         hidden.extend(pixels(5, [255, 255, 255, 255]));
-        assert!(glyph_contrast(&full, &hidden, &alone, &[]).unwrap() > 20.0);
+        assert!(contrast(&full, &hidden, &probes, &[]).unwrap() > 20.0);
     }
 }

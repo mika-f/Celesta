@@ -42,7 +42,11 @@ impl Exporter {
             .set_first_frame(u64::try_from(start_frame).map_err(|_| ExportError::TimelineTooLong)?);
         let mut reported_warnings = ReportedWarnings::default();
         let evaluator = Evaluator::new(project).map_err(ExportError::Evaluation)?;
-        quality::report(quality::short_items(project), progress);
+        let first = u64::try_from(start_frame).map_err(|_| ExportError::TimelineTooLong)?;
+        quality::report(
+            quality::within(quality::short_items(project), (first, first + frame_count)),
+            progress,
+        );
         let mut lint = SceneLint::new(frame_rate, true);
         for frame_index in 0..frame_count {
             ensure_not_cancelled(cancellation)?;

@@ -289,6 +289,13 @@ test('the layer checks report low-contrast text and short scenes with their fram
     assert.equal(short.value, 0.333);
     assert.match(short.message, /^chapter "intro" lasts 0\.33 s \(frames 0–9 \(0\.00–0\.33 s\)\), under 1 s/);
 
+    // Frames asked for in any order make sorted spans.
+    const reversed = JSON.parse(inspect('--frames', '30,0', '--json').stdout) as { quality: QualityIssue[] };
+    assert.deepEqual(
+      reversed.quality[0]!.frames!.map(({ from, to }) => [from, to]),
+      [[0, 1], [30, 31]],
+    );
+
     const text = inspect('--frames', '0,30');
     assert.equal(text.status, 0, text.stderr);
     assert.match(text.stdout, /warning: low-contrast-text: text layer "title"/);
@@ -314,5 +321,27 @@ test('a first frame of nothing but solid rectangles is blank', () => {
     // Frame 0 not inspected: nothing to say about it.
     const later = JSON.parse(inspect('--frames', '1,2', '--json').stdout) as { quality: QualityIssue[] };
     assert.deepEqual(later.quality, []);
+  });
+});
+
+test('a backdrop its group clips away is not behind the text', () => {
+  withEntry('celesta-inspect-clip-', ({ write, inspect }) => {
+    write(`
+      import { Composition, Group, Rect, Text } from '@celesta.studio/react';
+      export default function Root() {
+        return <Composition width={320} height={180} fps={30} durationInFrames={30}>
+          <Rect width={320} height={180} fill="#000000" />
+          <Group clip={{ x: 0, y: 0, width: 160, height: 180 }}>
+            <Rect width={320} height={180} fill="#FFFFFF" />
+          </Group>
+          <Text id="right" x={240} y={90} style={{ fontSize: 24, fill: { type: 'solid', color: '#FFFFFF' } }}>Right</Text>
+          <Text id="left" x={80} y={90} style={{ fontSize: 24, fill: { type: 'solid', color: '#FFFFFF' } }}>Left</Text>
+        </Composition>;
+      }
+    `);
+    const json = inspect('--json');
+    assert.equal(json.status, 0, json.stderr);
+    const { quality } = JSON.parse(json.stdout) as { quality: QualityIssue[] };
+    assert.deepEqual(quality.map((issue) => [issue.code, issue.layer]), [['low-contrast-text', 'left']]);
   });
 });

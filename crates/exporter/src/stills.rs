@@ -447,6 +447,13 @@ impl Destination {
     }
 }
 
+/// The frames `[first, last + 1)` a selection spans.
+fn span_of(frames: &[u64]) -> (u64, u64) {
+    let first = frames.iter().copied().min().unwrap_or(0);
+    let last = frames.iter().copied().max().unwrap_or(0);
+    (first, last + 1)
+}
+
 /// Published frame files as the files an export reports.
 fn frame_files(published: Vec<(u64, PathBuf)>) -> Vec<ExportedFile> {
     published
@@ -712,7 +719,6 @@ impl Exporter {
             frame_rate,
             frames: total,
         }));
-        crate::quality::report(crate::quality::short_items(project), &mut progress);
         let frames = select(
             &request.frames,
             self.options.range.as_ref(),
@@ -720,6 +726,10 @@ impl Exporter {
             frame_rate,
             request.contact_sheet,
         )?;
+        crate::quality::report(
+            crate::quality::within(crate::quality::short_items(project), span_of(&frames)),
+            &mut progress,
+        );
         let destination = self.still_destination(
             &frames,
             total,
@@ -825,6 +835,7 @@ impl Exporter {
             metadata.frame_rate,
             request.contact_sheet,
         )?;
+        crate::react_entry::report_short_chapters(&metadata, Some(span_of(&frames)), &mut progress);
         let destination = self.still_destination(
             &frames,
             metadata.duration_in_frames,

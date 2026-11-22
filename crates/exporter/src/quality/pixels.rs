@@ -186,7 +186,8 @@ struct Swing {
 impl Swing {
     /// Takes the next value; true when it completes a transition: a move of
     /// at least `step` from the extreme against the direction so far, which
-    /// `counts(extreme, flag, value, flag)` accepts.
+    /// `counts(extreme, flag, value, flag)` accepts. A move it does not
+    /// accept turns the path all the same.
     fn step(
         &mut self,
         value: f32,
@@ -210,11 +211,14 @@ impl Swing {
             self.flag = flag;
             return false;
         }
-        if moved.abs() >= step && counts(self.extreme, self.flag, value, flag) {
+        // A move that does not count (between two bright values, say)
+        // still turns the path, so the next one is measured from it.
+        if moved.abs() >= step {
+            let counted = counts(self.extreme, self.flag, value, flag);
             self.direction = if moved > 0.0 { 1 } else { -1 };
             self.extreme = value;
             self.flag = flag;
-            return true;
+            return counted;
         }
         false
     }
@@ -297,7 +301,8 @@ struct Windows {
     events: Vec<Vec<u64>>,
 }
 
-/// More than three flashes within a second, over `windows`.
+/// More than three flashes (eight transitions) within a second, over
+/// `windows`.
 struct Violation {
     from: u64,
     to: u64,
@@ -357,7 +362,9 @@ impl Windows {
     /// Every span where some window had more than three flashes' worth of
     /// transitions in `fps` frames, joined where they overlap.
     fn violations(&self, fps: u64) -> Vec<Violation> {
-        let most = 2 * MAX_FLASHES_PER_SECOND as usize;
+        // A flash is a pair of opposing transitions: a seventh with no
+        // eighth to answer it is still three flashes.
+        let most = 2 * MAX_FLASHES_PER_SECOND as usize + 1;
         let mut found: Vec<Violation> = Vec::new();
         for (window, events) in self.windows.iter().zip(&self.events) {
             let mut end = 0;
@@ -408,7 +415,8 @@ fn flash_issue(
         width: (f64::from(x1 - x0) * scale.0).round() as u32,
         height: (f64::from(y1 - y0) * scale.1).round() as u32,
     };
-    let flashes = violation.transitions as f64 / 2.0;
+    // Only whole pairs are flashes.
+    let flashes = (violation.transitions / 2) as f64;
     let what = match code {
         QualityCode::RedFlashing => "saturated red flashes",
         _ => "flashes",
@@ -630,6 +638,41 @@ mod tests {
             frame([level.min(255) as u8; 3])
         });
         assert!(run(fade).is_empty());
+    }
+
+    #[test]
+    fn three_flashes_and_a_change_that_stays_are_fine_but_four_are_not() {
+        // Dark, then flipping every 3 frames: `turns` transitions, then it
+        // holds what the last one left.
+        let flips = |turns: usize| {
+            (0..60).map(move |index: usize| {
+                let turned = (index / 3).min(turns);
+                frame(if turned % 2 == 1 { [255; 3] } else { [0; 3] })
+            })
+        };
+        assert!(!codes(&run(flips(7))).contains(&QualityCode::Flashing));
+        let issues = run(flips(8));
+        assert_eq!(codes(&issues), [QualityCode::Flashing], "{issues:?}");
+        assert_eq!(issues[0].value, Some(4.0));
+    }
+
+    #[test]
+    fn a_flash_after_a_bright_start_is_measured_from_where_it_turned() {
+        // #F0F0F0, then #FFFFFF and #E5E5E5 every 3 frames: the first move
+        // is between two bright values and does not count, but the swings
+        // after it (1.0 to 0.78) do.
+        let frames = (0..60).map(|index: usize| {
+            frame(match index {
+                0..3 => [0xF0; 3],
+                _ if (index / 3) % 2 == 1 => [0xFF; 3],
+                _ => [0xE5; 3],
+            })
+        });
+        let issues = run(frames);
+        assert!(
+            codes(&issues).contains(&QualityCode::Flashing),
+            "{issues:?}"
+        );
     }
 
     #[test]
