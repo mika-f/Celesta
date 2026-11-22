@@ -52,20 +52,26 @@ use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 
 const KEY_CONTEXT: Option<&str> = Some("CelestaEditor");
 
-/// The transport bar's layout at `width` at a `rem`: whether the In/Out
-/// readout and the duration show (`full`), then whether the In/Out buttons
-/// do; below these widths they give way to the playback controls.
-fn transport_layout(width: Pixels, rem: Pixels) -> (bool, bool) {
+#[derive(Debug, PartialEq, Eq)]
+struct TransportLayout {
+    show_range: bool,
+    show_marks: bool,
+    show_jumps: bool,
+}
+
+fn transport_layout(width: Pixels, rem: Pixels) -> TransportLayout {
     let width = width / rem;
-    (
-        width >= TRANSPORT_FULL_WIDTH,
-        width >= TRANSPORT_MARKS_WIDTH,
-    )
+    TransportLayout {
+        show_range: width >= TRANSPORT_FULL_WIDTH,
+        show_marks: width >= TRANSPORT_MARKS_WIDTH,
+        show_jumps: width >= TRANSPORT_JUMPS_WIDTH,
+    }
 }
 
 /// The breakpoints in rems: 820px and 600px designed against a 16px rem.
 const TRANSPORT_FULL_WIDTH: f32 = 51.25;
 const TRANSPORT_MARKS_WIDTH: f32 = 37.5;
+const TRANSPORT_JUMPS_WIDTH: f32 = 24.0;
 
 /// Whether the canvas-tool row shows above the viewer: in a React preview's
 /// interactive mode (Select layers on), selected layer or not, so the
@@ -738,8 +744,14 @@ impl EditorView {
             .transport_width
             .get()
             .unwrap_or(rem * TRANSPORT_FULL_WIDTH);
-        let (full, show_marks) = transport_layout(width, rem);
-        let has_range = full && (self.export_in_frame.is_some() || self.export_out_frame.is_some());
+        let layout = transport_layout(width, rem);
+        let TransportLayout {
+            show_range,
+            show_marks,
+            show_jumps,
+        } = layout;
+        let has_range =
+            show_range && (self.export_in_frame.is_some() || self.export_out_frame.is_some());
         let mark = |frame: Option<i64>| {
             frame.map_or_else(
                 || "--:--:--:--".to_owned(),
@@ -755,7 +767,8 @@ impl EditorView {
         // space allows. The timecode and range keep their intrinsic width.
         let timecode = div()
             .flex()
-            .flex_none()
+            .when(show_jumps, |timecode| timecode.flex_none())
+            .when(!show_jumps, |timecode| timecode.min_w_0().overflow_hidden())
             .items_baseline()
             .gap_2()
             .whitespace_nowrap()
@@ -768,7 +781,7 @@ impl EditorView {
                     .text_color(cx.theme().foreground)
                     .child(format_timecode(self.clock.frame(), frame_rate)),
             )
-            .when(full, |timecode| {
+            .when(show_range, |timecode| {
                 timecode.child(div().text_sm().text_color(muted).child(format!(
                     "/ {}",
                     format_timecode(self.clock.end_frame(), frame_rate)
@@ -776,10 +789,8 @@ impl EditorView {
             });
         let leading = div()
             .flex()
-            .when(show_marks, |group| group.flex_1())
-            .when(!show_marks, |group| {
-                group.flex_none().max_w_full().overflow_hidden()
-            })
+            .flex_1()
+            .when(!show_jumps, |group| group.min_w_0())
             .items_center()
             .gap_1()
             .child(timecode)
@@ -810,20 +821,19 @@ impl EditorView {
         let transport = div()
             .flex()
             .flex_none()
-            .when(!show_marks, |group| {
-                group.max_w_full().flex_wrap().justify_center()
-            })
             .items_center()
             .gap_1()
-            .child(
-                Button::new("go-to-start")
-                    .small()
-                    .ghost()
-                    .icon(IconName::SkipBack)
-                    .accessibility_label("Go to start")
-                    .tooltip_with_action("Go to start", &GoToStart, KEY_CONTEXT)
-                    .on_click(cx.listener(|this, _, _, cx| this.go_to_frame(0, cx))),
-            )
+            .when(show_jumps, |transport| {
+                transport.child(
+                    Button::new("go-to-start")
+                        .small()
+                        .ghost()
+                        .icon(IconName::SkipBack)
+                        .accessibility_label("Go to start")
+                        .tooltip_with_action("Go to start", &GoToStart, KEY_CONTEXT)
+                        .on_click(cx.listener(|this, _, _, cx| this.go_to_frame(0, cx))),
+                )
+            })
             .child(
                 Button::new("previous-frame")
                     .small()
@@ -835,6 +845,7 @@ impl EditorView {
             )
             .child({
                 let button = Button::new("toggle-playback").outline();
+                let button = if show_jumps { button } else { button.small() };
                 // Waiting for the preview audio: still clickable, to cancel.
                 let button = if self.play_when_audio_ready {
                     button
@@ -863,23 +874,22 @@ impl EditorView {
                     .tooltip_with_action("Next frame", &NextFrame, KEY_CONTEXT)
                     .on_click(cx.listener(|this, _, _, cx| this.step_frames(1, cx))),
             )
-            .child(
-                Button::new("go-to-end")
-                    .small()
-                    .ghost()
-                    .icon(IconName::SkipForward)
-                    .accessibility_label("Go to end")
-                    .tooltip_with_action("Go to end", &GoToEnd, KEY_CONTEXT)
-                    .on_click(
-                        cx.listener(|this, _, _, cx| this.go_to_frame(this.clock.end_frame(), cx)),
-                    ),
-            );
+            .when(show_jumps, |transport| {
+                transport.child(
+                    Button::new("go-to-end")
+                        .small()
+                        .ghost()
+                        .icon(IconName::SkipForward)
+                        .accessibility_label("Go to end")
+                        .tooltip_with_action("Go to end", &GoToEnd, KEY_CONTEXT)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.go_to_frame(this.clock.end_frame(), cx)
+                        })),
+                )
+            });
         let trailing = div()
             .flex()
-            .when(show_marks, |group| group.flex_1())
-            .when(!show_marks, |group| {
-                group.flex_none().max_w_full().flex_wrap()
-            })
+            .flex_1()
             .justify_end()
             .items_center()
             .gap_1()
@@ -964,18 +974,11 @@ impl EditorView {
             .relative()
             .flex()
             .flex_none()
+            .h(rems(3.0))
             .w_full()
             .items_center()
-            .when(show_marks, |bar| {
-                bar.h(rems(3.0)).gap_3().px(metrics::panel_padding())
-            })
-            .when(!show_marks, |bar| {
-                bar.flex_wrap()
-                    .justify_between()
-                    .min_h(rems(3.0))
-                    .gap_1()
-                    .p_1()
-            })
+            .when(show_marks, |bar| bar.gap_3().px(metrics::panel_padding()))
+            .when(!show_marks, |bar| bar.gap_1().px_1())
             .bg(cx.theme().title_bar)
             .border_t_1()
             .border_color(cx.theme().border)
@@ -984,7 +987,7 @@ impl EditorView {
                 canvas(
                     move |bounds, window, _| {
                         transport_width.set(Some(bounds.size.width));
-                        if transport_layout(bounds.size.width, rem) != (full, show_marks) {
+                        if transport_layout(bounds.size.width, rem) != layout {
                             window.request_animation_frame();
                         }
                     },
@@ -2023,12 +2026,14 @@ mod tests {
         // its breakpoints are the bar's own.
         // In rems: they keep their proportion to the content.
         let rem = px(metrics::BASE_FONT_SIZE);
-        assert_eq!(transport_layout(px(717.5), rem), (true, true));
-        assert_eq!(transport_layout(px(717.0), rem), (false, true));
-        assert_eq!(transport_layout(px(525.0), rem), (false, true));
-        assert_eq!(transport_layout(px(524.0), rem), (false, false));
+        assert!(transport_layout(px(717.5), rem).show_range);
+        assert!(!transport_layout(px(717.0), rem).show_range);
+        assert!(transport_layout(px(525.0), rem).show_marks);
+        assert!(!transport_layout(px(524.0), rem).show_marks);
+        assert!(transport_layout(px(336.0), rem).show_jumps);
+        assert!(!transport_layout(px(335.0), rem).show_jumps);
         let rem = px(16.0);
-        assert_eq!(transport_layout(px(820.0), rem), (true, true));
-        assert_eq!(transport_layout(px(819.0), rem), (false, true));
+        assert!(transport_layout(px(820.0), rem).show_range);
+        assert!(!transport_layout(px(819.0), rem).show_range);
     }
 }

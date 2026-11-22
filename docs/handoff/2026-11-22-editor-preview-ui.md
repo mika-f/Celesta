@@ -9,9 +9,10 @@ not the rendered video or the composition API.
 - Place mark buttons beside the timecode, give play/pause an outlined button,
   and group Loop playback with the viewer toggles. Keep the existing shortcuts
   and Mark menu as fallbacks when the viewer is narrow.
-- Re-evaluate the toolbar layout when the measured viewer width crosses either
-  rem breakpoint, so the controls follow panel resizes even while paused.
-  In the compact layout, groups can wrap rather than run underneath a dock.
+- Re-evaluate the toolbar layout across viewer widths even while paused. Keep
+  the bar to one row so a narrow layout does not take height from the canvas.
+  At the smallest widths, start/end jumps remain in the Playback menu while
+  stepping, playback, and viewer toggles stay on the bar.
 
 ## Validation
 

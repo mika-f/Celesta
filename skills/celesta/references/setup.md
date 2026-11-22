@@ -218,6 +218,7 @@ copied into `assets/`.
   **File → Reload** (Command-R / Ctrl-R).
 - Space plays and pauses; arrow keys step frames. Use I and O, the buttons
   next to the viewer timecode, or the **Mark** menu to set an export range.
+  If the viewer hides its start/end jump buttons, use the **Playback** menu.
   **Export** in the title bar (or **File → Export…**) opens the export page
   beside the viewer, whose **Export…** writes the file.
 - Track mute/solo in the app change what the preview (and an export started

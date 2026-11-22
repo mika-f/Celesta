@@ -9,7 +9,9 @@ use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::status_bar::StatusBar;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyView, Context, CursorStyle, KeyDownEvent, MouseButton, Window, canvas, div, px};
+use gpui_kit::{
+    AnyView, Context, CursorStyle, KeyDownEvent, MouseButton, Pixels, Window, canvas, div, px,
+};
 use std::time::Instant;
 
 impl Render for EditorView {
@@ -252,7 +254,11 @@ impl EditorView {
         let dock_row = h_resizable("celesta-dock-row")
             .when_some(row_state.as_ref(), |group, state| group.with_state(state))
             .child(first_panel)
-            .child(resizable_panel().child(self.viewer_panel(window, cx)))
+            .child(
+                resizable_panel()
+                    .size_range(px(260.0)..Pixels::MAX)
+                    .child(self.viewer_panel(window, cx)),
+            )
             .child(
                 resizable_panel()
                     .size(px(300.0))
