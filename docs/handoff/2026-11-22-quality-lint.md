@@ -111,7 +111,9 @@ text's fill solid black, then white, with its color runs dropped, or for
 an outline-only text (transparent fill, visible stroke) its strokes; its own
 color filters dropped, so a tint cannot paint both alike, while filters
 that move pixels (wave, pixelate, chromatic aberration, zoom blur,
-halftone, chroma key, custom shaders) stay; and its own opacity 1) and once without it (`without_layer`). Where the probes differ is
+halftone, custom shaders) stay, and a chroma key, which goes by color, is
+dropped too; only its visible strokes are painted, so a transparent inner
+stroke keeps its gap; and its own opacity 1) and once without it (`without_layer`). Where the probes differ is
 where the glyphs show (a text whose fill, color runs, and strokes are
 all fully transparent draws nothing and is not sampled): a layer drawn over the text makes them equal there,
 so covered text is not measured, and a faded text is found at its full

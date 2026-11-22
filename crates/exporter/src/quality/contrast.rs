@@ -224,8 +224,11 @@ pub fn with_probe_fill(scene: &Scene, id: &str, color: &str) -> Option<Scene> {
                         TextStroke::One(stroke) => std::slice::from_mut(stroke),
                         TextStroke::Many(strokes) => strokes.as_mut_slice(),
                     };
+                    // A transparent stroke leaves a gap the probes must keep.
                     for stroke in strokes {
-                        stroke.paint = solid.clone();
+                        if stroke.width > 0.0 && paint_shows(&stroke.paint) {
+                            stroke.paint = solid.clone();
+                        }
                     }
                 }
                 layer.opacity = 1.0;
@@ -244,7 +247,8 @@ pub fn with_probe_fill(scene: &Scene, id: &str, color: &str) -> Option<Scene> {
 
 /// Whether `filter` moves pixels rather than only changing their colors, so
 /// a probe keeps it to find the glyphs where they show. A custom shader may
-/// do either, so it stays.
+/// do either, so it stays. A chroma key goes by color, which the probes
+/// replace: a grey key would take both of them out, so it is dropped.
 fn moves_pixels(filter: &LayerFilter) -> bool {
     match filter {
         LayerFilter::Shader(_)
@@ -252,8 +256,7 @@ fn moves_pixels(filter: &LayerFilter) -> bool {
         | LayerFilter::Halftone { .. }
         | LayerFilter::ChromaticAberration { .. }
         | LayerFilter::Wave { .. }
-        | LayerFilter::ZoomBlur { .. }
-        | LayerFilter::ChromaKey { .. } => true,
+        | LayerFilter::ZoomBlur { .. } => true,
         LayerFilter::Brightness { .. }
         | LayerFilter::Contrast { .. }
         | LayerFilter::Saturation { .. }
@@ -263,7 +266,8 @@ fn moves_pixels(filter: &LayerFilter) -> bool {
         | LayerFilter::Tint { .. }
         | LayerFilter::Vignette { .. }
         | LayerFilter::Noise { .. }
-        | LayerFilter::Scanlines { .. } => false,
+        | LayerFilter::Scanlines { .. }
+        | LayerFilter::ChromaKey { .. } => false,
     }
 }
 
@@ -448,7 +452,10 @@ mod tests {
             "id": "outline", "transform": {},
             "content": { "type": "text", "text": "Outline", "style": {
                 "fill": { "type": "solid", "color": "#00000000" },
-                "stroke": { "paint": { "type": "solid", "color": "#DDDDDD" }, "width": 3 },
+                "stroke": [
+                    { "paint": { "type": "solid", "color": "#00000000" }, "width": 4 },
+                    { "paint": { "type": "solid", "color": "#DDDDDD" }, "width": 10 },
+                ],
             } },
         }))
         .unwrap();
@@ -463,8 +470,17 @@ mod tests {
                 color: "#00000000".into()
             })
         );
+        // The visible stroke is painted; the transparent inner one keeps
+        // its gap.
+        let strokes = style.stroke.as_ref().unwrap().strokes();
         assert_eq!(
-            style.stroke.as_ref().unwrap().strokes()[0].paint,
+            strokes[0].paint,
+            Paint::Solid {
+                color: "#00000000".into()
+            }
+        );
+        assert_eq!(
+            strokes[1].paint,
             Paint::Solid {
                 color: "#000000".into()
             }
@@ -524,6 +540,11 @@ mod tests {
                 .unwrap(),
             serde_json::from_value(json!({
                 "type": "wave", "amplitude": 20, "wavelength": 400, "phase": 90, "angle": 0,
+            }))
+            .unwrap(),
+            // A grey key would take out both probes.
+            serde_json::from_value(json!({
+                "type": "chromaKey", "color": "#808080", "tolerance": 0.2, "softness": 0.1, "spill": 0,
             }))
             .unwrap(),
         ];
