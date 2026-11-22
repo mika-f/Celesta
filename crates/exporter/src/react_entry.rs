@@ -16,8 +16,8 @@ use celesta_composition::Time;
 use celesta_media::{AudioMixError, MediaBackend, mix_audio_graph_unclipped_cancellable};
 use celesta_project::Project;
 use celesta_react_bridge::{
-    ReactBridge, ReactChapter, ReactCompositionMetadata, ReactSubtitleDescriptor, describe_rough,
-    rough_chapters,
+    NONDETERMINISTIC_RENDER, ReactBridge, ReactChapter, ReactCompositionMetadata,
+    ReactSubtitleDescriptor, describe_rough, rough_chapters,
 };
 use celesta_remote::StagedFile;
 use std::fs;
@@ -505,8 +505,13 @@ pub(crate) fn report_nondeterminism(
     bridge: &ReactBridge,
     progress: &mut impl FnMut(ExportProgress),
 ) {
+    // The text starts with the code too, as before; `codedWarnings` lists
+    // it beside `rough_scenes`.
     if let Some(warning) = bridge.nondeterministic_calls().warning() {
-        progress(ExportProgress::Warning(warning));
+        progress(ExportProgress::CodedWarning(CodedWarning {
+            code: NONDETERMINISTIC_RENDER,
+            message: warning,
+        }));
     }
 }
 

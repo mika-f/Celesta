@@ -556,7 +556,10 @@ props file, the result also has `propsFile` (its path) and `propsFileAuto`
     reading order.
 - `codedWarnings` lists the warnings that have a stable code, as
   `{code, message}`; each is also in `warnings`, and the key is absent when
-  there are none. `rough_scenes`: the exported span holds rough scenes,
+  there are none. `nondeterministic_render`: the entry called
+  `Math.random()`, `Date.now()`, or another clock while rendering (its
+  message starts with the code too; see [animation.md](animation.md)).
+  `rough_scenes`: the exported span holds rough scenes,
   which are in the video as placeholder cards (`message` names them);
   build them, or export with `--final` to make that an error
   ([animation.md](animation.md#rough-cut)). A `--json-progress` `warning`
