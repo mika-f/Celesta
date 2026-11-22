@@ -46,16 +46,32 @@ interface FrameState {
   /** The generator's state; see `nextRandom`. */
   seed: number;
   /** The generators of subtrees drawn at another time, by their clock. */
-  subtrees: Map<number, { seed: number }>;
+  subtrees: Map<FrameClock, { seed: number }>;
 }
 
 /**
- * The composition time, in milliseconds, of the subtree being rendered when
- * it is not the frame's: a `<FreezeFrame>`'s frame, a `<MotionBlur>` or
- * `<Trail>` sample's. The clock and `Math.random` inside follow it, so a
- * frozen subtree keeps its values.
+ * The composition frame (whole, or fractional for a `<MotionBlur>` sample)
+ * a subtree is drawn at, with the composition's fps; its clock reads
+ * `frame × 1000 / fps` milliseconds, as the frame itself would at the top.
  */
-export const FrameClockContext = React.createContext<number | null>(null);
+export interface FrameClock {
+  frame: number;
+  fps: number;
+}
+
+/**
+ * The clock of the subtree being rendered when it is not the frame's: a
+ * `<FreezeFrame>`'s frame, a `<MotionBlur>` sample's, a `<Trail>` copy's.
+ * The clock and `Math.random` inside follow it, so a frozen subtree keeps its
+ * values. Each provider renders a new object, and each object has a
+ * `Math.random` sequence of its own, seeded from its time: the outer tree
+ * and other subtrees at the same time do not draw from it.
+ */
+export const FrameClockContext = React.createContext<FrameClock | null>(null);
+
+function clockMs(clock: FrameClock): number {
+  return (clock.frame * 1000) / clock.fps;
+}
 
 /**
  * The value `FrameClockContext` has for the component being rendered, read
@@ -64,17 +80,16 @@ export const FrameClockContext = React.createContext<number | null>(null);
  * renderer, as Celesta's is), and the default outside. This runs on every
  * `Math.random()` call, where `useContext` would add a dependency each time.
  */
-function subtreeMs(): number | null {
-  const value = (FrameClockContext as unknown as { _currentValue?: unknown })._currentValue;
-  return typeof value === 'number' ? value : null;
+function subtreeClock(): FrameClock | null {
+  return (FrameClockContext as unknown as { _currentValue?: FrameClock | null })._currentValue ?? null;
 }
 
 /**
- * The clock, in milliseconds, of what is being rendered: a subtree's, or the
- * frame's; `null` outside a frame. For a `<MotionBlur>` sample to offset.
+ * The clock of the subtree being rendered, or `null` for the frame's; for a
+ * `<MotionBlur>` sample inside one to offset.
  */
-export function frameClockMs(): number | null {
-  return subtreeMs() ?? (frames.length > 0 ? current().ms : null);
+export function enclosingFrameClock(): FrameClock | null {
+  return subtreeClock();
 }
 
 const RealMath = { random: Math.random };
@@ -159,13 +174,13 @@ function current(): FrameState {
  */
 function nextRandom(): number {
   const frame = current();
-  const ms = subtreeMs();
+  const clock = subtreeClock();
   let state: { seed: number } = frame;
-  if (ms !== null && ms !== frame.ms) {
-    let subtree = frame.subtrees.get(ms);
+  if (clock !== null) {
+    let subtree = frame.subtrees.get(clock);
     if (!subtree) {
-      subtree = { seed: seedAt(ms) };
-      frame.subtrees.set(ms, subtree);
+      subtree = { seed: seedAt(clockMs(clock)) };
+      frame.subtrees.set(clock, subtree);
     }
     state = subtree;
   }
@@ -176,12 +191,13 @@ function nextRandom(): number {
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 }
 
-function clockMs(): number {
-  return subtreeMs() ?? current().ms;
+function nowMs(): number {
+  const clock = subtreeClock();
+  return clock === null ? current().ms : clockMs(clock);
 }
 
 function frozenNow(): number {
-  return FROZEN_EPOCH_MS + Math.floor(clockMs());
+  return FROZEN_EPOCH_MS + Math.floor(nowMs());
 }
 
 /**
@@ -225,7 +241,7 @@ function dateNow(): number {
 
 function performanceNow(): number {
   record('performance.now()', performanceNow);
-  return clockMs();
+  return nowMs();
 }
 
 /**

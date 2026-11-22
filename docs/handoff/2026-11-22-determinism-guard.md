@@ -17,15 +17,20 @@ While a frame is evaluated:
   sequence where it was, so a frame that took two passes (fonts changed, a
   ref was read) draws what a one-pass frame draws.
 - A subtree drawn at another time has its own clock and sequence:
-  `<FreezeFrame>` provides `FrameClockContext` with its frame's time, and
-  each `<MotionBlur>` sample and `<Trail>` copy the enclosing clock plus its
-  offset. The guard reads the context's current value
-  (`FrameClockContext._currentValue`, which React sets while it renders a
-  provider's subtree) instead of calling `useContext`, which would add a
-  dependency on every `Math.random()` call; a React upgrade that changes
-  this fails `test/determinism.test.mts`. Seeds hash the time in
-  milliseconds, so a `<FreezeFrame frame={60}>` draws what frame 60 draws at
-  the top.
+  `<FreezeFrame>` provides `FrameClockContext` with `{ frame, fps }` from
+  its `frame` prop (not from its `time`, which is rounded to microseconds),
+  and each `<MotionBlur>` sample and `<Trail>` copy the enclosing clock's
+  (or the root's) composition frame plus its offset. The clock reads
+  `frame × 1000 / fps`, the same arithmetic as the frame at the top, so a
+  `<FreezeFrame frame={1}>` or a `<Trail>` copy of frame 30 reads exactly
+  what frames 1 and 30 read. Each provider renders a new clock object and
+  each object gets its own `Math.random` sequence, seeded from its time:
+  the outer tree, or another subtree at the same time, never draws from it
+  (keyed by object, not by time). The guard reads the context's current
+  value (`FrameClockContext._currentValue`, which React sets while it
+  renders a provider's subtree) instead of calling `useContext`, which
+  would add a dependency on every `Math.random()` call; a React upgrade
+  that changes this fails `test/determinism.test.mts`.
 - Known limit: a `Math.random()` value kept across renders (`useMemo`,
   state) shifts the values drawn after it depending on render history: a
   frame that needed a second pass (a font discovered) skips the memo there,

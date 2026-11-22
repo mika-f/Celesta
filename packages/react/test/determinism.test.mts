@@ -7,7 +7,7 @@ import * as React from 'react';
 import type { ReactElement } from 'react';
 
 import { Composition, FreezeFrame, Text } from '../src/index.js';
-import { MotionBlur } from '../src/motion-blur.js';
+import { MotionBlur, Trail } from '../src/motion-blur.js';
 import type { Time } from '../src/index.js';
 import {
   evaluateDeterministically,
@@ -193,4 +193,38 @@ test('<MotionBlur> samples read their own moment', () => {
   // Frame 2 at 10 fps is 200 ms; a 180° shutter spans half a frame around
   // it, sampled at the middles of its halves: frames 1.875 and 2.125.
   assert.deepEqual(samples, [187.5, 212.5]);
+});
+
+test('a frozen subtree keeps its own sequence, also at its own frame', () => {
+  const Before = (): ReactElement => h(Text, null, String(Math.random()));
+  const Frozen = (): ReactElement => h(Text, null, String(Math.random()));
+  const mounted = mount(() => h(Composition, { width: 8, height: 8, fps: 30, durationInFrames: 90 },
+    h(Before),
+    h(FreezeFrame, { frame: 60 }, h(Frozen)),
+    h(FreezeFrame, { frame: 60 }, h(Frozen))));
+  const frozen = [59, 60, 61].map((frame) => texts(mounted.renderAt(at(frame), null).scene.layers));
+  // The outer tree and a second subtree at the same time take nothing from it.
+  for (const [, first, second] of frozen) {
+    assert.equal(first, frozen[0][1]);
+    assert.equal(second, frozen[0][1]);
+  }
+});
+
+test('a frozen frame that is no whole number of microseconds reads what it reads at the top', () => {
+  const values = () => [performance.now(), Math.random()];
+  const frozen = mount(() => h(Composition, { width: 8, height: 8, fps: 30, durationInFrames: 90 },
+    h(FreezeFrame, { frame: 1 }, h(() => h(Text, null, values().join(' '))))));
+  const top = mount(film(values));
+  assert.equal(texts(frozen.renderAt(at(40), null).scene.layers)[0], textAt(top, 1));
+});
+
+test('a <Trail> copy reads what its frame reads at the top', () => {
+  const values = () => [Date.now(), performance.now(), Math.random()];
+  const trail = mount(() => h(Composition, { width: 8, height: 8, fps: 30, durationInFrames: 90 },
+    h(Trail, { copies: 1, lagInFrames: 1 }, h(() => h(Text, null, values().join(' '))))));
+  const [copy, live] = texts(trail.renderAt(at(31), null).scene.layers);
+  const top = mount(film(values));
+  assert.equal(copy, textAt(top, 30));
+  assert.ok(copy.startsWith('1000 1000 '), copy);
+  assert.equal(live, textAt(top, 31));
 });

@@ -909,7 +909,8 @@ export function FreezeFrame(props: FreezeFrameProps): React.ReactElement {
   // `Date.now()` and `Math.random()` inside follow the frozen frame too.
   return React.createElement(
     FrameClockContext.Provider,
-    { value: (time.value * 1000) / time.timescale },
+    // From the frame number: `time` is rounded to microseconds.
+    { value: { frame: props.frame, fps: root.fps } },
     React.createElement(
       RootRuntimeContext.Provider,
       { value: frozen },
