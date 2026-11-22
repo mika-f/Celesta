@@ -493,6 +493,8 @@ fn decodes_a_projective_video_once_per_frame() {
         fn decode_frame(&mut self, _: &Path, _: f64) -> Result<VideoFrame, MediaError> {
             self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(VideoFrame {
+                pixel_format: celesta_media::DecodedPixelFormat::Rgba8,
+                color: None,
                 width: 4,
                 height: 4,
                 pixels: [255, 0, 0, 255].repeat(16).into(),
@@ -970,6 +972,8 @@ fn stand_ins_cover_what_their_content_draws() {
     impl VideoFrameDecoder for Decoder {
         fn decode_frame(&mut self, _: &Path, _: f64) -> Result<VideoFrame, MediaError> {
             Ok(VideoFrame {
+                pixel_format: celesta_media::DecodedPixelFormat::Rgba8,
+                color: None,
                 width: 150,
                 height: 75,
                 pixels: [255, 0, 0, 255].repeat(150 * 75).into(),

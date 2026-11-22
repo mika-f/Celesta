@@ -4208,6 +4208,8 @@ fn decodes_positions_and_fades_a_video_frame_on_the_gpu() {
             assert_eq!(path, Path::new("./clip.mp4"));
             assert_eq!(source_time_seconds, 2.0);
             Ok(VideoFrame {
+                pixel_format: celesta_media::DecodedPixelFormat::Rgba8,
+                color: None,
                 width: 1,
                 height: 1,
                 pixels: vec![12, 34, 56, 255].into(),
@@ -4261,6 +4263,8 @@ struct RedFrameDecoder;
 impl VideoFrameDecoder for RedFrameDecoder {
     fn decode_frame(&mut self, _: &Path, _: f64) -> Result<VideoFrame, MediaError> {
         Ok(VideoFrame {
+            pixel_format: celesta_media::DecodedPixelFormat::Rgba8,
+            color: None,
             width: 320,
             height: 180,
             pixels: [255, 0, 0, 255].repeat(320 * 180).into(),
@@ -4391,6 +4395,8 @@ fn shrinks_images_and_video_frames_larger_than_the_texture_limit() {
     impl VideoFrameDecoder for Decoder {
         fn decode_frame(&mut self, _: &Path, _: f64) -> Result<VideoFrame, MediaError> {
             Ok(VideoFrame {
+                pixel_format: celesta_media::DecodedPixelFormat::Rgba8,
+                color: None,
                 width: 8,
                 height: 4,
                 pixels: split_pixels().into(),
@@ -4464,6 +4470,8 @@ fn rejects_a_malformed_video_frame_larger_than_the_texture_limit() {
         fn decode_frame(&mut self, _: &Path, _: f64) -> Result<VideoFrame, MediaError> {
             // One pixel short of 8x4.
             Ok(VideoFrame {
+                pixel_format: celesta_media::DecodedPixelFormat::Rgba8,
+                color: None,
                 width: 8,
                 height: 4,
                 pixels: vec![0; 31 * 4].into(),
@@ -4531,6 +4539,8 @@ struct PatternedDecoder;
 impl VideoFrameDecoder for PatternedDecoder {
     fn decode_frame(&mut self, _: &Path, time: f64) -> Result<VideoFrame, MediaError> {
         Ok(VideoFrame {
+            pixel_format: celesta_media::DecodedPixelFormat::Rgba8,
+            color: None,
             width: 37,
             height: 21,
             pixels: patterned_frame(time).into(),
@@ -4610,6 +4620,37 @@ fn video_frames_reuse_their_texture_and_staging_memory() {
     renderer.render(&empty_scene(37, 21)).unwrap();
     renderer.render(&empty_scene(37, 21)).unwrap();
     assert_eq!(renderer.video_uploads.kept(), (0, 0));
+}
+
+#[test]
+fn materializes_yuv_before_the_rgba_upload_path() {
+    use celesta_media::{DecodedColor, DecodedMatrix, DecodedPixelFormat, DecodedRange};
+    struct Decoder;
+    impl VideoFrameDecoder for Decoder {
+        fn decode_frame(&mut self, _: &Path, _: f64) -> Result<VideoFrame, MediaError> {
+            VideoFrame::new(
+                2,
+                2,
+                DecodedPixelFormat::Nv12,
+                Some(DecodedColor {
+                    matrix: DecodedMatrix::Bt709,
+                    range: DecodedRange::Full,
+                    chroma_location: Default::default(),
+                }),
+                vec![128; 6],
+            )
+        }
+    }
+    let Some(renderer) = renderer(GpuRenderOptions::default()) else {
+        return;
+    };
+    let mut renderer = renderer.with_video_decoder(Decoder);
+    let mut scene = empty_scene(2, 2);
+    scene.layers.push(video_at("clip", 0., 0., 1.));
+    assert_eq!(
+        renderer.render(&scene).unwrap().pixels(),
+        [128, 128, 128, 255].repeat(4)
+    );
 }
 
 #[test]

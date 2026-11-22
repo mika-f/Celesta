@@ -148,6 +148,7 @@ fn decoded_frames(path: &Path) -> Vec<Vec<u8>> {
                 .decode_video(
                     celesta_codec_ffmpeg::DECODER_ID,
                     &VideoRequest {
+                        accepted_pixel_formats: &[],
                         path,
                         time,
                         sequential: None,

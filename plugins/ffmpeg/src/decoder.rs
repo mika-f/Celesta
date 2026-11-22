@@ -20,10 +20,11 @@ pub struct FfmpegBackend {
     /// Sequential requests served so far: the clock sessions' idleness is
     /// measured on.
     pub(crate) sequential_requests: u64,
+    pub(crate) accepted_pixel_formats: Vec<celesta_media::DecodedPixelFormat>,
 }
 
 /// A sequential session: the renderer's layer id, and the file it shows.
-pub(crate) type SessionKey = (String, PathBuf);
+pub(crate) type SessionKey = (String, PathBuf, Vec<celesta_media::DecodedPixelFormat>);
 
 /// How far ahead of the last served frame a request may be while still being
 /// answered by walking the open decode run forward. Beyond this a fresh
@@ -84,6 +85,7 @@ impl FfmpegBackend {
             video_sessions: HashMap::new(),
             sequential_video_processes_started: 0,
             sequential_requests: 0,
+            accepted_pixel_formats: Vec::new(),
         }
     }
 
@@ -96,6 +98,10 @@ impl FfmpegBackend {
 
     pub const fn sequential_video_processes_started(&self) -> u64 {
         self.sequential_video_processes_started
+    }
+
+    pub fn set_accepted_pixel_formats(&mut self, formats: &[celesta_media::DecodedPixelFormat]) {
+        self.accepted_pixel_formats = formats.to_vec();
     }
 
     pub fn probe(&mut self, path: impl AsRef<Path>) -> Result<&MediaProbe, MediaError> {
@@ -126,7 +132,13 @@ impl FfmpegBackend {
         // the timeline; the in-graph trim then drops the negative-pts lead-in,
         // so the first delivered frame is the one at or after the request —
         // the same frame `ffmpeg -ss <t> -i … -frames:v 1` produced.
-        let mut frames = FrameRun::spawn(path, &video, source_time_seconds, Some(1))?;
+        let mut frames = FrameRun::spawn(
+            path,
+            &video,
+            source_time_seconds,
+            Some(1),
+            &self.accepted_pixel_formats,
+        )?;
         let (_, frame) = frames
             .next_frame(video.width, video.height)
             .transpose()?
@@ -146,7 +158,11 @@ impl FfmpegBackend {
         default_frame_rate: Rational,
     ) -> Result<VideoFrame, MediaError> {
         self.sequential_requests = self.sequential_requests.saturating_add(1);
-        let key = (request_id.to_owned(), path.to_owned());
+        let key = (
+            request_id.to_owned(),
+            path.to_owned(),
+            self.accepted_pixel_formats.clone(),
+        );
         let frame = self.serve_sequential(&key, source_time_seconds, default_frame_rate);
         if let Some(session) = self.video_sessions.get_mut(&key) {
             session.last_used = self.sequential_requests;
@@ -227,7 +243,7 @@ impl FfmpegBackend {
             f64::from(default_frame_rate.denominator) / f64::from(default_frame_rate.numerator)
         });
         let mut session =
-            SequentialVideoSession::spawn(path, &video, source_time_seconds, step_seconds)?;
+            SequentialVideoSession::spawn(path, &video, source_time_seconds, step_seconds, &key.2)?;
         self.sequential_video_processes_started =
             self.sequential_video_processes_started.saturating_add(1);
         let frame = session.read_frame(source_time_seconds)?;

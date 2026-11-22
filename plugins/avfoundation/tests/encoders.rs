@@ -482,6 +482,7 @@ fn prores_takes_rgba16_little_endian() {
         .decode_video(
             celesta_codec_ffmpeg::DECODER_ID,
             &VideoRequest {
+                accepted_pixel_formats: &[],
                 path: &output,
                 time: 0.0,
                 sequential: None,
@@ -747,6 +748,7 @@ fn odd_sizes_are_refused() {
             .decode_video(
                 celesta_codec_ffmpeg::DECODER_ID,
                 &VideoRequest {
+                    accepted_pixel_formats: &[],
                     path: &output,
                     time: 0.0,
                     sequential: None,

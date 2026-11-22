@@ -1861,6 +1861,8 @@ fn renders_a_video_frame_from_the_injected_decoder() {
             assert_eq!(path, Path::new("./clip.mp4"));
             // The red channel says which time was asked for.
             Ok(VideoFrame {
+                pixel_format: celesta_media::DecodedPixelFormat::Rgba8,
+                color: None,
                 width: 1,
                 height: 1,
                 pixels: vec![(source_time_seconds * 10.0) as u8, 34, 56, 255].into(),
@@ -1937,6 +1939,67 @@ fn drawn_size(frame: &RgbaFrame, covered: impl Fn(&[u8; 4]) -> bool) -> (u32, u3
 }
 
 #[test]
+fn materializes_an_injected_yuv_video_frame() {
+    use celesta_media::{DecodedColor, DecodedMatrix, DecodedPixelFormat, DecodedRange};
+    struct Decoder;
+    impl VideoFrameDecoder for Decoder {
+        fn decode_frame(&mut self, _: &Path, _: f64) -> Result<VideoFrame, MediaError> {
+            VideoFrame::new(
+                2,
+                2,
+                DecodedPixelFormat::Yuv420p,
+                Some(DecodedColor {
+                    matrix: DecodedMatrix::Bt709,
+                    range: DecodedRange::Full,
+                    chroma_location: Default::default(),
+                }),
+                vec![128; 6],
+            )
+        }
+    }
+    let scene = Scene {
+        width: 2,
+        height: 2,
+        frame_rate: Rational::new(24, 1),
+        time: Time::ZERO,
+        fonts: vec![],
+        shaders: vec![],
+        layers: vec![Layer {
+            id: "video".into(),
+            transform: EvaluatedTransform {
+                position: Point { x: 1., y: 1. },
+                ..Default::default()
+            },
+            opacity: 1.,
+            blend_mode: BlendMode::Normal,
+            effects: Default::default(),
+            content: LayerContent::Video {
+                asset: ResolvedAsset {
+                    id: "clip".into(),
+                    location: AssetLocation::File {
+                        path: "clip.mp4".into(),
+                    },
+                },
+                timing: MediaTiming {
+                    local_time: Time::ZERO,
+                    source_start: Time::ZERO,
+                    source_time_seconds: 0.,
+                    playback_rate: 1.,
+                    r#loop: false,
+                },
+                width: None,
+                height: None,
+            },
+        }],
+    };
+    let mut renderer = CpuRenderer::default().with_video_decoder(Decoder);
+    assert_eq!(
+        renderer.render(&scene).unwrap().pixels(),
+        [128, 128, 128, 255].repeat(4)
+    );
+}
+
+#[test]
 fn sizes_a_video_frame_like_an_image() {
     /// A 320 x 180 video frame, all red.
     struct Decoder;
@@ -1944,6 +2007,8 @@ fn sizes_a_video_frame_like_an_image() {
     impl VideoFrameDecoder for Decoder {
         fn decode_frame(&mut self, _: &Path, _: f64) -> Result<VideoFrame, MediaError> {
             Ok(VideoFrame {
+                pixel_format: celesta_media::DecodedPixelFormat::Rgba8,
+                color: None,
                 width: 320,
                 height: 180,
                 pixels: [255, 0, 0, 255].repeat(320 * 180).into(),

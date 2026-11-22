@@ -248,6 +248,7 @@ fn probe(path: &Path) -> Result<MediaProbe, MediaError> {
 
 fn request(path: &Path, time: f64) -> VideoRequest<'_> {
     VideoRequest {
+        accepted_pixel_formats: &[],
         path,
         time,
         sequential: None,
@@ -383,6 +384,7 @@ fn decodes_the_frame_shown_at_each_time() {
             .decode_video(
                 DECODER_ID,
                 &VideoRequest {
+                    accepted_pixel_formats: &[],
                     path: &output,
                     time,
                     sequential,

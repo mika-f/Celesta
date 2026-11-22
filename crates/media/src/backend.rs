@@ -28,6 +28,7 @@ pub struct MediaBackend {
     routes: HashMap<PathBuf, (usize, ComponentRef)>,
     probes: HashMap<PathBuf, MediaProbe>,
     sequential_frame_rate: Option<Rational>,
+    accepted_pixel_formats: Vec<crate::DecodedPixelFormat>,
 }
 
 impl MediaBackend {
@@ -50,6 +51,7 @@ impl MediaBackend {
             routes: HashMap::new(),
             probes: HashMap::new(),
             sequential_frame_rate: None,
+            accepted_pixel_formats: vec![crate::DecodedPixelFormat::Rgba8],
         }
     }
 
@@ -59,6 +61,18 @@ impl MediaBackend {
     pub fn with_sequential_video(mut self, frame_rate: Rational) -> Self {
         if frame_rate.is_valid() {
             self.sequential_frame_rate = Some(frame_rate);
+        }
+        self
+    }
+
+    pub fn with_accepted_pixel_formats(mut self, formats: &[crate::DecodedPixelFormat]) -> Self {
+        self.accepted_pixel_formats = formats.to_vec();
+        if !self
+            .accepted_pixel_formats
+            .contains(&crate::DecodedPixelFormat::Rgba8)
+        {
+            self.accepted_pixel_formats
+                .push(crate::DecodedPixelFormat::Rgba8);
         }
         self
     }
@@ -279,10 +293,12 @@ impl VideoFrameDecoder for MediaBackend {
         path: &Path,
         source_time_seconds: f64,
     ) -> Result<VideoFrame, MediaError> {
+        let accepted = self.accepted_pixel_formats.clone();
         self.decoding(path, |provider, decoder| {
             provider.decode_video(
                 decoder,
                 &VideoRequest {
+                    accepted_pixel_formats: &accepted,
                     path,
                     time: source_time_seconds,
                     sequential: None,
@@ -301,10 +317,12 @@ impl VideoFrameDecoder for MediaBackend {
             session: request_id,
             frame_rate,
         });
+        let accepted = self.accepted_pixel_formats.clone();
         self.decoding(path, |provider, decoder| {
             provider.decode_video(
                 decoder,
                 &VideoRequest {
+                    accepted_pixel_formats: &accepted,
                     path,
                     time: source_time_seconds,
                     sequential,

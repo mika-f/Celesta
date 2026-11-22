@@ -775,6 +775,8 @@ fn convert(sample: &CMSampleBuffer, video: &VideoTrack) -> Result<VideoFrame, Me
         });
     }
     Ok(VideoFrame {
+        pixel_format: celesta_media::DecodedPixelFormat::Rgba8,
+        color: None,
         width: shown_width,
         height: shown_height,
         pixels: Arc::new(video.turn.apply(pixels, width, height)),

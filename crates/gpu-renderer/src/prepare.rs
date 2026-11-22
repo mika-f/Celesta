@@ -833,6 +833,11 @@ impl GpuRenderer {
                         frame
                     }
                 };
+                let frame = if frame.pixel_format == celesta_media::DecodedPixelFormat::Rgba8 {
+                    frame
+                } else {
+                    frame.to_rgba()?
+                };
                 let (width, height) =
                     fit_within(frame.width, frame.height, self.max_texture_dimension);
                 let (display_width, display_height) = display_size(

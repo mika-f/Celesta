@@ -114,6 +114,7 @@ struct DecodeSession {
     session: String,
     path: PathBuf,
     frame_rate: celesta_composition::Rational,
+    accepted_pixel_formats: Vec<crate::DecodedPixelFormat>,
 }
 
 struct DecodeKey {
@@ -349,7 +350,13 @@ impl MediaProcess {
             .child
             .receive()
             .map_err(media_error)
-            .and_then(|answer| protocol::decode_video_frame(answer, self.frames.as_mut()));
+            .and_then(|answer| {
+                protocol::decode_video_frame_offered(
+                    answer,
+                    self.frames.as_mut(),
+                    &key.session.accepted_pixel_formats,
+                )
+            });
         match answer {
             Ok(frame) => {
                 if self.prefetch_enabled {
@@ -682,6 +689,7 @@ impl Decoder for MediaProcess {
                 session: sequential.session.to_owned(),
                 path: path.clone(),
                 frame_rate: sequential.frame_rate,
+                accepted_pixel_formats: request.accepted_pixel_formats.to_vec(),
             });
         let predicted = session
             .as_ref()
@@ -714,7 +722,13 @@ impl Decoder for MediaProcess {
                 Some(frame) => Ok(frame),
                 None => self
                     .request(message, "videoFrame", DECODE_VIDEO_TIMEOUT)
-                    .and_then(|answer| protocol::decode_video_frame(answer, self.frames.as_mut())),
+                    .and_then(|answer| {
+                        protocol::decode_video_frame_offered(
+                            answer,
+                            self.frames.as_mut(),
+                            request.accepted_pixel_formats,
+                        )
+                    }),
             },
         )?;
         if let (Some(time), Some(session)) = (predicted, session) {

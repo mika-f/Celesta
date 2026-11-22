@@ -56,4 +56,7 @@ pub use ring::{MAX_RING_BYTES, RING_SLOTS, pipe_depth, ring_layout};
 pub use settings::{
     InvalidSetting, SelectOption, SettingField, SettingKind, SettingValue, Settings,
 };
-pub use types::{AudioBuffer, AudioStream, MediaProbe, VideoFrame, VideoStream};
+pub use types::{
+    AudioBuffer, AudioStream, DecodedChromaLocation, DecodedColor, DecodedMatrix,
+    DecodedPixelFormat, DecodedRange, MediaProbe, VideoFrame, VideoStream,
+};

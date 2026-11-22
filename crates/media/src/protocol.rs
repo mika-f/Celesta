@@ -11,7 +11,6 @@
 //! `docs/handoff/2026-11-08-media-encoders.md` for the requests.
 
 use crate::error::MediaError;
-use crate::mix::frame_byte_len;
 use crate::provider::{
     AudioEncoder, AudioEncoderOpened, AudioEncoderRequest, Color, ComponentDescription, Encoded,
     MediaProvider, Muxer, MuxerRequest, Packet, PixelFormat, Sequential, SessionId, SideData,
@@ -30,7 +29,6 @@ use serde_json::{Map, Value, json};
 use std::cell::RefCell;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 /// What a media plugin answers `hello` with as its roles.
 pub const ROLES: &[&str] = &["media"];
@@ -178,12 +176,16 @@ fn answer(
                 let path: PathBuf = field(request, "path")?;
                 let time: f64 = field(request, "time")?;
                 let sequential: Option<WireSequential> = field(request, "sequential")?;
+                let accepted: Option<Vec<crate::DecodedPixelFormat>> =
+                    field(request, "acceptedPixelFormats")?;
+                let accepted = accepted.unwrap_or_default();
                 let frame = provider
                     .decoder()
                     .ok_or_else(|| lacks("decoder"))?
                     .decode_video(
                         &decoder,
                         &VideoRequest {
+                            accepted_pixel_formats: &accepted,
                             path: &path,
                             time,
                             sequential: sequential.as_ref().map(|sequential| Sequential {
@@ -192,6 +194,12 @@ fn answer(
                             }),
                         },
                     )?;
+                frame.validate()?;
+                if frame.pixel_format != crate::DecodedPixelFormat::Rgba8
+                    && !accepted.contains(&frame.pixel_format)
+                {
+                    return Err(malformed("an unoffered decoded pixel format"));
+                }
                 // Into the shared slot when there is one and the frame fits:
                 // Celesta reads it from there before it sends another
                 // request, so nothing else writes the slot meanwhile.
@@ -209,6 +217,8 @@ fn answer(
                         "type": "videoFrame",
                         "width": frame.width,
                         "height": frame.height,
+                        "pixelFormat": frame.pixel_format,
+                        "color": frame.color,
                         "slot": { "generation": generation, "bytes": frame.pixels.len() },
                     }))
                     .into());
@@ -220,6 +230,8 @@ fn answer(
                         "type": "videoFrame",
                         "width": frame.width,
                         "height": frame.height,
+                        "pixelFormat": frame.pixel_format,
+                        "color": frame.color,
                     }),
                     payload: frame.pixels,
                 });
@@ -621,11 +633,16 @@ pub(crate) fn decode_video_request(
     if !request.time.is_finite() {
         return Err(MediaError::InvalidTimestamp(request.time));
     }
+    let mut accepted = request.accepted_pixel_formats.to_vec();
+    if !accepted.contains(&crate::DecodedPixelFormat::Rgba8) {
+        accepted.push(crate::DecodedPixelFormat::Rgba8);
+    }
     Ok(Message::new(json!({
         "type": "decodeVideo",
         "decoder": decoder,
         "path": sendable(&request.path)?,
         "time": request.time,
+        "acceptedPixelFormats": accepted,
         "sequential": request.sequential.map(|sequential| json!({
             "session": sequential.session,
             "frameRate": sequential.frame_rate,
@@ -653,13 +670,20 @@ struct WireSlot {
 /// does not hold the frame under the generation named (a newer one than the
 /// last), is `CodecUnavailable`: the codec has fallen out of step, and a new
 /// one is started.
-pub(crate) fn decode_video_frame(
+pub(crate) fn decode_video_frame_offered(
     answer: Message,
     frames: Option<&mut SharedSegment>,
+    accepted: &[crate::DecodedPixelFormat],
 ) -> Result<VideoFrame, MediaError> {
     let width = field(&answer, "width")?;
     let height = field(&answer, "height")?;
-    let expected = frame_byte_len(width, height)?;
+    let pixel_format =
+        field::<Option<crate::DecodedPixelFormat>>(&answer, "pixelFormat")?.unwrap_or_default();
+    let color: Option<crate::DecodedColor> = field(&answer, "color")?;
+    if pixel_format != crate::DecodedPixelFormat::Rgba8 && !accepted.contains(&pixel_format) {
+        return Err(malformed("an unoffered decoded pixel format"));
+    }
+    let expected = pixel_format.frame_bytes(width, height)?;
     if !answer.header["slot"].is_null() {
         let slot: WireSlot = field(&answer, "slot")?;
         let out_of_step = |what: &str| {
@@ -684,11 +708,7 @@ pub(crate) fn decode_video_frame(
             .read_slot(expected, slot.generation)
             .ok_or_else(|| out_of_step("that the slot does not hold"))?;
         frames.generation = slot.generation;
-        return Ok(VideoFrame {
-            width,
-            height,
-            pixels: Arc::new(pixels),
-        });
+        return VideoFrame::new(width, height, pixel_format, color, pixels);
     }
     if answer.payload.len() != expected {
         return Err(malformed(format!(
@@ -696,11 +716,15 @@ pub(crate) fn decode_video_frame(
             answer.payload.len()
         )));
     }
-    Ok(VideoFrame {
-        width,
-        height,
-        pixels: Arc::new(answer.payload),
-    })
+    VideoFrame::new(width, height, pixel_format, color, answer.payload)
+}
+
+#[cfg(test)]
+fn decode_video_frame(
+    answer: Message,
+    frames: Option<&mut SharedSegment>,
+) -> Result<VideoFrame, MediaError> {
+    decode_video_frame_offered(answer, frames, &[])
 }
 
 pub(crate) fn decode_audio_request(
@@ -1035,6 +1059,7 @@ mod tests {
     use crate::types::{AudioStream, VideoStream};
     use celesta_composition::Time;
     use celesta_plugin::protocol::{read_message, write_message};
+    use std::sync::Arc;
 
     /// Answers every request with made-up media, and records what it was
     /// asked.
@@ -1100,6 +1125,8 @@ mod tests {
                 request.sequential.map(|sequential| sequential.session)
             ));
             Ok(VideoFrame {
+                pixel_format: crate::DecodedPixelFormat::Rgba8,
+                color: None,
                 width: 2,
                 height: 1,
                 pixels: Arc::new(vec![1, 2, 3, 4, 5, 6, 7, 8]),
@@ -1145,6 +1172,7 @@ mod tests {
                 decode_video_request(
                     "ffmpeg",
                     &VideoRequest {
+                        accepted_pixel_formats: &[],
                         path: Path::new("/a.mp4"),
                         time: 0.5,
                         sequential: Some(Sequential {
@@ -1208,6 +1236,8 @@ mod tests {
             _: &VideoRequest<'_>,
         ) -> Result<VideoFrame, MediaError> {
             Ok(VideoFrame {
+                pixel_format: crate::DecodedPixelFormat::Rgba8,
+                color: None,
                 width: 2,
                 height: 1,
                 pixels: Arc::clone(&self.kept),
@@ -1234,6 +1264,7 @@ mod tests {
         let request = decode_video_request(
             "ffmpeg",
             &VideoRequest {
+                accepted_pixel_formats: &[],
                 path: Path::new("/a.mp4"),
                 time: 0.0,
                 sequential: None,
@@ -1300,6 +1331,7 @@ mod tests {
         let infinite = decode_video_request(
             "ffmpeg",
             &VideoRequest {
+                accepted_pixel_formats: &[],
                 path: Path::new("/a.mp4"),
                 time: f64::INFINITY,
                 sequential: None,
@@ -1334,6 +1366,145 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn decoded_formats_are_offered_validated_and_legacy_rgba_is_accepted() {
+        use crate::{DecodedColor, DecodedMatrix, DecodedPixelFormat as F, DecodedRange};
+        let color = DecodedColor {
+            chroma_location: Default::default(),
+            matrix: DecodedMatrix::Bt709,
+            range: DecodedRange::Limited,
+        };
+        let answer = |format, bytes| Message {
+            header: json!({"type":"videoFrame", "width":2, "height":2,
+            "pixelFormat":format, "color":color}),
+            payload: vec![128; bytes],
+        };
+        for format in [F::Nv12, F::Yuv420p] {
+            assert!(decode_video_frame_offered(answer(format, 6), None, &[]).is_err());
+            assert_eq!(
+                decode_video_frame_offered(answer(format, 6), None, &[format])
+                    .unwrap()
+                    .pixel_format,
+                format
+            );
+            assert!(decode_video_frame_offered(answer(format, 5), None, &[format]).is_err());
+            let mut bad_color = answer(format, 6);
+            bad_color.header["color"] = Value::Null;
+            assert!(decode_video_frame_offered(bad_color, None, &[format]).is_err());
+        }
+        assert!(
+            decode_video_frame_offered(
+                Message {
+                    header: json!({"width":2,"height":2}),
+                    payload: vec![0; 16]
+                },
+                None,
+                &[F::Nv12]
+            )
+            .is_ok()
+        );
+        let request = VideoRequest {
+            path: Path::new("/clip"),
+            time: 0.,
+            sequential: None,
+            accepted_pixel_formats: &[F::Nv12],
+        };
+        assert_eq!(
+            decode_video_request("fake", &request).unwrap().header["acceptedPixelFormats"],
+            json!(["nv12", "rgba8"])
+        );
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn yuv_frames_round_trip_through_pipe_and_shared_memory() {
+        use crate::{DecodedColor, DecodedMatrix, DecodedPixelFormat as F, DecodedRange};
+        struct Yuv(Fake);
+        impl MediaProvider for Yuv {
+            fn describe(&mut self) -> Result<Vec<ComponentDescription>, MediaError> {
+                Ok(vec![])
+            }
+            fn decoder(&mut self) -> Option<&mut dyn Decoder> {
+                Some(self)
+            }
+        }
+        impl Decoder for Yuv {
+            fn probe(&mut self, decoder: &str, path: &Path) -> Result<MediaProbe, MediaError> {
+                self.0.probe(decoder, path)
+            }
+            fn decode_video(
+                &mut self,
+                _: &str,
+                request: &VideoRequest<'_>,
+            ) -> Result<VideoFrame, MediaError> {
+                if request.accepts(F::Yuv420p) {
+                    VideoFrame::new(
+                        2,
+                        2,
+                        F::Yuv420p,
+                        Some(DecodedColor {
+                            chroma_location: Default::default(),
+                            matrix: DecodedMatrix::Bt709,
+                            range: DecodedRange::Limited,
+                        }),
+                        vec![128; 6],
+                    )
+                } else {
+                    VideoFrame::rgba(2, 2, vec![0; 16])
+                }
+            }
+            fn decode_audio(
+                &mut self,
+                d: &str,
+                p: &Path,
+                r: u32,
+                c: u16,
+            ) -> Result<AudioBuffer, MediaError> {
+                self.0.decode_audio(d, p, r, c)
+            }
+        }
+        for shared in [false, true] {
+            let memory = SharedMemory::create(celesta_plugin::shared::SLOT_HEADER + 64).unwrap();
+            let hello = if shared {
+                offering_hello(&memory)
+            } else {
+                Message::new(json!({"type":"hello","protocol":2}))
+            };
+            let mut request = video_request();
+            request.header["acceptedPixelFormats"] = json!(["yuv420p", "rgba8"]);
+            let answers = serve_all(&mut Yuv(Fake::default()), &[hello, request]);
+            assert_eq!(!answers[1].header["slot"].is_null(), shared);
+            let mut segment = SharedSegment {
+                memory,
+                generation: 0,
+                ring: None,
+            };
+            let frame = decode_video_frame_offered(
+                answers[1].clone(),
+                shared.then_some(&mut segment),
+                &[F::Yuv420p],
+            )
+            .unwrap();
+            assert_eq!(*frame.pixels, [128; 6]);
+            if shared {
+                let mut malformed = answers[1].clone();
+                malformed.header["slot"]["bytes"] = json!(5);
+                assert!(
+                    decode_video_frame_offered(malformed, Some(&mut segment), &[F::Yuv420p])
+                        .is_err()
+                );
+            }
+            let old = Message::new(
+                json!({"type":"decodeVideo","decoder":"fake","path":"/clip","time":0.0}),
+            );
+            let answers = serve_all(
+                &mut Yuv(Fake::default()),
+                &[Message::new(json!({"type":"hello","protocol":2})), old],
+            );
+            assert_eq!(answers[1].header["pixelFormat"], "rgba8");
+        }
+    }
+
     /// A `hello` request offering `memory` (by a second handle, which the
     /// codec in this process maps as a plugin process would) for frames.
     fn offering_hello(memory: &SharedMemory) -> Message {
@@ -1347,6 +1518,7 @@ mod tests {
         decode_video_request(
             "ffmpeg",
             &VideoRequest {
+                accepted_pixel_formats: &[],
                 path: Path::new("/a.mp4"),
                 time: 0.5,
                 sequential: None,
@@ -1484,6 +1656,7 @@ mod tests {
     fn requests_name_their_decoder() {
         let path = Path::new("/a.mp4");
         let video = VideoRequest {
+            accepted_pixel_formats: &[],
             path,
             time: 0.0,
             sequential: None,
@@ -1526,6 +1699,8 @@ mod tests {
         ) -> Result<VideoFrame, MediaError> {
             self.decoders.push(decoder.to_owned());
             Ok(VideoFrame {
+                pixel_format: crate::DecodedPixelFormat::Rgba8,
+                color: None,
                 width: 2,
                 height: 1,
                 pixels: Arc::new(vec![0; 8]),
@@ -1552,6 +1727,7 @@ mod tests {
     fn serve_passes_the_decoder_on() {
         let path = Path::new("/a.mp4");
         let video = VideoRequest {
+            accepted_pixel_formats: &[],
             path,
             time: 0.0,
             sequential: None,

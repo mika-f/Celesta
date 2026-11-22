@@ -184,10 +184,36 @@ fn open_sessions(backend: &FfmpegBackend) -> Vec<String> {
     let mut ids: Vec<String> = backend
         .video_sessions
         .keys()
-        .map(|(id, _)| id.clone())
+        .map(|(id, _, _)| id.clone())
         .collect();
     ids.sort();
     ids
+}
+
+#[test]
+fn yuv_offers_preserve_rotation_hdr_and_alpha_fallbacks() {
+    use celesta_media::DecodedPixelFormat as F;
+    let directory = fixture_dir("native-fallbacks");
+    let rotated = directory.join("rotated.mov");
+    generate_clip(&rotated, "testsrc2=size=64x32:rate=10:duration=1", (10, 1));
+    tag_portrait_rotation(&rotated);
+    let hdr = directory.join("hdr.mov");
+    generate_hdr_clip(&hdr, 573, "smpte2084");
+    let alpha = directory.join("alpha.mov");
+    generate_clip(
+        &alpha,
+        "color=red@0.5:s=64x32:r=10:d=1,format=yuva420p",
+        (10, 1),
+    );
+    for path in [&rotated, &hdr, &alpha] {
+        let reference = FfmpegBackend::new().decode_frame(path, 0.5).unwrap();
+        let mut offered = FfmpegBackend::new();
+        offered.set_accepted_pixel_formats(&[F::Yuv420p, F::Nv12]);
+        let frame = offered.decode_frame(path, 0.5).unwrap();
+        assert_eq!(frame.pixel_format, F::Rgba8);
+        assert_eq!(frame, reference);
+    }
+    fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]

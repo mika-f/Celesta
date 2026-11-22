@@ -609,7 +609,9 @@ impl CpuRenderer {
         } else {
             timing.source_time_seconds
         };
-        let frame = decoder.decode_frame_for(request_id, &path, source_time_seconds)?;
+        let frame = decoder
+            .decode_frame_for(request_id, &path, source_time_seconds)?
+            .to_rgba()?;
         Ok(DecodedImage {
             width: frame.width,
             height: frame.height,

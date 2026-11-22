@@ -246,6 +246,13 @@ pub struct VideoRequest<'a> {
     pub path: &'a Path,
     pub time: f64,
     pub sequential: Option<Sequential<'a>>,
+    pub accepted_pixel_formats: &'a [crate::DecodedPixelFormat],
+}
+
+impl VideoRequest<'_> {
+    pub fn accepts(&self, format: crate::DecodedPixelFormat) -> bool {
+        format == crate::DecodedPixelFormat::Rgba8 || self.accepted_pixel_formats.contains(&format)
+    }
 }
 
 /// Whether two times, in seconds, are the same: the tolerance codecs use to

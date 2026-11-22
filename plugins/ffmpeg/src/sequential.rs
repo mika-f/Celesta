@@ -7,6 +7,7 @@ use celesta_media::{MediaError, VideoFrame, VideoStream, frame_byte_len, timesta
 use ez_ffmpeg::Input;
 use ez_ffmpeg::frame_export::{FrameExtractor, FrameIter, PixelLayout};
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 /// One decode run from a seek point: FFmpeg's packed RGBA export, or, for
@@ -15,10 +16,53 @@ use std::sync::Arc;
 pub(crate) enum FrameRun {
     Packed(FrameIter),
     Converted(ConvertedFrames),
+    Native(Box<NativeRun>),
+}
+
+pub(crate) struct NativeRun {
+    frames: crate::native::NativeFrames,
+    path: PathBuf,
+    video: VideoStream,
+    start: f64,
+    max_frames: Option<u64>,
+    delivered: usize,
 }
 
 impl FrameRun {
     pub(crate) fn spawn(
+        path: &Path,
+        video: &VideoStream,
+        source_time_seconds: f64,
+        max_frames: Option<u64>,
+        accepted: &[celesta_media::DecodedPixelFormat],
+    ) -> Result<Self, MediaError> {
+        if video.width.is_multiple_of(2)
+            && video.height.is_multiple_of(2)
+            && conversion(&video.color).is_none()
+            && accepted
+                .iter()
+                .any(|format| *format != celesta_media::DecodedPixelFormat::Rgba8)
+            && crate::native::supports_source(path, video.index)
+        {
+            return Ok(Self::Native(Box::new(NativeRun {
+                frames: crate::native::NativeFrames::spawn(
+                    path,
+                    video.index,
+                    source_time_seconds,
+                    max_frames,
+                    accepted,
+                )?,
+                path: path.to_owned(),
+                video: video.clone(),
+                start: source_time_seconds,
+                max_frames,
+                delivered: 0,
+            })));
+        }
+        Self::legacy(path, video, source_time_seconds, max_frames)
+    }
+
+    fn legacy(
         path: &Path,
         video: &VideoStream,
         source_time_seconds: f64,
@@ -53,6 +97,35 @@ impl FrameRun {
         width: u32,
         height: u32,
     ) -> Option<Result<(Option<i64>, VideoFrame), MediaError>> {
+        if let Self::Native(native) = self {
+            let frame = match native.frames.next()? {
+                Ok(frame) => frame,
+                Err(error) => return Some(Err(error)),
+            };
+            if let Some(frame_value) = frame.frame {
+                native.delivered += 1;
+                if (frame_value.width, frame_value.height) != (width, height) {
+                    return Some(Err(MediaError::Codec(
+                        "native decode dimensions changed".to_owned(),
+                    )));
+                }
+                return Some(Ok((frame.pts_us, frame_value)));
+            }
+            let replacement =
+                Self::legacy(&native.path, &native.video, native.start, native.max_frames);
+            let delivered = native.delivered;
+            *self = match replacement {
+                Ok(run) => run,
+                Err(error) => return Some(Err(error)),
+            };
+            for _ in 0..delivered {
+                match self.next_frame(width, height)? {
+                    Ok(_) => {}
+                    Err(error) => return Some(Err(error)),
+                }
+            }
+            return self.next_frame(width, height);
+        }
         let (pts_us, frame_width, frame_height, pixels) = match self {
             Self::Packed(frames) => match frames.next()? {
                 Ok(frame) => (
@@ -67,6 +140,7 @@ impl FrameRun {
                 Ok(frame) => (frame.pts_us, frame.width, frame.height, frame.pixels),
                 Err(error) => return Some(Err(ffmpeg_error(error))),
             },
+            Self::Native(_) => unreachable!(),
         };
         Some(
             checked_frame(frame_width, frame_height, pixels, width, height)
@@ -81,8 +155,9 @@ impl SequentialVideoSession {
         video: &VideoStream,
         source_time_seconds: f64,
         step_seconds: f64,
+        accepted: &[celesta_media::DecodedPixelFormat],
     ) -> Result<Self, MediaError> {
-        let frames = FrameRun::spawn(path, video, source_time_seconds, None)?;
+        let frames = FrameRun::spawn(path, video, source_time_seconds, None, accepted)?;
         Ok(Self {
             frames,
             width: video.width,
@@ -179,6 +254,8 @@ fn checked_frame(
         });
     }
     Ok(VideoFrame {
+        pixel_format: celesta_media::DecodedPixelFormat::Rgba8,
+        color: None,
         width,
         height,
         pixels: Arc::new(pixels),
