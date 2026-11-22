@@ -36,7 +36,8 @@ never written through) and is renamed over the thread's file.
 `CommentStore::update` holds `.<id>.lock` (made with `create_new`) from the
 read to the write, so the editor and an agent replying at once both keep
 their reply; a writer waits up to 5 s, and a lock older than 30 s is taken
-over. A file that does not
+over (one that cannot be removed is an `io` error, not a retry). A file
+that does not
 parse, or whose `id` is not its file name, is a `LoadProblem`; the others
 still load.
 
@@ -59,7 +60,8 @@ user.name`, `USER`/`USERNAME`, `Anonymous`. MCP replies default to `agent`.
   composer on the playhead frame, or the In/Out span when both are set, in
   the chapter showing at its first frame (`anchor_at`), on the selected
   layer. A playhead at the end (one past the last frame) comments on the
-  last frame. The draft keeps the composition it was taken on; switching
+  last frame; a span wholly past the end (the composition got shorter
+  since the marks were set) falls back to the playhead. The draft keeps the composition it was taken on; switching
   roots before saving refuses the save (`ReviewError::Refused`) and drops
   the draft. Saving clears the reply field, since the new comment is
   selected. **Pin** arms the canvas: the next press there sets the point

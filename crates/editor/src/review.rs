@@ -336,13 +336,12 @@ pub(crate) struct At {
 /// frames from the start of the chapter showing at its first frame, or from
 /// the composition's start where no chapter shows. A playhead at the end
 /// (Go to End puts it one past the last frame) comments on the last frame,
-/// and a span ends at the end at the latest.
+/// and a span ends at the end at the latest. A span wholly past the end
+/// (the composition got shorter) is ignored, like marks out of order.
 pub(crate) fn anchor_at(at: At, layer: Option<String>, chapters: &[ReactChapter]) -> Anchor {
     let last = at.frames.saturating_sub(1);
     let (from, to) = match at.marks {
-        Some((start, end)) if start.min(last) < end.min(at.frames) => {
-            (start.min(last), Some(end.min(at.frames)))
-        }
+        Some((start, end)) if start < end.min(at.frames) => (start, Some(end.min(at.frames))),
         _ => (at.frame.min(last), None),
     };
     let chapter = chapter_at(chapters, from);
@@ -455,6 +454,16 @@ mod tests {
         assert_eq!((anchor.from, anchor.to), (299, None));
         let anchor = anchor_at(at(0, Some((250, 400))), None, &[]);
         assert_eq!((anchor.from, anchor.to), (250, Some(300)));
+        // Marks left past a shortened composition fall back to the playhead.
+        let anchor = anchor_at(
+            At {
+                frames: 200,
+                ..at(40, Some((250, 280)))
+            },
+            None,
+            &[],
+        );
+        assert_eq!((anchor.from, anchor.to), (40, None));
     }
 
     #[test]

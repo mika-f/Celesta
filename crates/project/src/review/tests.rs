@@ -386,6 +386,32 @@ fn a_planted_link_is_not_written_through() {
     assert!(!std::fs::symlink_metadata(&link).expect("meta").is_symlink());
 }
 
+#[cfg(unix)]
+#[test]
+fn a_stale_lock_that_cannot_be_removed_is_an_error() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let (_dir, store) = store();
+    let comment = on_demo(0, None);
+    store.save(&comment).expect("saved");
+    let lock = store.dir().join(format!(".{}.lock", comment.id));
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(120);
+    std::fs::File::create(&lock)
+        .and_then(|file| file.set_modified(old))
+        .expect("an old lock");
+    let read_only = std::fs::Permissions::from_mode(0o555);
+    std::fs::set_permissions(store.dir(), read_only).expect("read-only");
+    // Root may still remove it; then the update simply goes through.
+    let removable = std::fs::File::create(store.dir().join("probe")).is_ok();
+    let started = std::time::Instant::now();
+    let result = store.update(&comment.id, |comment| comment.resolve("claude".to_owned()));
+    std::fs::set_permissions(store.dir(), std::fs::Permissions::from_mode(0o755))
+        .expect("writable");
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    if !removable {
+        assert!(matches!(result, Err(ReviewError::Io { .. })), "{result:?}");
+    }
+}
+
 #[test]
 fn updating_a_missing_comment_is_not_found() {
     let (_dir, store) = store();

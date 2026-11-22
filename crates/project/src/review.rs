@@ -547,8 +547,20 @@ impl ThreadLock {
                         .and_then(|modified| modified.elapsed().ok())
                         .is_some_and(|age| age > LOCK_STALE);
                     if stale {
-                        let _ = std::fs::remove_file(path);
-                        continue;
+                        // Taken over only once it is gone; a lock that
+                        // cannot be removed is an error, not a retry.
+                        match std::fs::remove_file(path) {
+                            Ok(()) => continue,
+                            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                                continue;
+                            }
+                            Err(source) => {
+                                return Err(ReviewError::Io {
+                                    path: path.to_path_buf(),
+                                    source,
+                                });
+                            }
+                        }
                     }
                     if started.elapsed() > LOCK_WAIT {
                         return Err(ReviewError::Io {
