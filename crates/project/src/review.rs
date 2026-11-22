@@ -540,7 +540,7 @@ impl ThreadLock {
                 .open(path)
             {
                 Ok(_) => return Ok(Self(path.to_path_buf())),
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                Err(error) if is_held(&error) => {
                     let stale = std::fs::symlink_metadata(path)
                         .and_then(|meta| meta.modified())
                         .ok()
@@ -563,12 +563,17 @@ impl ThreadLock {
                         }
                     }
                     if started.elapsed() > LOCK_WAIT {
-                        return Err(ReviewError::Io {
-                            path: path.to_path_buf(),
-                            source: std::io::Error::new(
+                        let source = if error.kind() == std::io::ErrorKind::AlreadyExists {
+                            std::io::Error::new(
                                 std::io::ErrorKind::WouldBlock,
                                 "another program is writing this comment; try again",
-                            ),
+                            )
+                        } else {
+                            error
+                        };
+                        return Err(ReviewError::Io {
+                            path: path.to_path_buf(),
+                            source,
                         });
                     }
                     std::thread::sleep(Duration::from_millis(20));
@@ -591,6 +596,15 @@ impl ThreadLock {
             }
         }
     }
+}
+
+/// Whether creating the lock failed because another writer holds it. On
+/// Windows a lock that its writer is removing refuses new handles with
+/// "Access is denied" until it is gone, so that waits too (for at most
+/// [`LOCK_WAIT`], after which the error is returned as it is).
+fn is_held(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::AlreadyExists
+        || (cfg!(windows) && error.kind() == std::io::ErrorKind::PermissionDenied)
 }
 
 impl Drop for ThreadLock {

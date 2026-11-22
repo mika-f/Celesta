@@ -36,7 +36,9 @@ never written through) and is renamed over the thread's file.
 `CommentStore::update` holds `.<id>.lock` (made with `create_new`) from the
 read to the write, so the editor and an agent replying at once both keep
 their reply; a writer waits up to 5 s, and a lock older than 30 s is taken
-over (one that cannot be removed is an `io` error, not a retry). A file
+over (one that cannot be removed is an `io` error, not a retry); on
+Windows, "Access is denied" while another writer removes its lock is
+waited out like a held lock). A file
 that does not
 parse, or whose `id` is not its file name, is a `LoadProblem`; the others
 still load.
