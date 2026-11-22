@@ -60,7 +60,7 @@ fn apply_palette(colors: &mut ThemeColor) {
     let popover: Hsla = rgb(0x2a2a2a).into();
     let border: Hsla = rgb(0x2e2e2e).into();
     let text: Hsla = rgb(0xe6e6e6).into();
-    let muted_text: Hsla = rgb(0x9a9a9a).into();
+    let muted_text: Hsla = rgb(0xababab).into();
     let primary: Hsla = rgb(0x4a7fd6).into();
 
     colors.background = ground;
@@ -195,7 +195,19 @@ pub fn export_range_border() -> Hsla {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui_kit::TestAppContext;
+    use gpui_kit::{Rgba, TestAppContext};
+
+    fn relative_luminance(color: Hsla) -> f32 {
+        let Rgba { r, g, b, .. } = color.into();
+        let linear = |c: f32| {
+            if c <= 0.04045 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
+    }
 
     #[test]
     fn clip_labels_are_darker_than_their_clips() {
@@ -239,6 +251,25 @@ mod tests {
             apply(cx);
             assert_eq!(Theme::global(cx).font_size, px(metrics::BASE_FONT_SIZE));
             assert_eq!(Theme::global(cx).radius, px(0.));
+        });
+    }
+
+    #[gpui_kit::test]
+    fn supporting_text_has_contrast_on_editor_surfaces(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            let theme = Theme::global(cx);
+            for (text, surface) in [
+                (theme.muted_foreground, theme.sidebar),
+                (theme.muted_foreground, theme.popover),
+                (theme.muted_foreground, theme.status_bar),
+                (theme.tab_foreground, theme.tab_bar),
+            ] {
+                let contrast =
+                    (relative_luminance(text) + 0.05) / (relative_luminance(surface) + 0.05);
+                assert!(contrast >= 6.0, "supporting text contrast: {contrast:.2}:1");
+            }
         });
     }
 

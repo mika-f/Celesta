@@ -658,8 +658,9 @@ mod tests {
         cx.run_until_parked();
         let trailing = cx.debug_bounds("r-trailing").expect("the trailing lane");
         let value = cx.debug_bounds("r-value").expect("the value lane");
-        // 1.25rem at the 13px base, snapped to whole pixels by layout.
-        assert!((f32::from(trailing.size.width) - 16.25).abs() < 0.5);
+        let expected = metrics::inspector_trailing_width().0 * metrics::BASE_FONT_SIZE;
+        // Layout rounds each edge to a whole pixel.
+        assert!((f32::from(trailing.size.width) - expected).abs() < 1.0);
         assert!(value.origin.x + value.size.width <= trailing.origin.x);
         assert!(trailing.origin.x + trailing.size.width <= px(220.));
     }

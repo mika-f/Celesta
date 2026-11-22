@@ -15,7 +15,7 @@ use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme as _, Icon, Selectable as _, Sizable as _};
 use gpui_kit::{
     AnyElement, App, BorderStyle, Bounds, ClickEvent, Context, CursorStyle, ElementInputHandler,
-    Hitbox, HitboxBehavior, Hsla, IntoElement, MouseButton, MouseDownEvent, ObjectFit,
+    FontWeight, Hitbox, HitboxBehavior, Hsla, IntoElement, MouseButton, MouseDownEvent, ObjectFit,
     ParentElement as _, PathBuilder, Pixels, StyledImage as _, Window, canvas, div, fill, img,
     outline, point, prelude::*, px, relative, rems, size,
 };
@@ -751,11 +751,11 @@ impl EditorView {
             .zip(self.export_out_frame)
             .filter(|(start, end)| start < end)
             .map(|(start, end)| format_timecode(end - start, frame_rate));
-        // Both side columns grow equally, which keeps the controls centered,
-        // but neither shrinks below its content: the timecode never clips.
+        // The side columns grow equally around the playback controls when
+        // space allows. The timecode and range keep their intrinsic width.
         let timecode = div()
             .flex()
-            .flex_1()
+            .flex_none()
             .items_baseline()
             .gap_2()
             .whitespace_nowrap()
@@ -763,6 +763,7 @@ impl EditorView {
             .child(
                 div()
                     .text_lg()
+                    .font_weight(FontWeight::MEDIUM)
                     .text_color(cx.theme().foreground)
                     .child(format_timecode(self.clock.frame(), frame_rate)),
             )
@@ -772,13 +773,15 @@ impl EditorView {
                     format_timecode(self.clock.end_frame(), frame_rate)
                 )))
             });
-        let transport = div()
+        let leading = div()
             .flex()
-            .flex_none()
+            .flex_1()
             .items_center()
             .gap_1()
-            .when(show_marks, |transport| {
-                transport
+            .child(timecode)
+            .when(show_marks, |leading| {
+                leading
+                    .child(transport_separator(cx))
                     .child(
                         Button::new("mark-in")
                             .small()
@@ -799,8 +802,12 @@ impl EditorView {
                             .tooltip_with_action("Mark Out", &SetExportOut, KEY_CONTEXT)
                             .on_click(cx.listener(|this, _, _, cx| this.set_export_out(cx))),
                     )
-                    .child(transport_separator(cx))
-            })
+            });
+        let transport = div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap_1()
             .child(
                 Button::new("go-to-start")
                     .small()
@@ -820,7 +827,7 @@ impl EditorView {
                     .on_click(cx.listener(|this, _, _, cx| this.step_frames(-1, cx))),
             )
             .child({
-                let button = Button::new("toggle-playback").small();
+                let button = Button::new("toggle-playback").outline();
                 // Waiting for the preview audio: still clickable, to cancel.
                 let button = if self.play_when_audio_ready {
                     button
@@ -859,17 +866,6 @@ impl EditorView {
                     .on_click(
                         cx.listener(|this, _, _, cx| this.go_to_frame(this.clock.end_frame(), cx)),
                     ),
-            )
-            .child(transport_separator(cx))
-            .child(
-                Button::new("toggle-loop")
-                    .small()
-                    .ghost()
-                    .icon(IconName::Repeat)
-                    .selected(self.loop_playback)
-                    .accessibility_label("Loop playback")
-                    .tooltip_with_action("Loop playback", &ToggleLoop, KEY_CONTEXT)
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_loop(cx))),
             );
         let trailing = div()
             .flex()
@@ -906,7 +902,18 @@ impl EditorView {
                             .tooltip_with_action("Clear In and Out", &ClearExportRange, KEY_CONTEXT)
                             .on_click(cx.listener(|this, _, _, cx| this.clear_export_range(cx))),
                     )
+                    .child(transport_separator(cx))
             })
+            .child(
+                Button::new("toggle-loop")
+                    .small()
+                    .ghost()
+                    .icon(IconName::Repeat)
+                    .selected(self.loop_playback)
+                    .accessibility_label("Loop playback")
+                    .tooltip_with_action("Loop playback", &ToggleLoop, KEY_CONTEXT)
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_loop(cx))),
+            )
             .child(
                 Button::new("toggle-safe-areas")
                     .small()
@@ -951,14 +958,19 @@ impl EditorView {
             .w_full()
             .items_center()
             .gap_3()
-            .px_3()
-            .bg(cx.theme().secondary)
+            .px(metrics::panel_padding())
+            .bg(cx.theme().title_bar)
             .border_t_1()
             .border_color(cx.theme().border)
             .child({
                 let transport_width = self.transport_width.clone();
                 canvas(
-                    move |bounds, _, _| transport_width.set(Some(bounds.size.width)),
+                    move |bounds, window, _| {
+                        transport_width.set(Some(bounds.size.width));
+                        if transport_layout(bounds.size.width, rem) != (full, show_marks) {
+                            window.request_animation_frame();
+                        }
+                    },
                     |_, _, _, _| {},
                 )
                 .absolute()
@@ -966,7 +978,7 @@ impl EditorView {
                 .left_0()
                 .size_full()
             })
-            .child(timecode)
+            .child(leading)
             .child(transport)
             .child(trailing)
     }
@@ -1993,11 +2005,11 @@ mod tests {
         // The canvas tools sit in a row above the viewer, not in the bar:
         // its breakpoints are the bar's own.
         // In rems: they keep their proportion to the content.
-        let rem = px(13.0);
-        assert_eq!(transport_layout(px(666.25), rem), (true, true));
-        assert_eq!(transport_layout(px(666.0), rem), (false, true));
-        assert_eq!(transport_layout(px(487.5), rem), (false, true));
-        assert_eq!(transport_layout(px(487.0), rem), (false, false));
+        let rem = px(metrics::BASE_FONT_SIZE);
+        assert_eq!(transport_layout(px(717.5), rem), (true, true));
+        assert_eq!(transport_layout(px(717.0), rem), (false, true));
+        assert_eq!(transport_layout(px(525.0), rem), (false, true));
+        assert_eq!(transport_layout(px(524.0), rem), (false, false));
         let rem = px(16.0);
         assert_eq!(transport_layout(px(820.0), rem), (true, true));
         assert_eq!(transport_layout(px(819.0), rem), (false, true));
