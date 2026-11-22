@@ -1215,6 +1215,7 @@ dependencies = [
  "celesta-exporter",
  "celesta-media",
  "celesta-plugin-host",
+ "celesta-project",
  "celesta-react-bridge",
  "celesta-renderer",
  "image",
@@ -1321,6 +1322,7 @@ dependencies = [
  "serde",
  "serde_json",
  "strum",
+ "tempfile",
  "thiserror 2.0.21",
  "ts-rs",
 ]

@@ -5,7 +5,7 @@ use celesta_codec_test::TestCodecPlugin;
 use serde_json::json;
 
 #[tokio::test]
-async fn lists_the_nine_tools() {
+async fn lists_the_twelve_tools() {
     let (client, _) = client().await;
     let names: BTreeSet<String> = client
         .list_all_tools()
@@ -24,6 +24,9 @@ async fn lists_the_nine_tools() {
         "read_docs",
         "list_components",
         "describe_component",
+        "list_comments",
+        "reply_to_comment",
+        "resolve_comment",
     ]
     .into_iter()
     .map(str::to_owned)

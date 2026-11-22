@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "id": "c-1a2b3c4d01",
+  "entry": "film.tsx",
+  "anchor": {
+    "chapter": "intro",
+    "from": 0,
+    "to": 20,
+    "point": {
+      "x": 0.2,
+      "y": 0.2
+    }
+  },
+  "lastSeen": {
+    "frame": 0,
+    "chapterName": "Intro"
+  },
+  "author": "Reviewer",
+  "createdAt": "2026-11-22T10:00:00Z",
+  "body": "The title takes too long to fade in. Try 10 frames."
+}

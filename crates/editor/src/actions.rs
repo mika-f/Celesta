@@ -37,6 +37,7 @@ actions!(
         ToggleLoop,
         ToggleSafeAreas,
         ShowProblems,
+        AddComment,
         ToggleInteractive,
         ZoomTimelineIn,
         ZoomTimelineOut,

@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "id": "c-1a2b3c4d04",
+  "entry": "film.tsx",
+  "anchor": {
+    "chapter": "outro",
+    "from": 15
+  },
+  "lastSeen": {
+    "frame": 225,
+    "chapterName": "Outro"
+  },
+  "author": "Reviewer",
+  "createdAt": "2026-11-22T10:04:00Z",
+  "body": "\"The end\" is a little large.",
+  "resolved": {
+    "by": "agent",
+    "at": "2026-11-22T10:30:00Z"
+  },
+  "replies": [
+    {
+      "id": "r-1a2b3c4d05",
+      "author": "agent",
+      "createdAt": "2026-11-22T10:30:00Z",
+      "body": "Down from 72 to 64 px."
+    }
+  ]
+}

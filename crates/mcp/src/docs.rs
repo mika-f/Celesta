@@ -85,6 +85,10 @@ pub static TOPICS: &[Topic] = &[
     ),
     reference!("performance", "What is slow to render and how to find it"),
     reference!(
+        "review",
+        "Review comments on a video: list_comments, what anchors mean, resolving them"
+    ),
+    reference!(
         "plugins",
         "Content plugins: @celesta-plugin imports, where plugins are found, registry plugins (celesta.lock, the celesta plugin command), their errors"
     ),

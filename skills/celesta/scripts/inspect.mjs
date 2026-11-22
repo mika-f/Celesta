@@ -33,7 +33,7 @@
 // be measured, which needs the exporter or a PNG export.
 
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
 import * as path from 'node:path';
@@ -447,8 +447,12 @@ async function inspectEntry(options) {
   if (config.width % 2 || config.height % 2) warnings.push(`width/height ${config.width}×${config.height} must be even for video export`);
   const chapters = config.chapters ?? [];
   const rough = chapters.filter((chapter) => chapter.status === 'rough');
-  const place = (chapter) => `${chapter.name} [${chapter.from}, ${chapter.from + chapter.durationInFrames})`;
-  const span = (chapter) => `${place(chapter)}${chapter.status === 'rough' ? ' rough' : ''}`;
+  const range = (chapter) => `[${chapter.from}, ${chapter.from + chapter.durationInFrames})`;
+  // Worded as celesta-export's rough_scenes warning words them.
+  const place = (chapter) => `${chapter.name} ${range(chapter)}`;
+  // The id too when the label differs: review comments are anchored to it.
+  const label = (chapter) => (chapter.name && chapter.name !== chapter.id ? `${chapter.name} (${chapter.id})` : chapter.id);
+  const span = (chapter) => `${label(chapter)} ${range(chapter)}${chapter.status === 'rough' ? ' rough' : ''}`;
   if (rough.length) {
     const lead = rough.length === 1
       ? '1 scene is still rough and draws a placeholder card'
@@ -464,7 +468,8 @@ async function inspectEntry(options) {
       results.push({ frame, ...response });
       if (response.fatal) break;
     }
-    console.log(JSON.stringify({ ready, frames: results, warnings: [...new Set([...warnings, ...nondeterminismWarnings()])] }, null, 2));
+    const comments = reviewComments(entry, ready, config);
+    console.log(JSON.stringify({ ready, frames: results, warnings: [...new Set([...warnings, ...nondeterminismWarnings()])], ...(comments ? { comments: comments.counts } : {}) }, null, 2));
     problems += results.filter((result) => result.error && result.status !== 'unsupported').length;
     unsupported += results.filter((result) => result.status === 'unsupported').length;
   } else {
@@ -479,6 +484,8 @@ async function inspectEntry(options) {
     } else if (chapters.length) {
       console.log(`chapters: ${chapters.map(span).join(', ')}`);
     }
+    const comments = reviewComments(entry, ready, config);
+    if (comments) console.log(comments.line);
 
     const missing = new Set();
     const checkFile = (src) => {
@@ -556,6 +563,63 @@ function nondeterminismWarnings() {
       "and freezes the clock at the frame's time, so these values follow the frame and not the run. " +
       'Use random(seed) from @celesta.studio/math, and useCurrentFrame() or useCurrentTime()',
   ];
+}
+
+// ------------------------------------------------------- review comments
+
+/**
+ * The review comments on the inspected composition, from the project
+ * root's celesta-comments/ folder (the nearest folder with
+ * celesta.config.json above the entry, else the entry's): a summary line
+ * and the counts, or null without any. A comment is orphaned when its
+ * chapter id is not declared any more. Without chapters in the config
+ * (none declared, or an exporter older than the comments) orphans are not
+ * counted (`orphaned: null`).
+ */
+function reviewComments(entry, ready, config) {
+  const entryDir = path.dirname(path.resolve(entry));
+  let root = entryDir;
+  for (let dir = entryDir; ; dir = path.dirname(dir)) {
+    if (existsSync(path.join(dir, 'celesta.config.json'))) {
+      root = dir;
+      break;
+    }
+    if (path.dirname(dir) === dir) break;
+  }
+  const folder = path.join(root, 'celesta-comments');
+  let names;
+  try {
+    names = readdirSync(folder).filter((name) => name.endsWith('.json'));
+  } catch {
+    return null;
+  }
+  const key = path.relative(root, path.resolve(entry)).split(path.sep).join('/');
+  const selected = ready.compositionId ?? 'default';
+  const first = (ready.compositions ?? [])[0]?.id ?? selected;
+  const chapters = Array.isArray(config.chapters) ? new Set(config.chapters.map((chapter) => chapter.id)) : null;
+  const counts = { open: 0, resolved: 0, orphaned: 0 };
+  for (const name of names) {
+    let comment;
+    try {
+      comment = JSON.parse(readFileSync(path.join(folder, name), 'utf8'));
+    } catch {
+      continue;
+    }
+    if (comment?.entry !== key) continue;
+    if (comment.composition ? comment.composition !== selected : selected !== first) continue;
+    if (comment.resolved) {
+      counts.resolved += 1;
+      continue;
+    }
+    counts.open += 1;
+    const chapter = comment.anchor?.chapter;
+    if (chapters && chapter && !chapters.has(chapter)) counts.orphaned += 1;
+  }
+  if (counts.open + counts.resolved === 0) return null;
+  if (!chapters) counts.orphaned = null;
+  let line = `comments: ${counts.open} open${counts.orphaned ? ` (${counts.orphaned} orphaned)` : ''}, ${counts.resolved} resolved`;
+  if (counts.open) line += `; read them with list_comments or in ${folder}`;
+  return { line, counts };
 }
 
 // ------------------------------------------------------------ loop check

@@ -1,5 +1,6 @@
 //! One test binary for every integration test, so each links once.
 
+mod comments;
 mod common;
 mod export;
 mod inspect;

@@ -29,6 +29,7 @@ In the narrowest layout, **Go to Start** and **Go to End** remain in the **Playb
 | Zoom in / out / fit the timeline | `=` / `-` / `Shift Z` | `=` / `-` / `Shift Z` |
 | Clear the export range | `Shift X` | `Shift X` |
 | Mark export start / end | `I` / `O` | `I` / `O` |
+| Add a review comment | `C` | `C` |
 
 While a field has the keyboard focus, these keys type or move the caret instead: the arrow keys, `Home`, and `End` never move the playhead, even at the start or end of the text, and neither do the matching items of the **Playback** menu. Click outside the field to use them again.
 
@@ -596,6 +597,18 @@ The line under the parent's name says why every item is disabled, and an item's 
 | Can’t draw into a group turned in 3D | The group or one around it has `rotationX`, `rotationY`, or a `perspective` |
 | Can’t draw into a group scaled to zero | The group or one around it is scaled to 0, so nothing drawn has a size inside it |
 | `Rect` here is not Celesta’s | The file declares or imports another `Rect`, which disables that item only. With another `Sequence` (**`Sequence` here is not Celesta’s**), every item is disabled when the element needs a `<Sequence>` |
+
+## Leave review comments
+
+Review a video in Celesta and leave comments where something should change; an agent (or you, later) picks each one up at exactly that place. Comments are in the **Comments** tab beside **Problems**, which counts the open ones.
+
+Move the playhead to the moment, or mark a span with `I` and `O`, select a layer if the comment is about one, and choose **Add comment…** (`C`, or **Mark → Add Comment…**). The comment is on the scene showing there: its time counts from the start of that chapter (`<Composition chapters>`, or the ids of `defineScenes`), so it stays on its scene when earlier scenes get longer or shorter. Choose **Pin**, then click the canvas, to point at a spot. Press `Enter` (or choose **Comment**) to save it; `Shift Enter` starts a new line, and `Escape` cancels.
+
+Each comment is numbered. Its number shows on the timeline ruler, as a square at its first frame with a line to its end for a span, and on the canvas while the playhead is in it, when it has a pin. Click a comment in the list, on the ruler, or on the canvas to go to it: the playhead moves to its first frame and its layer is selected. The selected comment opens its thread, where you can reply and **Resolve** it (or **Reopen** a resolved one). **Show resolved** lists resolved comments too.
+
+Comments are saved in the project folder, one file per comment in `celesta-comments/` beside `celesta.config.json`, so you can commit them with the source. Celesta reloads them when another program changes them, such as an agent resolving one through the MCP server's `list_comments`, `reply_to_comment`, and `resolve_comment` tools. Your name on comments is `git config user.name`, or the `CELESTA_AUTHOR` environment variable.
+
+When a comment's scene is gone (its chapter id was removed or renamed), the comment is kept and marked **Scene "…" no longer exists**. It has no mark on the ruler; clicking it goes to where it last was.
 
 ## Undo
 

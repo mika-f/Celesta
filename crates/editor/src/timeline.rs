@@ -893,7 +893,8 @@ impl EditorView {
                 .left_0()
                 .size_full(),
             )
-            .children(labels);
+            .children(labels)
+            .children(self.comment_marks(view, cx));
         div()
             .flex()
             .flex_none()

@@ -16,6 +16,7 @@ celesta-composition.workspace = true
 celesta-exporter.workspace = true
 celesta-media.workspace = true
 celesta-plugin-host.workspace = true
+celesta-project.workspace = true
 celesta-react-bridge.workspace = true
 celesta-renderer.workspace = true
 image = { version = "0.25.8", default-features = false, features = ["png", "jpeg", "webp"] }

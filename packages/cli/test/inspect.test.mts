@@ -232,7 +232,7 @@ test('rough scenes are listed with their desc and warned about', () => {
     `);
     const result = inspect('--frames', '45');
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /chapters \(1 of 2 rough\):\n {2}Open \[0, 30\): The title fades in\.\n {2}The card \[30, 60\) rough: A card slides in\.\n/);
+    assert.match(result.stdout, /chapters \(1 of 2 rough\):\n {2}Open \(open\) \[0, 30\): The title fades in\.\n {2}The card \(card\) \[30, 60\) rough: A card slides in\.\n/);
     assert.match(result.stdout, /text "The card"/);
     assert.match(
       result.stdout,

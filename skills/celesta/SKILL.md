@@ -133,7 +133,8 @@ produces a video that differs between preview and export.
    shell commands below ([setup.md](references/setup.md#use-the-celesta-mcp-server)).
    Otherwise locate the Celesta executables
    ([setup.md](references/setup.md#find-the-celesta-tools)). Check the entry
-   file, any `.celesta.json`, and the media folder. Note the fps and
+   file, any `.celesta.json`, the media folder, and open review comments
+   in `celesta-comments/` ([review.md](references/review.md)). Note the fps and
    dimensions before computing frame numbers. For a new React project,
    `Celesta --init <folder>` creates `film.tsx`, `package.json`, and the
    TypeScript setup; for a slideshow, ranking, or dialogue video, add
@@ -277,5 +278,6 @@ Load only the one you need; each is self-contained.
 | `inspect.mjs`, PNG frames, contact sheets, checking JSON and audio | [verify.md](references/verify.md) |
 | MP4 export options, encoders and their settings (`--video-option`, `--list-components`, `--describe`), export presets (`--preset`, `export-presets.json`, a project's default preset), loudness for streaming (`--loudness`, LUFS, true peak), `--json` results, progress output, exporting without a GPU | [export.md](references/export.md) |
 | What is slow to render and how to find it | [performance.md](references/performance.md) |
+| Review comments people left in the app (`celesta-comments/`, `list_comments`, `reply_to_comment`, `resolve_comment`, orphaned comments) | [review.md](references/review.md) |
 | `@celesta-plugin/<id>` imports, `CELESTA_PLUGIN_PATH`/`--plugin-dir`, registry plugins (`plugins.dependencies`, `celesta.lock`, `celesta plugin` / `Celesta-cli`, `plugins_unsatisfied`), plugin errors, VRM avatars (`<Vrm>`, `CELESTA_VRM_TEXTURE_CACHE`) | [plugins.md](references/plugins.md) |
 | An error message or warning | [errors.md](references/errors.md) |

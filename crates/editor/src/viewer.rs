@@ -395,6 +395,9 @@ impl EditorView {
             }
             _ => Vec::new(),
         };
+        // A press places the new comment's point while it is being pinned.
+        let pinning = self.pinning_comment();
+        let comment_pins = self.comment_pins(cx);
         let canvas_area = div()
             .relative()
             .flex()
@@ -476,8 +479,13 @@ impl EditorView {
                 .size_full(),
             )
             // A press draws the element chosen in the Add menu.
-            .when(adding, |area| area.cursor(CursorStyle::Crosshair))
-            .when(self.picks_layers(), |area| {
+            .when(adding || pinning, |area| {
+                area.cursor(CursorStyle::Crosshair)
+            })
+            .when(pinning, |area| {
+                area.on_mouse_down(MouseButton::Left, cx.listener(Self::press_pin))
+            })
+            .when(self.picks_layers() && !pinning, |area| {
                 area.on_mouse_down(MouseButton::Left, cx.listener(Self::select_layer_at))
                     // Alt over the pivot cross changes its cursor.
                     .on_modifiers_changed(cx.listener(|this, _, _, cx| {
@@ -493,6 +501,7 @@ impl EditorView {
                     .filter(|_| self.inline_text.is_some()),
                 |area, focus| self.inline_text_keys(area.track_focus(focus), cx),
             )
+            .children(comment_pins)
             .when_some(cross_lock, |area, (cross, reason)| {
                 area.child(
                     div()

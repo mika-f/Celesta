@@ -57,3 +57,12 @@ From the repository root, with a source build:
 node skills/celesta/scripts/inspect.mjs examples/scene-timing/film.tsx --frames 0,45,150,250
 target/release/celesta-exporter --json --react examples/scene-timing/film.tsx examples/scene-timing/scene-timing.mp4
 ```
+
+## Review comments
+
+`celesta-comments/` holds four review comments, for trying the **Comments**
+tab: one on the first 20 frames of Intro and one on Main's circle, both
+pinned to the canvas, a resolved one in Outro (turn on **Show resolved**),
+and one on a `credits` scene that no longer exists, which shows as orphaned.
+Drag Intro's end on the **Chapters** row and the comments on Main and Outro
+move with their scenes. Press `C` to add one at the playhead.

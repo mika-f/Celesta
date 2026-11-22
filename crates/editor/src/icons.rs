@@ -31,6 +31,8 @@ icon_assets!(
         ArrowRightFromLine,
         ArrowRightToLine,
         UnfoldHorizontal,
+        MessageSquarePlus,
+        MapPin,
     ]
 );
 
