@@ -113,29 +113,48 @@ function moment(
     { value: { ...context, time, frameOffset: offset + (frame - base) } },
     scope ? React.createElement(FreezeFrameContext.Provider, { value: scope }, sample) : sample,
   );
-  // `Date.now()` and `Math.random()` inside follow the sample's moment, from
-  // its composition frame: the enclosing clock's (or the root's) plus the
-  // offset, so a `<Trail>` copy of frame 30 reads what frame 30 reads.
+  // `Date.now()` and `Math.random()` inside follow the frame the sample
+  // draws: `frame` taken from this context's frames to the clock's, so a
+  // `<Trail>` copy of frame 30 reads what frame 30 reads, inside a
+  // `<Sequence>` too, and a sample held at the window's first frame reads
+  // that frame's.
   return React.createElement(
     FrameClockContext.Provider,
-    { key, value: { frame: parent.frame + (frame - base), fps: parent.fps } },
+    { key, value: { frame: parent.frame + (frame - exactFrame(context)), fps: parent.fps } },
     drawn,
   );
 }
 
 /**
- * The clock a sample offsets from: the enclosing subtree's, or the frame's,
- * as the root's composition frame. Not rounded to a whole frame: a component
- * the editor previews against a project timeline of another fps is drawn
- * between the entry's frames. Multiplied before dividing, so a whole frame
- * stays whole and reads what the frame reads at the top.
+ * The clock a sample is placed against: the enclosing subtree's, or the
+ * frame's, as the root's composition frame, which matches `exactFrame` of
+ * the context that subtree (or the root) began.
  */
 function useParentClock(): FrameClock {
   const root = React.useContext(RootRuntimeContext);
   const enclosing = enclosingFrameClock();
   if (enclosing) return enclosing;
   if (!root) return { frame: 0, fps: 1 };
-  return { frame: (root.time.value * root.fps) / root.time.timescale, fps: root.fps };
+  return { frame: snapToFrame((root.time.value * root.fps) / root.time.timescale), fps: root.fps };
+}
+
+/**
+ * The frame a context is at, not rounded to a whole one: a component the
+ * editor previews against a project timeline of another fps is drawn between
+ * the entry's frames. Inside a sample, `frameOffset` makes it exact.
+ */
+function exactFrame(context: CompositionRuntimeContextValue): number {
+  if (context.frameOffset !== undefined) return runtimeFrame(context.time, context.fps, context.frameOffset);
+  return snapToFrame((context.time.value * context.fps) / context.time.timescale);
+}
+
+/**
+ * A frame within a thousandth of a whole one, as a whole one: a `Time` rounded
+ * to microseconds (a `<FreezeFrame>`'s) lands that close to its frame.
+ */
+function snapToFrame(frame: number): number {
+  const whole = Math.round(frame);
+  return Math.abs(frame - whole) < 1e-3 ? whole : frame;
 }
 
 /**

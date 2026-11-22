@@ -6,7 +6,7 @@ import { afterEach, beforeEach, test } from 'vitest';
 import * as React from 'react';
 import type { ReactElement } from 'react';
 
-import { Composition, FreezeFrame, Text } from '../src/index.js';
+import { Composition, FreezeFrame, Sequence, Text } from '../src/index.js';
 import { MotionBlur, Trail } from '../src/motion-blur.js';
 import type { Time } from '../src/index.js';
 import {
@@ -229,12 +229,33 @@ test('a <Trail> copy reads what its frame reads at the top', () => {
   assert.equal(live, textAt(top, 31));
 });
 
-test('a <Trail> copy between frames keeps the exact distance from the time drawn', () => {
+test('motion samples between frames read the frames they draw', () => {
+  const clock = () => h(Text, null, String(performance.now()));
   const trail = mount(() => h(Composition, { width: 8, height: 8, fps: 30, durationInFrames: 90 },
-    h(Trail, { copies: 1, lagInFrames: 1 }, h(() => h(Text, null, String(performance.now()))))));
+    h(Trail, { copies: 1, lagInFrames: 1 }, h(clock))));
   // 1.01 s, between frames 30 and 31 (as a component previewed against a
-  // project timeline at another fps is): the copy reads one frame earlier.
+  // project timeline at another fps is): the copy draws frame 29.
   const [copy, live] = texts(trail.renderAt({ value: 101, timescale: 100 }, null).scene.layers).map(Number);
   assert.ok(Math.abs(live - 1010) < 1e-9, String(live));
-  assert.ok(Math.abs(copy - (1010 - 1000 / 30)) < 1e-9, String(copy));
+  assert.ok(Math.abs(copy - 29000 / 30) < 1e-9, String(copy));
+
+  // A sample before the window's start is held at its first frame.
+  const blur = mount(() => h(Composition, { width: 8, height: 8, fps: 10, durationInFrames: 90 },
+    h(MotionBlur, { samples: 2, shutterAngle: 360 }, h(clock))));
+  const samples = texts(blur.renderAt({ value: 1, timescale: 100 }, null).scene.layers).map(Number);
+  assert.deepEqual(samples, [0, 25]);
+});
+
+test('a <Trail> copy inside a <Sequence> or a <FreezeFrame> reads its composition frame', () => {
+  const values = () => [performance.now(), Math.random()];
+  const show = () => h(Text, null, values().join(' '));
+  const top = mount(film(values));
+  const sequenced = mount(() => h(Composition, { width: 8, height: 8, fps: 30, durationInFrames: 90 },
+    h(Sequence, { from: 10 }, h(Trail, { copies: 1, lagInFrames: 1 }, h(show)))));
+  assert.equal(texts(sequenced.renderAt(at(41), null).scene.layers)[0], textAt(top, 40));
+  const frozen = mount(() => h(Composition, { width: 8, height: 8, fps: 30, durationInFrames: 90 },
+    h(FreezeFrame, { frame: 1 }, h(Trail, { copies: 1, lagInFrames: 1 }, h(show)))));
+  const [copy, live] = texts(frozen.renderAt(at(50), null).scene.layers);
+  assert.equal(copy.split(' ')[0], textAt(top, 0).split(' ')[0]);
+  assert.equal(live.split(' ')[0], textAt(top, 1).split(' ')[0]);
 });
