@@ -5,7 +5,7 @@ use celesta_codec_test::TestCodecPlugin;
 use serde_json::json;
 
 #[tokio::test]
-async fn lists_the_twelve_tools() {
+async fn lists_the_thirteen_tools() {
     let (client, _) = client().await;
     let names: BTreeSet<String> = client
         .list_all_tools()
@@ -19,6 +19,7 @@ async fn lists_the_twelve_tools() {
         "render_frames",
         "contact_sheet",
         "export_video",
+        "check_quality",
         "list_templates",
         "init_project",
         "read_docs",
@@ -39,7 +40,7 @@ async fn instructions_name_the_workflow() {
     let (client, _) = client().await;
     let info = client.peer_info().unwrap();
     let instructions = info.instructions.as_deref().unwrap();
-    for tool in ["inspect", "render_frames", "read_docs"] {
+    for tool in ["inspect", "render_frames", "check_quality", "read_docs"] {
         assert!(
             instructions.contains(tool),
             "{tool} missing:\n{instructions}"
@@ -128,6 +129,7 @@ async fn optional_arguments_are_not_required() {
     );
     assert_eq!(required("inspect"), ["entry"]);
     assert_eq!(required("export_video"), ["source"]);
+    assert_eq!(required("check_quality"), ["source"]);
 }
 
 #[tokio::test]
@@ -147,6 +149,10 @@ async fn unknown_arguments_are_usage_errors() {
             json!({ "source": "a.tsx", "output": "a.mp4", "from": "1" }),
         ),
         ("inspect", json!({ "entry": "a.tsx", "frame": 0 })),
+        (
+            "check_quality",
+            json!({ "source": "a.tsx", "output": "a.mp4" }),
+        ),
     ] {
         let result = call(&client, tool, args).await;
         assert!(is_error(&result), "{tool}: {}", text(&result));

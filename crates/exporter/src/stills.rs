@@ -1,10 +1,11 @@
+use crate::check::ReactScenes;
 use crate::control::{CompositionInfo, ExportCancellation, ExportProgress, ExportedFile};
 use crate::encode::{IMAGE_STAGE, encoder_pixels, readback_for};
 use crate::error::{ExportError, FrameFailure};
 use crate::exporter::Exporter;
 use crate::media::with_builtin;
 use crate::options::OutputChoice;
-use crate::project::{absolutize_fonts, absolutize_layers};
+use crate::quality::SceneLint;
 use crate::range::{ExportRange, resolve_window};
 use crate::react::{CompanionProject, ReactRuntimeOptions};
 use crate::render::{
@@ -12,13 +13,12 @@ use crate::render::{
 };
 use crate::still_output::{StillFiles, StillOutput};
 use celesta_composition::{Rational, Scene, Time};
-use celesta_evaluator::{EvaluationError, Evaluator};
+use celesta_evaluator::Evaluator;
 use celesta_gpu_renderer::{GpuFrame, GpuRenderer, ReadbackFormat};
 use celesta_media::{MediaError, MediaRegistry, VideoEncoderOpened};
 use celesta_plugin_host::RESERVED_PLUGIN_ID;
 use celesta_project::Project;
-use celesta_react_bridge::ProjectFrame;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -447,6 +447,13 @@ impl Destination {
     }
 }
 
+/// The frames `[first, last + 1)` a selection spans.
+fn span_of(frames: &[u64]) -> (u64, u64) {
+    let first = frames.iter().copied().min().unwrap_or(0);
+    let last = frames.iter().copied().max().unwrap_or(0);
+    (first, last + 1)
+}
+
 /// Published frame files as the files an export reports.
 fn frame_files(published: Vec<(u64, PathBuf)>) -> Vec<ExportedFile> {
     published
@@ -490,8 +497,10 @@ fn outputs(
 /// failed tile in its place, and once the sheet is written fails with
 /// [`ExportError::FramesFailed`] listing each one; separate files stop at the
 /// first failure, keeping the files written before it.
+#[allow(clippy::too_many_arguments)]
 fn render_stills(
     frames: &[u64],
+    frame_rate: Rational,
     mut destination: Destination,
     renderer: &mut GpuRenderer,
     output: &Path,
@@ -499,8 +508,10 @@ fn render_stills(
     progress: &mut impl FnMut(ExportProgress),
     scene_at: impl FnMut(u64) -> Result<Scene, ExportError>,
 ) -> Result<(), ExportError> {
+    let mut lint = SceneLint::new(frame_rate, true);
     let failures = match render_frames(
         frames,
+        &mut lint,
         &mut destination,
         renderer,
         cancellation,
@@ -513,6 +524,7 @@ fn render_stills(
             return Err(error);
         }
     };
+    crate::quality::report(lint.finish(), progress);
     let mut files = Vec::new();
     let finished = destination.finish(frames, &mut files);
     for file in files {
@@ -534,6 +546,7 @@ fn render_stills(
 /// a sheet shows as failed tiles.
 fn render_frames(
     frames: &[u64],
+    lint: &mut SceneLint,
     destination: &mut Destination,
     renderer: &mut GpuRenderer,
     cancellation: &ExportCancellation,
@@ -549,7 +562,10 @@ fn render_frames(
             frame: index as u64 + 1,
             total: frames.len() as u64,
         });
-        let rendered = scene_at(frame).and_then(|scene| render_frame(renderer, &scene, &opened));
+        let rendered = scene_at(frame).and_then(|scene| {
+            lint.observe(frame, &scene);
+            render_frame(renderer, &scene, &opened)
+        });
         report_render_warnings(renderer, &mut reported_warnings, progress);
         let mut files = Vec::new();
         let accepted = match rendered {
@@ -710,6 +726,10 @@ impl Exporter {
             frame_rate,
             request.contact_sheet,
         )?;
+        crate::quality::report(
+            crate::quality::within(crate::quality::short_items(project), span_of(&frames)),
+            &mut progress,
+        );
         let destination = self.still_destination(
             &frames,
             total,
@@ -736,6 +756,7 @@ impl Exporter {
         };
         render_stills(
             &frames,
+            frame_rate,
             destination,
             &mut renderer,
             output,
@@ -801,19 +822,7 @@ impl Exporter {
         let mut bridge = runtime.spawn(entry, project, self)?;
         bridge.set_debug_guides(request.debug_guides);
         let metadata = bridge.metadata().clone();
-        progress(ExportProgress::ReactCompositions {
-            selected: metadata.composition_id.clone(),
-            compositions: metadata.compositions.clone(),
-        });
-        progress(ExportProgress::Composition(CompositionInfo {
-            width: metadata.width,
-            height: metadata.height,
-            frame_rate: metadata.frame_rate,
-            frames: metadata.duration_in_frames,
-        }));
-        for legacy in &metadata.legacy_imports {
-            progress(ExportProgress::Warning(legacy.to_string()));
-        }
+        crate::react_entry::report_composition(&metadata, &mut progress);
         let duration = Time::frames(
             i64::try_from(metadata.duration_in_frames).map_err(|_| ExportError::TimelineTooLong)?,
             metadata.frame_rate,
@@ -826,6 +835,7 @@ impl Exporter {
             metadata.frame_rate,
             request.contact_sheet,
         )?;
+        crate::react_entry::report_short_chapters(&metadata, Some(span_of(&frames)), &mut progress);
         let destination = self.still_destination(
             &frames,
             metadata.duration_in_frames,
@@ -836,80 +846,29 @@ impl Exporter {
             cancellation,
             &mut progress,
         )?;
-        let prepared = (|| {
-            let project_evaluator = project
-                .map(|(project, _)| Evaluator::new(project))
-                .transpose()
-                .map_err(ExportError::Evaluation)?;
-            let project_fonts = project_evaluator
-                .as_ref()
-                .map(|evaluator| -> Result<_, EvaluationError> {
-                    let mut fonts = evaluator.scene_at(Time::ZERO)?.fonts;
-                    if let Some((_, asset_root)) = project {
-                        absolutize_fonts(&mut fonts, asset_root);
-                    }
-                    Ok(fonts)
-                })
-                .transpose()
-                .map_err(ExportError::Evaluation)?
-                .unwrap_or_default();
+        let prepared = ReactScenes::new(bridge, project).and_then(|scenes| {
             let renderer =
                 self.still_renderer(asset_root, metadata.frame_rate, &destination, cancellation)?;
-            Ok((project_evaluator, project_fonts, renderer))
-        })();
-        let (project_evaluator, project_fonts, mut renderer) = match prepared {
+            Ok((scenes, renderer))
+        });
+        let (mut scenes, mut renderer) = match prepared {
             Ok(prepared) => prepared,
             Err(error) => {
                 destination.abort();
                 return Err(error);
             }
         };
-        let project_asset_root = project.map(|(_, asset_root)| asset_root);
         let rendered = render_stills(
             &frames,
+            metadata.frame_rate,
             destination,
             &mut renderer,
             output,
             cancellation,
             &mut progress,
-            |frame| {
-                let time =
-                    Time::frames(frame as i64, metadata.frame_rate).map_err(ExportError::Time)?;
-                let project_frame = project_evaluator
-                    .as_ref()
-                    .zip(project)
-                    .map(|(evaluator, (project, _))| -> Result<_, EvaluationError> {
-                        let mut scene = evaluator.scene_at(time)?;
-                        let mut tracks = BTreeMap::new();
-                        for track in &project.tracks {
-                            let mut layers = evaluator.layers_for_track(&track.id, time)?;
-                            if let Some(asset_root) = project_asset_root {
-                                absolutize_layers(&mut layers, asset_root);
-                            }
-                            tracks.insert(track.id.clone(), layers);
-                        }
-                        if let Some(asset_root) = project_asset_root {
-                            absolutize_layers(&mut scene.layers, asset_root);
-                        }
-                        Ok((scene.layers, tracks))
-                    })
-                    .transpose()
-                    .map_err(ExportError::Evaluation)?;
-                let evaluation = bridge
-                    .evaluate_at(
-                        time,
-                        project_frame.as_ref().map(|(layers, tracks)| ProjectFrame {
-                            layers: layers.as_slice(),
-                            tracks,
-                        }),
-                    )
-                    .map_err(ExportError::React)?;
-                let mut scene = evaluation.scene;
-                scene.fonts.extend(project_fonts.iter().cloned());
-                Ok(scene)
-            },
+            |frame| scenes.scene_at(frame),
         );
-        crate::react_entry::report_nondeterminism(&bridge, &mut progress);
+        crate::react_entry::report_nondeterminism(&scenes.bridge, &mut progress);
         rendered
     }
 }

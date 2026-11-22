@@ -141,6 +141,33 @@ impl From<ImageFormat> for StillFormat {
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+pub struct CheckQualityArgs {
+    #[serde(flatten)]
+    source: SourceArgs,
+    /// Arguments no field above takes; any are a usage error.
+    #[serde(flatten)]
+    #[schemars(skip)]
+    unknown: Map<String, Value>,
+}
+
+impl CheckQualityArgs {
+    /// A job that renders every frame of the span (the whole video without
+    /// start/end) and checks it, writing nothing.
+    pub fn job(&self) -> Result<ExportJob, String> {
+        reject_unknown(&self.unknown)?;
+        let source = self.source.check(false)?;
+        let options = ExportOptions {
+            range: source.range,
+            ..ExportOptions::default()
+        };
+        let mut job = job(source, None, None, options);
+        job.check = true;
+        Ok(job)
+    }
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct ExportVideoArgs {
     #[serde(flatten)]
     source: SourceArgs,
@@ -476,6 +503,7 @@ fn job(
         props: source.props,
         output,
         stills,
+        check: false,
         options,
         media: None,
     }

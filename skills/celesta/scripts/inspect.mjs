@@ -28,6 +28,12 @@
 // Math.random(), Date.now(), performance.now() and new Date() called while
 // rendering are reported as a `nondeterministic_render` warning (the runtime
 // reseeds and freezes them per frame); --json lists it in `warnings`.
+// The inspected frames' layers are also checked as every export checks them:
+// scenes (chapters) under a second, a frame 0 of only solid rectangles, and
+// text too close in color to the solid rectangles behind it, printed as
+// `warning: <code>: …` lines (with --json, `quality`). They are warnings and
+// do not change the exit code; Celesta-export --check-quality measures the
+// rendered pixels (flashing, contrast, short shots).
 // Exit code 1 means the entry failed to load, a frame failed, or a
 // referenced local file is missing. Exit code 2 means only that text had to
 // be measured, which needs the exporter or a PNG export.
@@ -406,6 +412,9 @@ async function inspectEntry(options) {
     if (options.native) await exited;
     else child.kill();
     removeDecodedAudio();
+    // A large --json report to a pipe is still being written: exiting now
+    // would cut it off.
+    await new Promise((resolve) => process.stdout.write('', resolve));
     process.exit(code);
   };
 
@@ -459,6 +468,8 @@ async function inspectEntry(options) {
       : `${rough.length} scenes are still rough and draw placeholder cards`;
     warnings.push(`${lead}: ${rough.map(place).join(', ')}; export warns about them (rough_scenes) and --final refuses them`);
   }
+  const lint = sceneLint(config.frameRate);
+  const qualityIssues = () => sortIssues([...shortChapters(config.chapters, config.frameRate), ...lint.finish()]);
 
   if (options.json) {
     const results = [];
@@ -466,10 +477,11 @@ async function inspectEntry(options) {
       send({ time: { value: frame * config.frameRate.denominator, timescale: config.frameRate.numerator } });
       const response = await receive();
       results.push({ frame, ...response });
+      if (response.scene) lint.observe(frame, response.scene);
       if (response.fatal) break;
     }
     const comments = reviewComments(entry, ready, config);
-    console.log(JSON.stringify({ ready, frames: results, warnings: [...new Set([...warnings, ...nondeterminismWarnings()])], ...(comments ? { comments: comments.counts } : {}) }, null, 2));
+    console.log(JSON.stringify({ ready, frames: results, warnings: [...new Set([...warnings, ...nondeterminismWarnings()])], quality: qualityIssues(), ...(comments ? { comments: comments.counts } : {}) }, null, 2));
     problems += results.filter((result) => result.error && result.status !== 'unsupported').length;
     unsupported += results.filter((result) => result.status === 'unsupported').length;
   } else {
@@ -512,6 +524,7 @@ async function inspectEntry(options) {
         continue;
       }
       const { scene, audio } = response;
+      lint.observe(frame, scene);
       for (const font of scene.fonts ?? []) {
         console.log(`font ${font.id}: ${font.location.path ?? font.location.url}${checkFile(font.location.path)}`);
       }
@@ -531,6 +544,7 @@ async function inspectEntry(options) {
     }
     problems += missing.size;
     console.log('');
+    for (const issue of qualityIssues()) warnings.push(`${issue.code}: ${issue.message}`);
     for (const warning of new Set([...warnings, ...nondeterminismWarnings()])) console.log(`warning: ${warning}`);
     for (const src of missing) console.log(`missing: ${src} (relative paths resolve from ${entryDir})`);
     if (problems) console.log(`${problems} problem(s) found`);
@@ -907,6 +921,318 @@ function printLayers(layers, depth, checkFile, warnings, sources) {
         console.log(`${indent}${content.type} ${where}`);
     }
   }
+}
+
+// --------------------------------------------------------- quality checks
+//
+// The checks every Celesta export runs on the layers it evaluates
+// (crates/exporter/src/quality/scene.rs), with the same codes, rules, and
+// messages: scenes (outermost chapters) under a second, a frame 0 with
+// nothing but solid rectangles, and text whose color is too close to the
+// solid colors behind its anchor point (WCAG 1.4.3: 4.5:1, 3:1 for text at
+// least 24 px, or 18.66 px bold, on a 1080-pixel short side). Flashing,
+// rendered contrast, and short shots need pixels: Celesta-export
+// --check-quality.
+
+const TEXT_CONTRAST = 4.5;
+const LARGE_TEXT_CONTRAST = 3;
+const MIN_SCENE_SECONDS = 1;
+// GpuRenderOptions::default().background: what shows where nothing is drawn.
+const EXPORT_BACKGROUND = [20, 22, 28];
+const BLANK_ADVICE = "it is the thumbnail and the video's first frame, so put the title or the subject on it from the start";
+
+const linearChannel = (code) => {
+  const c = code / 255;
+  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+};
+const luminance = ([r, g, b]) => 0.2126 * linearChannel(r) + 0.7152 * linearChannel(g) + 0.0722 * linearChannel(b);
+const contrastRatio = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+const parseHex = (value) => {
+  const match = /^#([0-9a-f]{6})([0-9a-f]{2})?$/i.exec(typeof value === 'string' ? value : '');
+  if (!match) return null;
+  const n = parseInt(match[1], 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255, match[2] ? parseInt(match[2], 16) : 255];
+};
+const hexOf = (color) => `#${color.map((c) => c.toString(16).padStart(2, '0').toUpperCase()).join('')}`;
+const roundTo = (value, scale) => Math.round(value * scale) / scale;
+// Rust's `{:?}` of a string, close enough for messages.
+const quoted = (text) => JSON.stringify(text);
+
+function frameSpan(from, to, frameRate) {
+  const seconds = (frame) => roundTo((frame * frameRate.denominator) / frameRate.numerator, 1000);
+  return { from, to, start: seconds(from), end: seconds(to) };
+}
+
+function describeSpans(spans) {
+  const parts = spans.slice(0, 4).map((span) =>
+    span.to === span.from + 1
+      ? `frame ${span.from} (${span.start.toFixed(2)} s)`
+      : `frames ${span.from}–${span.to - 1} (${span.start.toFixed(2)}–${span.end.toFixed(2)} s)`);
+  if (spans.length > 4) parts.push(`and ${spans.length - 4} more`);
+  return parts.join(', ');
+}
+
+/** Adds `frame` to `spans`, kept sorted and joined, whatever order frames come in. */
+function pushFrame(spans, frame) {
+  let index = spans.findIndex(([, to]) => to >= frame);
+  if (index < 0) index = spans.length;
+  const span = spans[index];
+  if (span && span[0] <= frame) span[1] = Math.max(span[1], frame + 1);
+  else if (span && span[0] === frame + 1) span[0] = frame;
+  else spans.splice(index, 0, [frame, frame + 1]);
+  const next = spans[index + 1];
+  if (next && next[0] <= spans[index][1]) {
+    spans[index][1] = Math.max(spans[index][1], next[1]);
+    spans.splice(index + 1, 1);
+  }
+}
+
+/** The outermost chapters (the scenes) shorter than a second. */
+function shortChapters(chapters = [], frameRate) {
+  const end = (chapter) => chapter.from + chapter.durationInFrames;
+  const outermost = (index) => !chapters.some((other, otherIndex) =>
+    otherIndex !== index && other.from <= chapters[index].from && end(chapters[index]) <= end(other) &&
+    (otherIndex < index || other.from !== chapters[index].from || end(other) !== end(chapters[index])));
+  return chapters.flatMap((chapter, index) => {
+    if (!(chapter.durationInFrames > 0) || !outermost(index)) return [];
+    const length = (chapter.durationInFrames * frameRate.denominator) / frameRate.numerator;
+    if (length >= MIN_SCENE_SECONDS) return [];
+    const name = chapter.name && chapter.name !== chapter.id ? `${quoted(chapter.name)} (${chapter.id})` : quoted(chapter.id);
+    const span = frameSpan(chapter.from, end(chapter), frameRate);
+    return [{
+      code: 'short_scene', measured: 'layers',
+      message: `chapter ${name} lasts ${length.toFixed(2)} s (${describeSpans([span])}), under ${MIN_SCENE_SECONDS} s; give each scene at least a second`,
+      frames: [span], value: roundTo(length, 1000), limit: MIN_SCENE_SECONDS,
+    }];
+  });
+}
+
+/** A layer's map from its plane (relative to its anchor) to its parent's: [a, b, c, d, tx, ty]. */
+function affineOf(transform = {}) {
+  const position = transform.position ?? { x: 0, y: 0 };
+  const scale = transform.scale ?? { x: 1, y: 1 };
+  const origin = transform.origin ?? { x: 0, y: 0 };
+  const radians = ((transform.rotation ?? 0) * Math.PI) / 180;
+  const [s, c] = transform.rotation ? [Math.sin(radians), Math.cos(radians)] : [0, 1];
+  const a = c * scale.x, b = s * scale.x, cc = -s * scale.y, d = c * scale.y;
+  return [a, b, cc, d, position.x + origin.x - (a * origin.x + cc * origin.y), position.y + origin.y - (b * origin.x + d * origin.y)];
+}
+const multiply = ([a, b, c, d, tx, ty], [a2, b2, c2, d2, tx2, ty2]) =>
+  [a * a2 + c * b2, b * a2 + d * b2, a * c2 + c * d2, b * c2 + d * d2, a * tx2 + c * ty2 + tx, b * tx2 + d * ty2 + ty];
+const applyAffine = ([a, b, c, d, tx, ty], [x, y]) => [a * x + c * y + tx, b * x + d * y + ty];
+const affineScale = ([a, b, c, d]) => Math.sqrt(Math.abs(a * d - b * c));
+function invertAffine([a, b, c, d, tx, ty]) {
+  const det = a * d - b * c;
+  if (!Number.isFinite(det) || Math.abs(det) < 1e-12) return null;
+  const [ia, ib, ic, id] = [d / det, -b / det, -c / det, a / det];
+  return [ia, ib, ic, id, -(ia * tx + ic * ty), -(ib * tx + id * ty)];
+}
+const isFlat = (t = {}) => !t.skew?.x && !t.skew?.y && !t.rotationX && !t.rotationY && !(Number.isFinite(t.perspective) && t.perspective > 0);
+const isNormal = (layer) => !layer.blendMode || layer.blendMode === 'normal';
+
+/** The solid colors bordering a text's glyphs: its innermost stroke, its shadow, its glow. */
+function haloColors(layer, style) {
+  const colors = [];
+  const strokes = (Array.isArray(style.stroke) ? style.stroke : style.stroke ? [style.stroke] : []).filter((stroke) => stroke.width > 0);
+  const innermost = strokes.sort((a, b) => a.width - b.width)[0];
+  for (const value of [innermost?.paint?.type === 'solid' ? innermost.paint.color : null, layer.effects?.shadow?.color, layer.effects?.glow?.color]) {
+    const color = parseHex(value);
+    if (color && color[3] >= 128) colors.push(color.slice(0, 3));
+  }
+  return colors;
+}
+
+const over = (behind, [r, g, b, alpha]) => behind.map((channel, i) => channel + ([r, g, b][i] - channel) * Math.min(Math.max(alpha, 0), 1));
+const encode = (color) => color.map((channel) => Math.min(255, Math.max(0, Math.round(channel))));
+
+function pathBounds(commands = []) {
+  let bounds = null;
+  const add = (x, y) => { bounds = bounds ? [Math.min(bounds[0], x), Math.min(bounds[1], y), Math.max(bounds[2], x), Math.max(bounds[3], y)] : [x, y, x, y]; };
+  for (const command of commands) {
+    if (command.type === 'close') continue;
+    if (command.x1 !== undefined) add(command.x1, command.y1);
+    if (command.x2 !== undefined) add(command.x2, command.y2);
+    add(command.x, command.y);
+  }
+  return bounds;
+}
+
+/** One frame's walk through its layers in drawing order. */
+function walkScene(scene) {
+  // `clips` are the clips of the groups the walk is in; each backdrop keeps
+  // those it was drawn through.
+  const walk = { backdrops: [], clips: [], texts: [], content: false, flatRects: false, shortSide: Math.max(1, Math.min(scene.width, scene.height)) };
+  const inBox = ({ inverse, bounds: [x0, y0, x1, y1] }, point) => {
+    const [x, y] = applyAffine(inverse, point);
+    return x0 <= x && x <= x1 && y0 <= y && y <= y1;
+  };
+  const covers = (backdrop, point) =>
+    (backdrop.everywhere || inBox(backdrop, point)) && backdrop.clips.every((clip) => inBox(clip, point));
+  const drawn = (backdrop) => walk.backdrops.push({ ...backdrop, clips: [...walk.clips] });
+  const measureText = (layer, shown, style, world, opacity) => {
+    if (!isNormal(layer) || style.colorRuns?.length) return;
+    let fill = [255, 255, 255, 255];
+    if (style.fill) {
+      if (style.fill.type !== 'solid') return;
+      fill = parseHex(style.fill.color);
+      if (!fill) return;
+    }
+    const point = applyAffine(world, [0, 0]);
+    // Clipped away there, the text shows nothing to measure.
+    if (!walk.clips.every((clip) => inBox(clip, point))) return;
+    let behind = [...EXPORT_BACKGROUND];
+    for (const backdrop of walk.backdrops) {
+      if (!covers(backdrop, point)) continue;
+      if (!backdrop.color) return;
+      behind = over(behind, backdrop.color);
+    }
+    behind = encode(behind);
+    const fg = encode(over(behind, [fill[0], fill[1], fill[2], (fill[3] / 255) * opacity]));
+    let ratio = contrastRatio(luminance(fg), luminance(behind));
+    for (const halo of haloColors(layer, style)) ratio = Math.max(ratio, contrastRatio(luminance(fg), luminance(halo)));
+    const scale = affineScale(world);
+    const size = (Math.abs(style.fontSize ?? 32) * scale * 1080) / walk.shortSide;
+    const large = size >= 24 || ((style.fontWeight ?? 400) >= 700 && size >= 18.66);
+    const chars = [...shown];
+    walk.texts.push({
+      id: layer.id, sample: chars.slice(0, 24).join('') + (chars.length > 24 ? '…' : ''),
+      ratio, limit: large ? LARGE_TEXT_CONTRAST : TEXT_CONTRAST, fg, bg: behind, opacity, scale,
+    });
+  };
+  const visit = (layers, parent, parentOpacity, geometry, exact) => {
+    for (const layer of layers ?? []) {
+      const opacity = parentOpacity * Math.min(Math.max(layer.opacity ?? 1, 0), 1);
+      const transform = layer.transform ?? {};
+      const world = multiply(parent, affineOf(transform));
+      if (opacity < 0.001 || affineScale(world) < 1e-6) continue;
+      const known = geometry && isFlat(transform);
+      const certain = exact && isNormal(layer);
+      const anchor = transform.anchor ?? { x: 0.5, y: 0.5 };
+      const anchored = (width, height) => multiply(world, [1, 0, 0, 1, -anchor.x * width, -anchor.y * height]);
+      const content = layer.content ?? {};
+      switch (content.type) {
+        case 'group': {
+          // Under an unknown map, the children are unknown anyway.
+          const clip = content.clip && known ? content.clip : null;
+          const inverse = clip ? invertAffine(world) : null;
+          if (clip && !inverse) break;
+          if (clip) walk.clips.push({ inverse, bounds: [clip.x, clip.y, clip.x + clip.width, clip.y + clip.height] });
+          visit(content.layers, world, opacity, known, certain && !content.mask);
+          if (clip) walk.clips.pop();
+          break;
+        }
+        case 'rect': {
+          const solid = content.fill?.type === 'solid' ? parseHex(content.fill.color) : null;
+          if ((content.fill && !solid) || content.stroke) walk.content = true;
+          else if (solid && solid[3] > 0) walk.flatRects = true;
+          if (!content.fill) break;
+          if (!known) { drawn({ everywhere: true }); break; }
+          const inverse = invertAffine(anchored(content.width, content.height));
+          if (!inverse) break;
+          const filtered = (layer.effects?.filters?.length ?? 0) > 0 || (layer.effects?.blur ?? 0) > 0;
+          drawn({
+            inverse, bounds: [0, 0, content.width, content.height],
+            color: solid && certain && !filtered ? [solid[0], solid[1], solid[2], (solid[3] / 255) * opacity] : null,
+          });
+          break;
+        }
+        case 'image':
+        case 'video': {
+          walk.content = true;
+          const inverse = known && content.width !== undefined && content.height !== undefined ? invertAffine(anchored(content.width, content.height)) : undefined;
+          if (inverse === null) break;
+          drawn(inverse ? { inverse, bounds: [0, 0, content.width, content.height] } : { everywhere: true });
+          break;
+        }
+        case 'path': {
+          walk.content = true;
+          const bounds = pathBounds(content.commands);
+          if (!bounds) break;
+          if (!known) { drawn({ everywhere: true }); break; }
+          const inverse = invertAffine(world);
+          if (inverse) drawn({ inverse, bounds });
+          break;
+        }
+        case 'instances':
+          if (content.count > 0) { walk.content = true; drawn({ everywhere: true }); }
+          break;
+        case 'text': {
+          const style = content.style ?? {};
+          const text = String(content.text ?? '');
+          const shown = style.visibleCharacters === undefined || style.visibleCharacters === null ? text : [...text].slice(0, style.visibleCharacters).join('');
+          if (!shown.trim()) break;
+          walk.content = true;
+          if (known && certain) measureText(layer, shown, style, world, opacity);
+          break;
+        }
+        default:
+          walk.content = true;
+          drawn({ everywhere: true });
+      }
+    }
+  };
+  visit(scene.layers, [1, 0, 0, 1, 0, 0], 1, true, true);
+  return walk;
+}
+
+const differs = (a, b) => Math.abs(a.opacity - b.opacity) > 1e-3 || Math.abs(a.scale - b.scale) > 1e-3;
+function settle(record, frame, finding, moving) {
+  if (moving || finding.ratio >= finding.limit) return;
+  pushFrame(record.failing, frame);
+  if (finding.ratio < record.worst) Object.assign(record, { worst: finding.ratio, limit: finding.limit, colors: [finding.fg, finding.bg] });
+}
+
+/** The layer checks over each inspected frame, as the exporter's `SceneLint`. */
+function sceneLint(frameRate) {
+  let firstFrame = null;
+  const texts = new Map();
+  return {
+    observe(frame, scene) {
+      const walk = walkScene(scene);
+      if (frame === 0 && !walk.content) {
+        firstFrame = {
+          code: 'blank_first_frame', measured: 'layers',
+          message: walk.flatRects ? `frame 0 shows only solid rectangles: ${BLANK_ADVICE}` : `frame 0 draws nothing but the background: ${BLANK_ADVICE}`,
+          frames: [frameSpan(0, 1, frameRate)],
+        };
+      }
+      // A text fading or scaling in or out is measured once it holds
+      // still: a frame counts once the next one shows it did not move.
+      for (const text of walk.texts) {
+        if (!texts.has(text.id)) texts.set(text.id, { worst: Infinity, limit: text.limit, colors: [text.fg, text.bg], sample: text.sample, failing: [], pending: null });
+        const record = texts.get(text.id);
+        let movedIn = false;
+        if (record.pending) {
+          const { frame: last, finding, moved } = record.pending;
+          movedIn = last + 1 === frame && differs(finding, text);
+          settle(record, last, finding, moved || movedIn);
+        }
+        record.pending = { frame, finding: text, moved: movedIn };
+      }
+    },
+    finish() {
+      const issues = firstFrame ? [firstFrame] : [];
+      for (const [id, record] of [...texts].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+        if (record.pending) settle(record, record.pending.frame, record.pending.finding, record.pending.moved);
+        record.pending = null;
+        if (!record.failing.length) continue;
+        const spans = record.failing.map(([from, to]) => frameSpan(from, to, frameRate));
+        issues.push({
+          code: 'low_contrast_text', measured: 'layers',
+          message: `text layer ${quoted(id)} (${quoted(record.sample)}) is ${hexOf(record.colors[0])} on ${hexOf(record.colors[1])} behind it: ${record.worst.toFixed(2)}:1, below ${record.limit}:1, at ${describeSpans(spans)}`,
+          frames: spans, layer: id, value: roundTo(record.worst, 100), limit: record.limit,
+        });
+      }
+      return issues;
+    },
+  };
+}
+
+const QUALITY_ORDER = ['flashing', 'red_flashing', 'low_contrast_text', 'short_scene', 'short_shot', 'blank_first_frame'];
+function sortIssues(issues) {
+  const first = (issue) => issue.frames?.[0]?.from ?? 0;
+  return issues.sort((a, b) =>
+    QUALITY_ORDER.indexOf(a.code) - QUALITY_ORDER.indexOf(b.code) || first(a) - first(b) || String(a.layer ?? '').localeCompare(String(b.layer ?? '')));
 }
 
 // ------------------------------------------------------------ PSD layers

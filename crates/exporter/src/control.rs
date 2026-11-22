@@ -40,6 +40,11 @@ pub enum ExportProgress {
     /// It prints and lists like [`Warning`](Self::Warning); the JSON report
     /// also lists it, with its code, in `codedWarnings`.
     CodedWarning(CodedWarning),
+    /// A quality or safety problem of the frames (flashing, low-contrast
+    /// text, a short scene, a blank first frame; see [`crate::quality`]),
+    /// which does not stop the export. The JSON report lists it among the
+    /// warnings as `code: message`, and in full in `quality`.
+    Quality(crate::quality::QualityIssue),
     /// A finished output file, reported once it is in place.
     Wrote(ExportedFile),
 }

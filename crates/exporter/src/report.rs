@@ -12,6 +12,7 @@ use celesta_project::LoadError;
 use celesta_react_bridge::{PropsFileChoice, ReactBridgeError};
 use serde::Serialize;
 
+use crate::quality::QualityIssue;
 use crate::{
     AudioLoudness, CompositionInfo, EncoderPlan, ExportError, ExportProgress, ExportedFile,
     OutputPlan, StillFormat, TrackInfo, UnavailableReason,
@@ -53,6 +54,10 @@ pub struct Report {
     /// absent when there are none.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     coded_warnings: Vec<CodedWarningReport>,
+    /// Every quality issue among the warnings, with its code, frames, and
+    /// measurements.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    quality: Option<Vec<QualityIssue>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stats: Option<Stats>,
 }
@@ -257,6 +262,7 @@ pub fn build(
     let mut files = Vec::new();
     let mut warnings = Vec::new();
     let mut coded_warnings = Vec::new();
+    let mut quality = Vec::new();
     let result = export(&mut |event| {
         match &event {
             ExportProgress::Composition(info) => composition = Some(*info),
@@ -277,6 +283,15 @@ pub fn build(
                     code: warning.code,
                     message: warning.message.clone(),
                 });
+            }
+            // A quality issue has a stable code too.
+            ExportProgress::Quality(issue) => {
+                warnings.push(issue.to_string());
+                coded_warnings.push(CodedWarningReport {
+                    code: issue.code.as_str(),
+                    message: issue.to_string(),
+                });
+                quality.push(issue.clone());
             }
             _ => {}
         }
@@ -308,6 +323,7 @@ pub fn build(
         ),
         warnings: Some(warnings),
         coded_warnings,
+        quality: Some(quality),
         stats: Some(Stats {
             elapsed_seconds: round(timing.elapsed().as_secs_f64(), 1_000.0),
             render_fps: timing.render_fps().map(|fps| round(fps, 10.0)),
@@ -355,6 +371,9 @@ pub enum Event {
         #[serde(skip_serializing_if = "Option::is_none")]
         code: Option<&'static str>,
         message: String,
+        /// For a quality issue, the entry the report's `quality` lists.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        quality: Option<QualityIssue>,
     },
     /// One of the report's `outputs`, once it is in place.
     Wrote {
@@ -393,10 +412,17 @@ impl Events {
             ExportProgress::Warning(message) | ExportProgress::Note(message) => Event::Warning {
                 code: None,
                 message: message.clone(),
+                quality: None,
+            },
+            ExportProgress::Quality(issue) => Event::Warning {
+                code: Some(issue.code.as_str()),
+                message: issue.to_string(),
+                quality: Some(issue.clone()),
             },
             ExportProgress::CodedWarning(warning) => Event::Warning {
                 code: Some(warning.code),
                 message: warning.message.clone(),
+                quality: None,
             },
             ExportProgress::Wrote(file) => Event::Wrote {
                 output: output(file.clone(), self.frame_rate),
@@ -518,6 +544,7 @@ fn error_only(error: ErrorReport) -> Report {
         outputs: None,
         warnings: None,
         coded_warnings: Vec::new(),
+        quality: None,
         stats: None,
     }
 }

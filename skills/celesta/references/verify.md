@@ -12,6 +12,7 @@ cheapest first:
 | The whole video at a glance | contact sheet (`--every … --contact-sheet`) | seconds–minutes | pacing, layout across scenes |
 | Copy stays clear of platform UI (vertical video) | PNG frames or a contact sheet with `--debug-guides` | seconds | what the safe area covers |
 | A seamless loop: the last frame runs into the first | `scripts/inspect.mjs --loop` | seconds | frame N's Scene equals frame 0's |
+| No flashing, readable text, no scene under 1 s, a frame 0 that shows something | `Celesta-export --check-quality` (MCP `check_quality`) | as long as rendering the video | the rendered pixels of every frame, as numbers |
 | Audio and the final file | short MP4 export + `ffprobe` | longer | sound, streams, duration |
 
 Never claim the video "looks right" unless you rendered a frame and looked
@@ -29,6 +30,7 @@ at the image.
 - [Check a JSON project](#check-a-json-project)
 - [Check audio](#check-audio)
 - [Check a seamless loop](#check-a-seamless-loop)
+- [Check flashing, contrast, and pacing](#check-flashing-contrast-and-pacing)
 
 ## inspect.mjs
 
@@ -102,7 +104,11 @@ Check that:
   positions, and opacity you intended (an element fully faded out shows
   `opacity 0`; an inactive `Sequence` contributes nothing);
 - nothing is `MISSING FILE` and no frame reports `ERROR`;
-- audio clips start and last as long as intended.
+- audio clips start and last as long as intended;
+- no `warning:` line starts with a quality code (`short_scene`,
+  `blank_first_frame`, `low_contrast_text`): see
+  [below](#check-flashing-contrast-and-pacing). With `--json`, `quality`
+  lists them with their frames.
 
 A composition with `chapters` lists them after the composition line, one
 line each when any is rough or has a `desc`, and warns while scenes are
@@ -356,3 +362,56 @@ does. An entry that measures text goes through the exporter as in
 [Measured text](#measured-text---native). The contact sheet shows the last
 and first frames side by side, next to an ordinary pair of frames. How to
 read the results and make a video loop: [loops.md](loops.md#check-the-loop).
+
+## Check flashing, contrast, and pacing
+
+Four rules keep a video safe and readable, and you cannot judge any of them
+by eye from a few frames: nothing flashes more than three times a second
+(photosensitive viewers can have seizures), text has at least 4.5:1
+contrast with what is behind it (3:1 for large text), no scene is shorter
+than one second, and frame 0, which is the thumbnail and the MP4's first
+frame, shows the title or the subject rather than an empty background.
+
+Run the check before the final export:
+
+```sh
+Celesta-export --json --react film.tsx --check-quality
+Celesta-export --json --react film.tsx --check-quality --from 10 --to 20   # one span
+Celesta-export --json project.celesta.json --check-quality
+```
+
+It renders every frame like an export, writes no file, and exits 1 when it
+finds anything (2 for usage errors): a quality issue below, or another
+warning with a code, such as `rough_scenes` for a rough cut's scenes. With MCP, call `check_quality` with
+the same `source`, `start`, and `end` as `export_video`. Each warning
+starts with a stable code; `quality` in the JSON result has the details:
+
+```json
+{"status":"ok", …,
+ "warnings":["flashing: 5 flashes within one second, more than 3, at frames 30–59 (1.00–2.00 s) in the region 1920×1080 at (0, 0); …"],
+ "quality":[{"code":"flashing","message":"…","measured":"pixels",
+             "frames":[{"from":30,"to":60,"start":1.0,"end":2.0}],
+             "region":{"x":0,"y":0,"width":1920,"height":1080},"value":5.0,"limit":3.0}]}
+```
+
+| `code` | Found from | Fix |
+| --- | --- | --- |
+| `flashing` | pixels (`--check-quality`) | More than three general flashes in a second over more than a quarter of a window a third of the frame wide and high (WCAG 2.3.1). Slow the blinking or the cuts to 3 a second or less, shrink the area that flashes, or lower its contrast. `region` says where. |
+| `red_flashing` | pixels | The same for saturated red. Avoid red strobes entirely. |
+| `low_contrast_text` | layers (every export, `inspect`) and pixels | `layer` is the text's id; `value` the contrast, `limit` what it needs. Change the text or ground color (the palette's word color against its ground), add a backing `Panel`/`Rect`, or an outline (`stroke`) or `shadow`, which count as the text's backdrop. From the layers only text over solid rectangles is measured; over images, video, or gradients only the pixel check measures it. Text fading or scaling in is measured once it holds still. |
+| `short_scene` | layers (every export, `inspect`, `--info`) | An outermost chapter (`<Composition chapters>`, `defineScenes`) or a JSON project's video item is under 1 s. Lengthen it or merge it into a neighbour. |
+| `short_shot` | pixels | The picture between two hard cuts (most of the frame changing at once) lasts under 1 s. Hold the shot longer, or turn the cut into a transition. Shots inside a flashing span are reported as flashing. |
+| `blank_first_frame` | layers (frame 0 has nothing but solid rectangles) and pixels (frame 0 is one flat color) | Show the title or the subject from frame 0: start entrances already visible, or at the end of their motion, rather than at opacity 0 or scale 0. |
+
+Notes:
+
+- Every export reports the layer checks for the frames it renders, and
+  `inspect.mjs` and MCP `inspect` for the frames they evaluate (`--every 1`
+  for all). Only `--check-quality` renders the pixels.
+- Text contrast is sampled about twice a second (every half second's worth
+  of frames), on the glyph pixels: `value` is the ratio 90 % of them reach.
+- Large text is at least 24 px (18.66 px when bold) on a 1080-pixel short
+  side, scaled with the canvas and the text's groups.
+- These checks catch the common mistakes; they do not certify a video.
+  Tell the user when a video flashes on purpose, and suggest a dedicated
+  photosensitivity analyzer before publishing it.

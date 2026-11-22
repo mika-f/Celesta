@@ -65,6 +65,7 @@ claude mcp add celesta -- /Applications/Celesta.app/Contents/MacOS/Celesta-mcp
 | `Celesta-export --json … --frame/--frames/--every … out.png` | `render_frames` (returns the images; `format`: `png`, `jpeg`, `webp`) |
 | `Celesta-export --json … --every N --contact-sheet out.png` | `contact_sheet` (`output` extension or `format` picks the image format) |
 | `Celesta-export --json … out.mp4` | `export_video` (`--muxer`, `--video-encoder`/`--video-option`, `--audio-encoder`/`--audio-option` → `muxer`, `videoEncoder: {id, options}`, `audioEncoder` or `"none"`) |
+| `Celesta-export --json … --check-quality` | `check_quality` (`source`, `start`, `end`) |
 | `Celesta-export --list-components [--check]` | `list_components` (`check`) |
 | `Celesta-export --describe <plugin/id>` | `describe_component` (`component`) |
 | `Celesta --init <folder> [--template <name>]` | `init_project` |

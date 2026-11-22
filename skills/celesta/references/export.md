@@ -587,7 +587,13 @@ frame numbers, the warnings, and on failure an error code:
  "stats":{"elapsedSeconds":1.2,"renderFps":58.5}}
 ```
 
-(Shown wrapped here; the real output is one line.) When the entry used a
+(Shown wrapped here; the real output is one line.) `quality` lists the
+warnings that are quality issues (flashing, low-contrast text, short scenes
+and shots, a blank first frame) in full, each with its `code`, `frames`,
+and measurements (each is also in `codedWarnings`, by its code); every
+export reports those it can read from the layers,
+and `--check-quality` renders every frame to measure the rest
+([verify.md](verify.md#check-flashing-contrast-and-pacing)). When the entry used a
 props file, the result also has `propsFile` (its path) and `propsFileAuto`
 (`true` for the entry's automatic `props.json`, `false` for `--props-file`).
 
@@ -707,7 +713,8 @@ export sends it too, naming its image muxer and encoder (such as
 `rendering` counts from 1 the frame that has started; `total` is the number
 of frames the export renders (the selected stills, for a still export). The
 `composition`, `compositions`, `warning`, and `wrote` events carry what the
-result reports under the same names.
+result reports under the same names; a quality issue's `warning` event
+also has its `quality` entry.
 
 With `--stdin-cancel`, writing a `cancel` line to the exporter's stdin, or
 closing it, stops the export before its next frame: the result is a

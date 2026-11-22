@@ -1093,10 +1093,11 @@ fn a_project_default_preset_never_reaches_stills() {
     assert!(result.status.success(), "{}", stderr(&result));
     let report = json(&result);
     assert_eq!(report["status"], "ok", "{report}");
+    // No preset warning; the empty frame 0 is a quality warning.
     assert!(
-        report["warnings"]
-            .as_array()
-            .is_none_or(|warnings| warnings.is_empty()),
+        report["warnings"].as_array().is_none_or(|warnings| warnings
+            .iter()
+            .all(|warning| warning.as_str().unwrap().starts_with("blank_first_frame: "))),
         "{report}"
     );
     assert_eq!(pixels(&output).len(), 36);

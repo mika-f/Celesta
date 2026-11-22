@@ -160,6 +160,10 @@ impl State {
                 self.diagnostics.push(Diagnostic::Warning(warning.message));
             }
             ExportProgress::Note(note) => self.diagnostics.push(Diagnostic::Note(note)),
+            ExportProgress::Quality(issue) => {
+                self.diagnostics
+                    .push(Diagnostic::Warning(issue.to_string()));
+            }
             ExportProgress::Output(plan) => self.output = Some(plan),
             ExportProgress::Composition(_)
             | ExportProgress::ReactCompositions { .. }
@@ -405,6 +409,7 @@ pub fn run(
                     ExportProgress::Warning(_)
                         | ExportProgress::CodedWarning(_)
                         | ExportProgress::Note(_)
+                        | ExportProgress::Quality(_)
                 );
                 let mut state = state
                     .lock()
@@ -886,6 +891,9 @@ impl PlainProgress {
                 self.print_diagnostic(&Diagnostic::Warning(warning.message.clone()).line());
             }
             ExportProgress::Note(note) => self.print_diagnostic(note),
+            ExportProgress::Quality(issue) => {
+                self.print_diagnostic(&Diagnostic::Warning(issue.to_string()).line());
+            }
         }
     }
 
