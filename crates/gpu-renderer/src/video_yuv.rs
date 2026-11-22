@@ -14,10 +14,23 @@ struct KeptPlane {
     used: bool,
 }
 
+struct KeptConversion {
+    sources: Vec<wgpu::Texture>,
+    output: wgpu::Texture,
+    group: wgpu::BindGroup,
+    used: bool,
+}
+
 pub(crate) struct VideoYuv {
+    #[cfg(test)]
+    pub(crate) skip_dispatch: bool,
     pipeline: wgpu::ComputePipeline,
+    layout: wgpu::BindGroupLayout,
     params: wgpu::Buffer,
     planes: Vec<KeptPlane>,
+    groups: Vec<KeptConversion>,
+    #[cfg(test)]
+    pub(crate) groups_created: u64,
     pub(crate) allocations: u64,
 }
 
@@ -35,8 +48,12 @@ impl VideoYuv {
             compilation_options: Default::default(),
             cache: None,
         });
+        let layout = pipeline.get_bind_group_layout(0);
         Self {
+            #[cfg(test)]
+            skip_dispatch: false,
             pipeline,
+            layout,
             params: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Celesta decoded YUV color"),
                 size: 32,
@@ -44,11 +61,16 @@ impl VideoYuv {
                 mapped_at_creation: false,
             }),
             planes: Vec::new(),
+            groups: Vec::new(),
+            #[cfg(test)]
+            groups_created: 0,
             allocations: 0,
         }
     }
 
     pub(crate) fn begin_render(&mut self) {
+        self.groups
+            .retain_mut(|kept| std::mem::take(&mut kept.used));
         self.planes
             .retain_mut(|kept| std::mem::take(&mut kept.used));
     }
@@ -113,13 +135,14 @@ impl VideoYuv {
             .collect()
     }
 
-    pub(crate) fn convert(
-        &self,
+    pub(crate) fn encode(
+        &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         planes: &[Arc<Plane>],
         output: &wgpu::Texture,
         frame: &VideoFrame,
+        encoder: &mut wgpu::CommandEncoder,
     ) {
         let color = frame.color.expect("validated YUV color");
         let params = [
@@ -133,47 +156,83 @@ impl VideoYuv {
             0,
         ];
         queue.write_buffer(&self.params, 0, bytemuck::cast_slice(&params));
-        let view = output.create_view(&Default::default());
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Celesta decoded YUV planes"),
-            layout: &self.pipeline.get_bind_group_layout(0),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&planes[0].view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&planes[1].view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(
-                        &planes.get(2).unwrap_or(&planes[0]).view,
-                    ),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: self.params.as_entire_binding(),
-                },
-            ],
+        let index = self.groups.iter().position(|kept| {
+            kept.output == *output
+                && kept.sources.len() == planes.len()
+                && kept
+                    .sources
+                    .iter()
+                    .zip(planes)
+                    .all(|(texture, plane)| *texture == plane.texture)
         });
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Celesta decoded YUV conversion"),
-        });
+        let index = if let Some(index) = index {
+            index
+        } else {
+            let view = output.create_view(&Default::default());
+            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Celesta decoded YUV planes"),
+                layout: &self.layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&planes[0].view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&planes[1].view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(
+                            &planes.get(2).unwrap_or(&planes[0]).view,
+                        ),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: self.params.as_entire_binding(),
+                    },
+                ],
+            });
+            self.groups.push(KeptConversion {
+                sources: planes.iter().map(|plane| plane.texture.clone()).collect(),
+                output: output.clone(),
+                group,
+                used: true,
+            });
+            #[cfg(test)]
+            {
+                self.groups_created += 1;
+            }
+            self.groups.len() - 1
+        };
+        self.groups[index].used = true;
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Celesta decoded YUV conversion"),
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups(frame.width.div_ceil(8), frame.height.div_ceil(8), 1);
+            pass.set_bind_group(0, &self.groups[index].group, &[]);
+            #[cfg(test)]
+            let dispatch = !self.skip_dispatch;
+            #[cfg(not(test))]
+            let dispatch = true;
+            if dispatch {
+                let tile = if frame.pixel_format == DecodedPixelFormat::Nv12 {
+                    8
+                } else {
+                    16
+                };
+                pass.dispatch_workgroups(
+                    frame.width.div_ceil(tile),
+                    frame.height.div_ceil(tile),
+                    1,
+                );
+            }
         }
-        queue.submit([encoder.finish()]);
     }
 }

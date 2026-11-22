@@ -158,7 +158,9 @@ fn planes_match_cpu_conversion_and_reuse_staging() {
                             allocations = renderer.video_uploads.allocations;
                         } else {
                             assert_eq!(renderer.video_uploads.allocations, allocations);
+                            assert_eq!(renderer.video_uploads.profile.groups, 0);
                         }
+                        assert_eq!(renderer.video_uploads.profile.submits, 1);
                     }
                     let mut malformed = frame.clone();
                     malformed.pixels = vec![0; 1].into();
@@ -191,6 +193,8 @@ fn queued_conversions_keep_distinct_layer_pixels() {
     let mut bytes = frame.pixels.as_ref().clone();
     bytes[..18 * 14].fill(220);
     frame.pixels = bytes.into();
+    frame.color.as_mut().unwrap().range = DecodedRange::Limited;
+    frame.color.as_mut().unwrap().matrix = DecodedMatrix::Bt601;
     let second = upload(&mut renderer, &frame);
     gate(
         "queued-first",
@@ -201,13 +205,48 @@ fn queued_conversions_keep_distinct_layer_pixels() {
     gate(
         "queued-second",
         &read_texture(&renderer, &second),
-        &[220, 220, 220, 255].repeat(18 * 14),
+        &frame.to_rgba().unwrap().pixels,
         1,
     );
 }
 
 #[derive(Clone)]
 struct FrameDecoder(VideoFrame);
+
+#[test]
+fn unavailable_staging_mapping_still_uploads_and_converts() {
+    let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+        return;
+    };
+    for format in [F::Rgba8, F::Nv12, F::Yuv420p] {
+        renderer.video_uploads = VideoUploads::default();
+        let frame = pattern(
+            if format == F::Rgba8 { F::Nv12 } else { format },
+            18,
+            14,
+            DecodedMatrix::Bt709,
+            DecodedRange::Limited,
+        );
+        let frame = if format == F::Rgba8 {
+            frame.to_rgba().unwrap()
+        } else {
+            frame
+        };
+        let texture = upload(&mut renderer, &frame);
+        read_texture(&renderer, &texture);
+        drop(texture);
+        renderer.video_uploads.invalidate_staging_mapping();
+        let texture = upload(&mut renderer, &frame);
+        gate(
+            "unmapped staging fallback",
+            &read_texture(&renderer, &texture),
+            &frame.to_rgba().unwrap().pixels,
+            1,
+        );
+        assert_eq!(renderer.video_uploads.profile.submits, 1);
+    }
+}
+
 impl VideoFrameDecoder for FrameDecoder {
     fn decode_frame(&mut self, _: &Path, _: f64) -> Result<VideoFrame, MediaError> {
         Ok(self.0.clone())
@@ -397,15 +436,21 @@ fn benchmark_completed_video_texture() {
                     .unwrap();
                 let fps = rate.numerator as f64 / rate.denominator as f64;
                 renderer.video_uploads = VideoUploads::default();
+                renderer.video_uploads.skip_conversion =
+                    std::env::var_os("CELESTA_YUV_BENCH_NO_DISPATCH").is_some();
                 let mut bytes = 0;
+                let mut totals = [Duration::ZERO; 7];
+                let mut counts = [0u64; 4];
                 let mut start = Instant::now();
                 for index in 0..124 {
                     if index == 4 {
                         start = Instant::now();
                     }
+                    let frame_start = Instant::now();
                     let frame = backend
                         .decode_frame_for("clip", &input, index as f64 / fps)
                         .unwrap();
+                    let decoded = frame_start.elapsed();
                     assert_eq!(
                         frame.pixel_format,
                         if formats.len() == 1 {
@@ -416,21 +461,64 @@ fn benchmark_completed_video_texture() {
                     );
                     bytes = frame.pixels.len();
                     renderer.video_uploads.begin_render();
+                    let allocations = renderer.video_uploads.allocations;
+                    let before_upload = Instant::now();
                     let texture = upload(&mut renderer, &frame);
+                    let uploaded = before_upload.elapsed();
+                    let before_wait = Instant::now();
                     renderer
                         .device
                         .poll(wgpu::PollType::wait_indefinitely())
                         .unwrap();
+                    let waited = before_wait.elapsed();
                     std::hint::black_box(&texture);
                     drop(texture);
                     let work = Instant::now();
                     while work.elapsed() < Duration::from_millis(work_ms) {
                         std::hint::spin_loop();
                     }
+                    let worked = work.elapsed();
+                    if index >= 4 {
+                        let profile = &renderer.video_uploads.profile;
+                        let values = [
+                            decoded,
+                            profile.stage,
+                            profile.convert,
+                            uploaded - profile.stage - profile.convert,
+                            waited,
+                            frame_start.elapsed() - decoded - uploaded - waited - worked,
+                            worked,
+                        ];
+                        for (total, value) in totals.iter_mut().zip(values) {
+                            *total += value;
+                        }
+                        for (total, value) in counts.iter_mut().zip([
+                            renderer.video_uploads.allocations - allocations,
+                            profile.pipelines,
+                            profile.groups,
+                            profile.submits,
+                        ]) {
+                            *total += value;
+                        }
+                    }
                 }
                 println!(
                     "BENCH repeat={repeat} work_ms={work_ms} formats={formats:?} bytes={bytes} ms/frame={:.3}",
                     start.elapsed().as_secs_f64() * 1000. / 120.
+                );
+                println!(
+                    "BREAKDOWN repeat={repeat} work_ms={work_ms} formats={formats:?} decode={:.6} stage={:.6} convert_submit={:.6} upload_other={:.6} wait={:.6} other={:.6} work={:.6} misses={} pipelines={} groups={} submits={}",
+                    totals[0].as_secs_f64() * 1000. / 120.,
+                    totals[1].as_secs_f64() * 1000. / 120.,
+                    totals[2].as_secs_f64() * 1000. / 120.,
+                    totals[3].as_secs_f64() * 1000. / 120.,
+                    totals[4].as_secs_f64() * 1000. / 120.,
+                    totals[5].as_secs_f64() * 1000. / 120.,
+                    totals[6].as_secs_f64() * 1000. / 120.,
+                    counts[0],
+                    counts[1],
+                    counts[2],
+                    counts[3]
                 );
             }
         }

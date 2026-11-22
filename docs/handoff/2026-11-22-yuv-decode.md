@@ -278,3 +278,10 @@ The sequential fixture was added in a follow-up commit so every fixture
 answering YUV in A is included. The final complete GPU suite again passed
 441 tests (0 failed, 2 ignored), followed by GPU Clippy and formatting checks.
 Other source and benchmark inputs were unchanged; their earlier checks apply.
+
+## Profiling follow-up
+
+See [the lavapipe profile](2026-11-22-yuv-lavapipe-profile.md) for the measured
+stage breakdown, no-dispatch control, binding/submission/chroma-reuse fixes,
+updated benchmark table and checks. The historical measurements above are
+retained; the follow-up uses newly paired before/after runs.

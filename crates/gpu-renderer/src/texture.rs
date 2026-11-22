@@ -257,6 +257,20 @@ pub(crate) struct VideoUploads {
     yuv: Option<VideoYuv>,
     /// The textures and staging buffers created, ever.
     pub(crate) allocations: u64,
+    #[cfg(test)]
+    pub(crate) profile: UploadProfile,
+    #[cfg(test)]
+    pub(crate) skip_conversion: bool,
+}
+
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct UploadProfile {
+    pub(crate) stage: std::time::Duration,
+    pub(crate) convert: std::time::Duration,
+    pub(crate) submits: u64,
+    pub(crate) pipelines: u64,
+    pub(crate) groups: u64,
 }
 
 struct KeptTexture {
@@ -307,6 +321,15 @@ impl VideoUploads {
         self.yuv.as_ref().map_or(0, |yuv| yuv.allocations)
     }
 
+    #[cfg(test)]
+    pub(crate) fn invalidate_staging_mapping(&self) {
+        assert!(!self.staging.is_empty());
+        for staging in &self.staging {
+            assert!(staging.mapped.load(Ordering::Acquire));
+            staging.buffer.unmap();
+        }
+    }
+
     /// `image`, with `mipmaps` its smaller levels too, as a layer texture.
     pub(crate) fn upload(
         &mut self,
@@ -316,6 +339,10 @@ impl VideoUploads {
         image: &DecodedImage,
         mipmaps: bool,
     ) -> LayerTexture {
+        #[cfg(test)]
+        {
+            self.profile = UploadProfile::default();
+        }
         let levels = mip_levels(image, mipmaps);
         let key = (image.width, image.height, levels.len() as u32);
         let texture = match self
@@ -351,7 +378,7 @@ impl VideoUploads {
                 pixels,
             })
             .collect();
-        self.stage(device, queue, &planes);
+        self.stage(device, queue, &planes, |_| {});
         texture
     }
 
@@ -362,6 +389,11 @@ impl VideoUploads {
         layout: &wgpu::BindGroupLayout,
         frame: &VideoFrame,
     ) -> Result<LayerTexture, GpuRenderError> {
+        #[cfg(test)]
+        {
+            self.profile = UploadProfile::default();
+            self.profile.pipelines = u64::from(self.yuv.is_none());
+        }
         frame.validate()?;
         if frame.pixel_format == DecodedPixelFormat::Rgba8 {
             return Err(
@@ -369,6 +401,10 @@ impl VideoUploads {
             );
         }
         let mut yuv = self.yuv.take().unwrap_or_else(|| VideoYuv::new(device));
+        #[cfg(test)]
+        {
+            yuv.skip_dispatch = self.skip_conversion;
+        }
         let before = yuv.allocations;
         let sources = yuv.planes(device, frame.width, frame.height, frame.pixel_format);
         self.allocations += yuv.allocations - before;
@@ -390,7 +426,6 @@ impl VideoUploads {
                 }
             })
             .collect();
-        self.stage(device, queue, &planes);
         let key = (frame.width, frame.height, 1);
         let output = if let Some(kept) = self
             .textures
@@ -422,12 +457,38 @@ impl VideoUploads {
             self.allocations += 1;
             texture
         };
-        yuv.convert(device, queue, &sources, &output._texture, frame);
+        #[cfg(test)]
+        let mut converted = std::time::Duration::ZERO;
+        #[cfg(test)]
+        let groups = yuv.groups_created;
+        self.stage(device, queue, &planes, |encoder| {
+            #[cfg(test)]
+            let start = std::time::Instant::now();
+            yuv.encode(device, queue, &sources, &output._texture, frame, encoder);
+            #[cfg(test)]
+            {
+                converted = start.elapsed();
+            }
+        });
+        #[cfg(test)]
+        {
+            self.profile.convert = converted;
+            self.profile.stage -= converted;
+            self.profile.groups = yuv.groups_created - groups;
+        }
         self.yuv = Some(yuv);
         Ok(output)
     }
 
-    fn stage(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, planes: &[PlaneUpload<'_>]) {
+    fn stage(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        planes: &[PlaneUpload<'_>],
+        after_copy: impl FnOnce(&mut wgpu::CommandEncoder),
+    ) {
+        #[cfg(test)]
+        let start = std::time::Instant::now();
         // Each level at an offset and with rows padded as a copy from a
         // buffer to a texture needs.
         let alignment = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
@@ -485,6 +546,14 @@ impl VideoUploads {
                     },
                 );
             }
+            let mut encoder = device.create_command_encoder(&Default::default());
+            after_copy(&mut encoder);
+            queue.submit([encoder.finish()]);
+            #[cfg(test)]
+            {
+                self.profile.stage = start.elapsed();
+                self.profile.submits += 1;
+            }
             return;
         };
         for (plane, offset) in planes.iter().zip(&offsets) {
@@ -533,6 +602,7 @@ impl VideoUploads {
                 },
             );
         }
+        after_copy(&mut encoder);
         // Submitted before the draws that sample the texture, which are
         // submitted after this layer is prepared.
         queue.submit([encoder.finish()]);
@@ -545,6 +615,11 @@ impl VideoUploads {
                     mapped.store(true, Ordering::Release);
                 }
             });
+        #[cfg(test)]
+        {
+            self.profile.stage = start.elapsed();
+            self.profile.submits += 1;
+        }
     }
 }
 
