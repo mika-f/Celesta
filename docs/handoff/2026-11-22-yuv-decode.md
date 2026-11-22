@@ -29,6 +29,16 @@ failure signature; Windows NV12 also matches the C signature, but its exact
 dispatch was not instrumented. Neither BITEXACT nor a C-only reference passes
 the old <=2 gate, and ACCURATE_RND changes I420 reconstruction substantially.
 
+## Known issues
+
+- **Unconfirmed:** FFmpeg's aarch64 NEON NV12→RGBA path appears to skip vertical
+  chroma reconstruction: the native NV12 fixture differed from the required
+  bicubic conversion by max 76 in macOS CI job `137199105972`. Per owner option 1,
+  only this fixture's swscale comparison is omitted on macOS aarch64. Both
+  transport decodes and native-format assertions still run. The exact independent
+  reference gate remains enabled for NV12 there and everywhere else; no RGBA
+  production path, conversion behavior or other compatibility gate changes.
+
 The remaining sections retain historical implementation and measurement data.
 
 ## Specification
