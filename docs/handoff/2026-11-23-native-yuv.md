@@ -100,6 +100,17 @@ Native gate numbers must be inspected there before claiming pixel parity.
 
 ## Step B: Media Foundation
 
+### PR 888 CI follow-up
+
+Windows job 137301762888 stopped at Clippy before native tests:
+`mediafoundation/src/annexb.rs:206: this lint expectation is unfulfilled`.
+The new live NV12 decoder uses record_units, so its old unconditional
+non-test dead-code expectation is no longer valid on Windows. Restrict
+that expectation to non-Windows, non-test builds. The Windows API audit
+now exposes a public decoder entry point to keep that call chain live.
+Exact-plane gates also print fixture/time, max/mean/differing-byte metrics
+before the unchanged byte-equality assertion. No gate is weakened.
+
 ### PR 888 review correction: primaries and transfer
 
 Confirmed the PR head was cff8ed5 before changing it. Native NV12 now
@@ -121,6 +132,8 @@ helper metadata checks, Windows API audit (with a live decoder entry
 point), plugin formatting and diff checks passed. Fixture-only tests for
 each helper verified the new P3/linear tags with linked FFmpeg; native
 fallback execution is deferred to PR 888 CI.
+
+### Step B implementation
 
 The same branch adds offered NV12 for even-sized, upright, alpha-free
 8-bit 4:2:0 SDR H.264/HEVC Main. Unknown headers, unsupported source colour,

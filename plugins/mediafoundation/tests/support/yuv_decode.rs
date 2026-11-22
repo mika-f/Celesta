@@ -274,7 +274,7 @@ fn ffmpeg(path: &Path, time: f64) -> VideoFrame {
     decoder.decode_frame(path, time).unwrap()
 }
 
-fn exact_planes(actual: &VideoFrame, reference: &VideoFrame) {
+fn exact_planes(label: &str, actual: &VideoFrame, reference: &VideoFrame) {
     assert_eq!(actual.pixel_format, F::Nv12);
     assert_eq!(
         (actual.width, actual.height),
@@ -295,6 +295,22 @@ fn exact_planes(actual: &VideoFrame, reference: &VideoFrame) {
         assert_eq!(reference.pixel_format, F::Nv12);
         reference.pixels.as_ref().clone()
     };
+    assert_eq!(actual.pixels.len(), expected.len());
+    let mut max = 0u8;
+    let mut sum = 0u64;
+    let mut differing = 0usize;
+    for (actual, reference) in actual.pixels.iter().zip(&expected) {
+        let delta = actual.abs_diff(*reference);
+        max = max.max(delta);
+        sum += u64::from(delta);
+        if delta != 0 {
+            differing += 1;
+        }
+    }
+    println!(
+        "planes {label}: max={max} mean={:.9} differing_bytes={differing}",
+        sum as f64 / expected.len() as f64
+    );
     assert_eq!(
         *actual.pixels, expected,
         "Media Foundation/FFmpeg decoded planes differ"
@@ -370,7 +386,11 @@ fn exercise(path: &Path, expected: DecodedColor) {
                 assert_eq!(answer, rgba);
             } else {
                 assert_eq!(answer.color, Some(expected));
-                exact_planes(&answer, &ffmpeg(path, time));
+                exact_planes(
+                    &format!("{} {transport:?} t={time}", path.display()),
+                    &answer,
+                    &ffmpeg(path, time),
+                );
                 rgba_gate(
                     &format!("{} {transport:?} t={time}", path.display()),
                     &answer,
@@ -508,7 +528,7 @@ fn aligned_1080p_nv12_matches_ffmpeg() {
             .decode_video(DECODER_ID, &request(&output, 0., &[F::Nv12]))
             .unwrap();
         assert_eq!((frame.width, frame.height), (1920, 1080));
-        exact_planes(&frame, &ffmpeg(&output, 0.));
+        exact_planes("1080p", &frame, &ffmpeg(&output, 0.));
         let rgba = MfCodec::new()
             .decode_video(DECODER_ID, &request(&output, 0., &[]))
             .unwrap();
