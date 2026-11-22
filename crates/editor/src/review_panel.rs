@@ -23,7 +23,7 @@ use gpui_kit::{
 
 use crate::layer_select::letterbox;
 use crate::property_controls::field_keeps_key;
-use crate::review::{Listed, Shown, folder_stamp, mark_span, pins_at};
+use crate::review::{At, Listed, Shown, folder_stamp, mark_span, pins_at};
 use crate::timecode::format_timecode;
 use crate::view::{EditorView, RightTab};
 use celesta_editor_theme::metrics;
@@ -123,12 +123,6 @@ impl EditorView {
             .is_some_and(|react| react.compositions.len() > 1)
     }
 
-    fn chapter_list(&self) -> &[ReactChapter] {
-        self.react_preview
-            .as_ref()
-            .map_or(&[][..], |react| react.chapters.as_slice())
-    }
-
     pub(crate) fn add_comment_action(
         &mut self,
         _: &crate::actions::AddComment,
@@ -143,14 +137,27 @@ impl EditorView {
     /// Opens the composer at the playhead (or the In/Out span) on the
     /// selected layer, in the Comments tab.
     pub(crate) fn begin_comment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let frame = u64::try_from(self.clock.frame()).unwrap_or(0);
-        let marks = self
-            .export_in_frame
-            .zip(self.export_out_frame)
-            .and_then(|(start, end)| Some((u64::try_from(start).ok()?, u64::try_from(end).ok()?)));
+        let at = At {
+            frame: u64::try_from(self.clock.frame()).unwrap_or(0),
+            marks: self
+                .export_in_frame
+                .zip(self.export_out_frame)
+                .and_then(|(start, end)| {
+                    Some((u64::try_from(start).ok()?, u64::try_from(end).ok()?))
+                }),
+            frames: u64::try_from(self.clock.end_frame()).unwrap_or(0),
+        };
         let layer = self.selected_layer.clone();
-        let chapters = self.chapter_list().to_vec();
-        self.review.begin(frame, marks, layer, &chapters);
+        let (chapters, composition, first) = self.owned_shown();
+        self.review.begin(
+            at,
+            layer,
+            Shown {
+                composition: composition.as_deref(),
+                first,
+                chapters: &chapters,
+            },
+        );
         self.right_tab = RightTab::Comments;
         if let Some(inputs) = &self.review_inputs {
             inputs
@@ -188,6 +195,13 @@ impl EditorView {
         );
         if written.is_ok() {
             composer.update(cx, |input, cx| input.set_value("", window, cx));
+            // The new comment is selected: a reply typed for another one
+            // does not carry over to it.
+            if let Some(inputs) = &self.review_inputs {
+                inputs
+                    .reply
+                    .update(cx, |input, cx| input.set_value("", window, cx));
+            }
         }
         cx.notify();
     }
@@ -479,6 +493,7 @@ impl EditorView {
         let pinned = draft
             .anchor
             .point
+            .as_ref()
             .map(|point| format!("Pinned at {:.0}%, {:.0}%", point.x * 100.0, point.y * 100.0));
         let pinning = draft.pinning;
         div()
@@ -856,7 +871,7 @@ impl EditorView {
         let selected = self.review.selected.as_deref();
         let mut pins: Vec<AnyElement> = pins_at(&listed, selected, frame)
             .filter_map(|(listed, point)| {
-                let at = canvas_position(bounds, frame_size, point)?;
+                let at = canvas_position(bounds, frame_size, &point)?;
                 let is_selected = selected == Some(listed.id());
                 let target = listed.id().to_owned();
                 let body = listed.comment.body.clone();
@@ -884,7 +899,7 @@ impl EditorView {
             .review
             .draft
             .as_ref()
-            .and_then(|draft| draft.anchor.point)
+            .and_then(|draft| draft.anchor.point.as_ref())
             && let Some(at) = canvas_position(bounds, frame_size, point)
         {
             pins.push(
@@ -968,7 +983,7 @@ fn pin(
 fn canvas_position(
     bounds: Bounds<Pixels>,
     frame: (f32, f32),
-    point: Point,
+    point: &Point,
 ) -> Option<gpui_kit::Point<Pixels>> {
     let (left, top, scale) = letterbox(bounds, frame)?;
     Some(gpui_kit::point(
@@ -986,9 +1001,11 @@ fn canvas_fraction(
     let (left, top, scale) = letterbox(bounds, frame)?;
     let x = (f32::from(position.x) - left) / (frame.0 * scale);
     let y = (f32::from(position.y) - top) / (frame.1 * scale);
-    ((0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y)).then(|| Point {
-        x: (f64::from(x) * 1000.0).round() / 1000.0,
-        y: (f64::from(y) * 1000.0).round() / 1000.0,
+    ((0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y)).then(|| {
+        Point::new(
+            (f64::from(x) * 1000.0).round() / 1000.0,
+            (f64::from(y) * 1000.0).round() / 1000.0,
+        )
     })
 }
 
@@ -1015,12 +1032,12 @@ mod tests {
     #[test]
     fn canvas_points_round_trip() {
         let frame = (1920.0, 1080.0);
-        let at = canvas_position(bounds(), frame, Point { x: 0.5, y: 0.5 }).expect("placed");
+        let at = canvas_position(bounds(), frame, &Point::new(0.5, 0.5)).expect("placed");
         assert_eq!((f32::from(at.x), f32::from(at.y)), (200.0, 150.0));
         let window = gpui_kit::point(px(300.0), px(200.0));
         assert_eq!(
             canvas_fraction(bounds(), frame, window),
-            Some(Point { x: 0.5, y: 0.5 })
+            Some(Point::new(0.5, 0.5))
         );
     }
 

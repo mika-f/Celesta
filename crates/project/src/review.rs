@@ -13,7 +13,7 @@ use std::hash::{BuildHasher, Hasher};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -79,6 +79,9 @@ pub struct Anchor {
     /// The spot on the canvas, as fractions of its width and height.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub point: Option<Point>,
+    /// Fields a later version added, kept when the file is written again.
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 impl Anchor {
@@ -101,13 +104,26 @@ impl Anchor {
 }
 
 /// A spot on the canvas: 0 is the left or top edge, 1 the right or bottom.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Point {
     pub x: f64,
     pub y: f64,
+    /// Fields a later version added, kept when the file is written again.
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+impl Point {
+    pub fn new(x: f64, y: f64) -> Self {
+        Self {
+            x,
+            y,
+            extra: Map::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LastSeen {
     /// The composition frame the anchor's `from` was on.
@@ -115,22 +131,31 @@ pub struct LastSeen {
     /// The chapter's name then, to say which scene an orphan belonged to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chapter_name: Option<String>,
+    /// Fields a later version added, kept when the file is written again.
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Resolution {
     pub by: String,
     pub at: String,
+    /// Fields a later version added, kept when the file is written again.
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Reply {
     pub id: String,
     pub author: String,
     pub created_at: String,
     pub body: String,
+    /// Fields a later version added, kept when the file is written again.
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 /// A chapter of the composition as it is now, to place comments against.
@@ -142,7 +167,7 @@ pub struct ChapterSpan<'a> {
 }
 
 /// Where a comment falls in the composition as it is now.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Placement {
     /// In composition frames: `to` is the frame after the last of a span.
     Placed {
@@ -230,9 +255,15 @@ impl Comment {
             from, chapter_name, ..
         } = self.place(chapters)
         {
+            let extra = self
+                .last_seen
+                .take()
+                .map(|seen| seen.extra)
+                .unwrap_or_default();
             self.last_seen = Some(LastSeen {
                 frame: from,
                 chapter_name,
+                extra,
             });
         }
     }
@@ -244,6 +275,7 @@ impl Comment {
             author,
             created_at: now_utc(),
             body,
+            extra: Map::new(),
         });
         self.replies.last().expect("just pushed")
     }
@@ -252,7 +284,11 @@ impl Comment {
     /// first resolution.
     pub fn resolve(&mut self, by: String) {
         if self.resolved.is_none() {
-            self.resolved = Some(Resolution { by, at: now_utc() });
+            self.resolved = Some(Resolution {
+                by,
+                at: now_utc(),
+                extra: Map::new(),
+            });
         }
     }
 
@@ -281,7 +317,7 @@ impl Comment {
                 self.anchor.from
             ));
         }
-        if let Some(point) = self.anchor.point
+        if let Some(point) = &self.anchor.point
             && !((0.0..=1.0).contains(&point.x) && (0.0..=1.0).contains(&point.y))
         {
             return Err(format!(
@@ -308,6 +344,9 @@ pub enum ReviewError {
     NotFound(String),
     #[error("\"{0}\" is not a comment id (lowercase letters, digits, and -)")]
     BadId(String),
+    /// A write the caller refused, saying why.
+    #[error("{0}")]
+    Refused(String),
 }
 
 /// A comment file that could not be read, among others that could.
@@ -431,8 +470,25 @@ impl CommentStore {
         std::fs::create_dir_all(self.dir()).map_err(io(&self.dir()))?;
         let mut text = serde_json::to_string_pretty(comment).expect("comments serialize");
         text.push('\n');
-        let staged = self.dir().join(format!(".{}.json.tmp", comment.id));
-        std::fs::write(&staged, text).map_err(io(&staged))?;
+        // A name of this write's own, created afresh: `create_new` refuses a
+        // file (or a link someone left) already there, so the write never
+        // goes through a link to another file. The rename replaces the
+        // comment's file itself, also when that is a link.
+        let staged = self
+            .dir()
+            .join(format!(".{}.{}.tmp", comment.id, new_id("w")));
+        let written = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&staged)
+            .and_then(|mut file| std::io::Write::write_all(&mut file, text.as_bytes()));
+        if let Err(source) = written {
+            let _ = std::fs::remove_file(&staged);
+            return Err(ReviewError::Io {
+                path: staged,
+                source,
+            });
+        }
         std::fs::rename(&staged, &path).map_err(|source| {
             let _ = std::fs::remove_file(&staged);
             ReviewError::Io {
@@ -443,12 +499,16 @@ impl CommentStore {
         Ok(path)
     }
 
-    /// Loads `id`, applies `change`, and saves it.
+    /// Loads `id`, applies `change`, and saves it, holding the thread's
+    /// lock from the read to the write so a reply the editor and an agent
+    /// make at once both stay.
     pub fn update(
         &self,
         id: &str,
         change: impl FnOnce(&mut Comment),
     ) -> Result<Comment, ReviewError> {
+        check_id(id).map_err(|_| ReviewError::BadId(id.to_owned()))?;
+        let _lock = ThreadLock::take(&self.dir().join(format!(".{id}.lock")))?;
         let mut comment = self.get(id)?;
         change(&mut comment);
         self.save(&comment)?;
@@ -457,6 +517,73 @@ impl CommentStore {
 
     pub fn path(&self, id: &str) -> PathBuf {
         self.dir().join(format!("{id}.json"))
+    }
+}
+
+/// How long [`CommentStore::update`] waits for another writer's lock.
+const LOCK_WAIT: Duration = Duration::from_secs(5);
+
+/// A lock older than this was left by a writer that stopped; it is taken
+/// over.
+const LOCK_STALE: Duration = Duration::from_secs(30);
+
+/// One thread's lock file, held while it is updated; removed on drop.
+struct ThreadLock(PathBuf);
+
+impl ThreadLock {
+    fn take(path: &Path) -> Result<Self, ReviewError> {
+        let started = Instant::now();
+        loop {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+            {
+                Ok(_) => return Ok(Self(path.to_path_buf())),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let stale = std::fs::symlink_metadata(path)
+                        .and_then(|meta| meta.modified())
+                        .ok()
+                        .and_then(|modified| modified.elapsed().ok())
+                        .is_some_and(|age| age > LOCK_STALE);
+                    if stale {
+                        let _ = std::fs::remove_file(path);
+                        continue;
+                    }
+                    if started.elapsed() > LOCK_WAIT {
+                        return Err(ReviewError::Io {
+                            path: path.to_path_buf(),
+                            source: std::io::Error::new(
+                                std::io::ErrorKind::WouldBlock,
+                                "another program is writing this comment; try again",
+                            ),
+                        });
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    // No folder yet: the comment does not exist either.
+                    return Err(ReviewError::NotFound(
+                        path.file_stem()
+                            .and_then(|stem| stem.to_str())
+                            .map(|stem| stem.trim_start_matches('.').to_owned())
+                            .unwrap_or_default(),
+                    ));
+                }
+                Err(source) => {
+                    return Err(ReviewError::Io {
+                        path: path.to_path_buf(),
+                        source,
+                    });
+                }
+            }
+        }
+    }
+}
+
+impl Drop for ThreadLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
     }
 }
 

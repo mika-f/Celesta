@@ -72,6 +72,7 @@ fn a_gone_chapter_orphans_the_comment_at_its_last_place() {
             last_seen: Some(LastSeen {
                 frame: 135,
                 chapter_name: Some("Demo".to_owned()),
+                extra: Map::new(),
             }),
         }
     );
@@ -139,9 +140,9 @@ fn validation_rejects_bad_anchors_and_newer_versions() {
     let mut comment = on_demo(10, Some(10));
     assert!(comment.validate().is_err());
     comment.anchor.to = None;
-    comment.anchor.point = Some(Point { x: 1.5, y: 0.0 });
+    comment.anchor.point = Some(Point::new(1.5, 0.0));
     assert!(comment.validate().is_err());
-    comment.anchor.point = Some(Point { x: 1.0, y: 0.0 });
+    comment.anchor.point = Some(Point::new(1.0, 0.0));
     assert!(comment.validate().is_ok());
     comment.version = FORMAT_VERSION + 1;
     assert!(comment.validate().unwrap_err().contains("update Celesta"));
@@ -166,7 +167,7 @@ fn comments_round_trip_through_their_files() {
     let mut first = on_demo(15, Some(45));
     first.created_at = "2026-11-22T10:00:00Z".to_owned();
     first.anchor.layer = Some("title".to_owned());
-    first.anchor.point = Some(Point { x: 0.25, y: 0.5 });
+    first.anchor.point = Some(Point::new(0.25, 0.5));
     let mut second = on_demo(0, None);
     second.created_at = "2026-11-22T09:00:00Z".to_owned();
     let path = store.save(&first).expect("saved");
@@ -293,4 +294,103 @@ fn the_example_comments_load() {
             );
         }
     }
+}
+
+#[test]
+fn unknown_nested_fields_survive_a_rewrite() {
+    let (_dir, store) = store();
+    let mut comment = on_demo(0, Some(10));
+    comment.anchor.point = Some(Point::new(0.5, 0.5));
+    comment.reply("claude".to_owned(), "x".to_owned());
+    comment.remember(&chapters());
+    store.save(&comment).expect("saved");
+    let path = store.path(&comment.id);
+    let mut value: Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("json");
+    value["anchor"]["region"] = serde_json::json!([0, 0, 10, 10]);
+    value["anchor"]["point"]["z"] = serde_json::json!(1);
+    value["lastSeen"]["timecode"] = serde_json::json!("00:00:04:00");
+    value["replies"][0]["edited"] = serde_json::json!(true);
+    std::fs::write(&path, value.to_string()).expect("written");
+    store
+        .update(&comment.id, |comment| {
+            comment.resolve("claude".to_owned());
+            comment.remember(&chapters());
+        })
+        .expect("updated");
+    let value: Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("json");
+    assert_eq!(value["anchor"]["region"], serde_json::json!([0, 0, 10, 10]));
+    assert_eq!(value["anchor"]["point"]["z"], 1);
+    assert_eq!(value["lastSeen"]["timecode"], "00:00:04:00");
+    assert_eq!(value["replies"][0]["edited"], true);
+    assert_eq!(value["resolved"]["by"], "claude");
+}
+
+#[test]
+fn concurrent_updates_keep_every_reply() {
+    let (_dir, store) = store();
+    let comment = on_demo(0, None);
+    store.save(&comment).expect("saved");
+    let threads: Vec<_> = (0..8)
+        .map(|n| {
+            let store = store.clone();
+            let id = comment.id.clone();
+            std::thread::spawn(move || {
+                store
+                    .update(&id, |comment| {
+                        comment.reply(format!("writer {n}"), "x".to_owned());
+                    })
+                    .expect("updated");
+            })
+        })
+        .collect();
+    for thread in threads {
+        thread.join().expect("joined");
+    }
+    let read = store.get(&comment.id).expect("read");
+    assert_eq!(read.replies.len(), 8);
+    let leftovers: Vec<_> = std::fs::read_dir(store.dir())
+        .expect("listed")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with('.'))
+        .collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_planted_link_is_not_written_through() {
+    let (dir, store) = store();
+    let comment = on_demo(0, None);
+    store.save(&comment).expect("saved");
+    let outside = dir.path().join("outside.txt");
+    std::fs::write(&outside, "keep").expect("written");
+    // A link where earlier builds staged their writes, then one at the
+    // comment's own file.
+    std::os::unix::fs::symlink(
+        &outside,
+        store.dir().join(format!(".{}.json.tmp", comment.id)),
+    )
+    .expect("linked");
+    store
+        .update(&comment.id, |comment| comment.resolve("claude".to_owned()))
+        .expect("updated");
+    assert_eq!(std::fs::read_to_string(&outside).expect("read"), "keep");
+    let link = store.path(&comment.id);
+    std::fs::remove_file(&link).expect("removed");
+    std::os::unix::fs::symlink(&outside, &link).expect("linked");
+    store.save(&comment).expect("saved over the link");
+    assert_eq!(std::fs::read_to_string(&outside).expect("read"), "keep");
+    assert!(!std::fs::symlink_metadata(&link).expect("meta").is_symlink());
+}
+
+#[test]
+fn updating_a_missing_comment_is_not_found() {
+    let (_dir, store) = store();
+    assert!(matches!(
+        store.update("c-none", |_| {}),
+        Err(ReviewError::NotFound(_))
+    ));
 }

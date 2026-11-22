@@ -91,6 +91,9 @@ impl Listed {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Draft {
     pub(crate) anchor: Anchor,
+    /// The composition the anchor was taken on; the comment is saved only
+    /// while it is still the one shown.
+    pub(crate) composition: Option<String>,
     /// A press on the canvas places the point (the composer's "Pin" button).
     pub(crate) pinning: bool,
 }
@@ -194,16 +197,11 @@ impl Review {
     /// Opens the composer on what is in front of the reviewer: the playhead
     /// at `frame`, or the In/Out span `marks`, in the chapter showing
     /// there, on the selected `layer`.
-    pub(crate) fn begin(
-        &mut self,
-        frame: u64,
-        marks: Option<(u64, u64)>,
-        layer: Option<String>,
-        chapters: &[ReactChapter],
-    ) {
+    pub(crate) fn begin(&mut self, at: At, layer: Option<String>, shown: Shown<'_>) {
         self.error = None;
         self.draft = Some(Draft {
-            anchor: anchor_at(frame, marks, layer, chapters),
+            anchor: anchor_at(at, layer, shown.chapters),
+            composition: shown.composition.map(str::to_owned),
             pinning: false,
         });
     }
@@ -232,6 +230,15 @@ impl Review {
         let (Some(store), Some(draft)) = (&self.store, &self.draft) else {
             return Err(ReviewError::NotFound(String::new()));
         };
+        if draft.composition.as_deref() != shown.composition {
+            // Its frames and chapter are the other composition's.
+            self.draft = None;
+            let refused = ReviewError::Refused(
+                "the composition changed while it was written; add it again".to_owned(),
+            );
+            self.error = Some(refused.to_string());
+            return Err(refused);
+        }
         let mut comment = Comment::new(
             self.entry.clone(),
             draft.anchor.clone(),
@@ -316,18 +323,27 @@ impl Review {
     }
 }
 
-/// The anchor of a comment made at `frame`, or on the span `marks`: frames
-/// from the start of the chapter showing at its first frame, or from the
-/// composition's start where no chapter shows.
-pub(crate) fn anchor_at(
-    frame: u64,
-    marks: Option<(u64, u64)>,
-    layer: Option<String>,
-    chapters: &[ReactChapter],
-) -> Anchor {
-    let (from, to) = match marks {
-        Some((start, end)) if start < end => (start, Some(end)),
-        _ => (frame, None),
+/// Where a new comment goes: the playhead, the In/Out marks, and the
+/// composition's length in frames.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct At {
+    pub(crate) frame: u64,
+    pub(crate) marks: Option<(u64, u64)>,
+    pub(crate) frames: u64,
+}
+
+/// The anchor of a comment made at `at.frame`, or on the span `at.marks`:
+/// frames from the start of the chapter showing at its first frame, or from
+/// the composition's start where no chapter shows. A playhead at the end
+/// (Go to End puts it one past the last frame) comments on the last frame,
+/// and a span ends at the end at the latest.
+pub(crate) fn anchor_at(at: At, layer: Option<String>, chapters: &[ReactChapter]) -> Anchor {
+    let last = at.frames.saturating_sub(1);
+    let (from, to) = match at.marks {
+        Some((start, end)) if start.min(last) < end.min(at.frames) => {
+            (start.min(last), Some(end.min(at.frames)))
+        }
+        _ => (at.frame.min(last), None),
     };
     let chapter = chapter_at(chapters, from);
     let start = chapter.map_or(0, |chapter| chapter.from);
@@ -336,7 +352,7 @@ pub(crate) fn anchor_at(
         from: from - start,
         to: to.map(|to| to - start),
         layer,
-        point: None,
+        ..Anchor::default()
     }
 }
 
@@ -363,7 +379,7 @@ pub(crate) fn pins_at<'a>(
     frame: u64,
 ) -> impl Iterator<Item = (&'a Listed, Point)> {
     listed.iter().filter_map(move |listed| {
-        let point = listed.comment.anchor.point?;
+        let point = listed.comment.anchor.point.clone()?;
         let shows = Some(listed.id()) == selected
             || (listed.comment.is_open() && listed.placement.covers(frame));
         shows.then_some((listed, point))
@@ -380,6 +396,15 @@ mod tests {
             name: id.to_uppercase(),
             from,
             duration_in_frames: length,
+        }
+    }
+
+    /// The playhead at `frame` (and `marks`) in a 300-frame composition.
+    fn at(frame: u64, marks: Option<(u64, u64)>) -> At {
+        At {
+            frame,
+            marks,
+            frames: 300,
         }
     }
 
@@ -405,7 +430,7 @@ mod tests {
 
     #[test]
     fn a_comment_at_the_playhead_counts_from_its_chapter() {
-        let anchor = anchor_at(100, None, Some("title".to_owned()), &chapters());
+        let anchor = anchor_at(at(100, None), Some("title".to_owned()), &chapters());
         assert_eq!(anchor.chapter.as_deref(), Some("demo"));
         assert_eq!((anchor.from, anchor.to), (10, None));
         assert_eq!(anchor.layer.as_deref(), Some("title"));
@@ -413,11 +438,11 @@ mod tests {
 
     #[test]
     fn marks_make_a_span_from_the_chapter_at_its_start() {
-        let anchor = anchor_at(0, Some((95, 150)), None, &chapters());
+        let anchor = anchor_at(at(0, Some((95, 150))), None, &chapters());
         assert_eq!(anchor.chapter.as_deref(), Some("demo"));
         assert_eq!((anchor.from, anchor.to), (5, Some(60)));
         // Marks out of order are ignored.
-        let anchor = anchor_at(30, Some((150, 95)), None, &chapters());
+        let anchor = anchor_at(at(30, Some((150, 95))), None, &chapters());
         assert_eq!(
             (anchor.chapter.as_deref(), anchor.from),
             (Some("intro"), 30)
@@ -425,17 +450,43 @@ mod tests {
     }
 
     #[test]
+    fn the_end_of_the_timeline_comments_on_the_last_frame() {
+        let anchor = anchor_at(at(300, None), None, &[]);
+        assert_eq!((anchor.from, anchor.to), (299, None));
+        let anchor = anchor_at(at(0, Some((250, 400))), None, &[]);
+        assert_eq!((anchor.from, anchor.to), (250, Some(300)));
+    }
+
+    #[test]
+    fn a_draft_from_another_composition_is_not_saved() {
+        let (_dir, mut review) = review();
+        review.begin(at(0, None), None, shown(&[]));
+        let teaser = Shown {
+            composition: Some("teaser"),
+            first: false,
+            chapters: &[],
+        };
+        assert!(matches!(
+            review.add("x", teaser, true),
+            Err(ReviewError::Refused(_))
+        ));
+        assert!(review.draft.is_none());
+        assert!(review.error.is_some());
+        assert!(review.listed(shown(&[])).is_empty());
+    }
+
+    #[test]
     fn past_the_chapters_frames_are_absolute() {
-        let anchor = anchor_at(500, None, None, &chapters());
-        assert_eq!((anchor.chapter, anchor.from), (None, 500));
+        let anchor = anchor_at(at(250, None), None, &chapters());
+        assert_eq!((anchor.chapter, anchor.from), (None, 250));
     }
 
     #[test]
     fn adding_writes_a_file_and_selects_it() {
         let (_dir, mut review) = review();
         let chapters = chapters();
-        review.begin(100, None, None, &chapters);
-        review.pin(Point { x: 0.5, y: 0.25 });
+        review.begin(at(100, None), None, shown(&chapters));
+        review.pin(Point::new(0.5, 0.25));
         let id = review
             .add("  Slower here ", shown(&chapters), false)
             .expect("written");
@@ -460,7 +511,7 @@ mod tests {
     #[test]
     fn several_roots_name_the_composition() {
         let (_dir, mut review) = review();
-        review.begin(0, None, None, &[]);
+        review.begin(at(0, None), None, shown(&[]));
         let id = review.add("x", shown(&[]), true).expect("written");
         let teaser = Shown {
             composition: Some("teaser"),
@@ -481,7 +532,7 @@ mod tests {
         let chapters = chapters();
         let mut ids = Vec::new();
         for frame in [10, 20] {
-            review.begin(frame, None, None, &chapters);
+            review.begin(at(frame, None), None, shown(&chapters));
             ids.push(review.add("x", shown(&chapters), false).expect("written"));
         }
         // Two comments made in one second are ordered by id: compare the
@@ -513,7 +564,7 @@ mod tests {
     #[test]
     fn replies_are_by_the_reviewer() {
         let (_dir, mut review) = review();
-        review.begin(0, None, None, &[]);
+        review.begin(at(0, None), None, shown(&[]));
         let id = review.add("x", shown(&[]), false).expect("written");
         review.reply(&id, "Done", shown(&[])).expect("written");
         let listed = review.listed(shown(&[]));
@@ -528,7 +579,7 @@ mod tests {
     fn a_removed_chapter_orphans_its_comments() {
         let (_dir, mut review) = review();
         let chapters = chapters();
-        review.begin(100, None, None, &chapters);
+        review.begin(at(100, None), None, shown(&chapters));
         review.add("x", shown(&chapters), false).expect("written");
         let listed = review.listed(shown(&chapters[..1]));
         assert!(listed[0].placement.is_orphaned());
@@ -539,7 +590,7 @@ mod tests {
     #[test]
     fn another_programs_write_changes_the_stamp() {
         let (_dir, mut review) = review();
-        review.begin(0, None, None, &[]);
+        review.begin(at(0, None), None, shown(&[]));
         let id = review.add("x", shown(&[]), false).expect("written");
         let folder = review.folder().expect("a folder");
         assert_eq!(folder_stamp(&folder), review.stamp);
@@ -556,13 +607,13 @@ mod tests {
     fn marks_and_pins() {
         let (_dir, mut review) = review();
         let chapters = chapters();
-        review.begin(0, Some((90, 120)), None, &chapters);
-        review.pin(Point { x: 0.1, y: 0.2 });
+        review.begin(at(0, Some((90, 120))), None, shown(&chapters));
+        review.pin(Point::new(0.1, 0.2));
         let span = review
             .add("span", shown(&chapters), false)
             .expect("written");
-        review.begin(150, None, None, &chapters);
-        review.pin(Point { x: 0.3, y: 0.4 });
+        review.begin(at(150, None), None, shown(&chapters));
+        review.pin(Point::new(0.3, 0.4));
         let moment = review
             .add("moment", shown(&chapters), false)
             .expect("written");
@@ -590,7 +641,7 @@ mod tests {
     fn the_demo_has_no_comments_to_write() {
         let mut review = Review::open(None);
         assert!(review.folder().is_none());
-        review.begin(0, None, None, &[]);
+        review.begin(at(0, None), None, shown(&[]));
         assert!(review.add("x", shown(&[]), false).is_err());
     }
 }

@@ -97,7 +97,8 @@ pub struct ResolveArgs {
 /// The composition comments are placed against: its id, rate, chapters,
 /// and, for the layer check, the bridge that evaluates its frames.
 struct Composition<'a> {
-    id: String,
+    /// The root's id; `None` for a `.celesta.json` project.
+    id: Option<String>,
     first: bool,
     frame_rate: Rational,
     chapters: Vec<ReactChapter>,
@@ -135,13 +136,41 @@ fn store_for(entry: &Path) -> (CommentStore, String) {
     (store, key)
 }
 
-/// The composition a comment on `composition` of an entry shows on: one
-/// naming the shown composition, or none when the shown one is the first.
-fn shows_on(comment: &Comment, key: &str, composition: Option<&Composition<'_>>) -> bool {
+/// Whether a comment shows on the composition: one naming it, or none
+/// when it is the first. Without the composition loaded, by `wanted`, the
+/// root asked for: a comment naming another root is left out, and one
+/// naming none is kept.
+fn shows_on(
+    comment: &Comment,
+    key: &str,
+    composition: Option<&Composition<'_>>,
+    wanted: Option<&str>,
+) -> bool {
     match composition {
-        None => comment.entry == key,
+        None => comment.is_on(key, wanted),
         Some(shown) => {
-            comment.is_on(key, Some(&shown.id)) && (comment.composition.is_some() || shown.first)
+            comment.is_on(key, shown.id.as_deref())
+                && (comment.composition.is_some() || shown.first)
+        }
+    }
+}
+
+/// A `.celesta.json` project as comments are placed on it: no chapters,
+/// so its comments' frames are the timeline's.
+fn project_composition(entry: &Path, warnings: &mut Vec<String>) -> Option<Composition<'static>> {
+    match celesta_project::Project::load(entry) {
+        Ok(project) => Some(Composition {
+            id: None,
+            first: true,
+            frame_rate: project.settings.frame_rate,
+            chapters: Vec::new(),
+            bridge: None,
+        }),
+        Err(error) => {
+            warnings.push(format!(
+                "could not read the project, so comments are not placed: {error}"
+            ));
+            None
         }
     }
 }
@@ -181,7 +210,7 @@ pub fn list(args: ListCommentsArgs, stop: &Stop, media: &SharedMedia) -> CallToo
     let mut composition = bridge.as_mut().map(|bridge| {
         let metadata = bridge.metadata();
         Composition {
-            id: metadata.composition_id.clone(),
+            id: Some(metadata.composition_id.clone()),
             first: metadata
                 .compositions
                 .first()
@@ -194,10 +223,20 @@ pub fn list(args: ListCommentsArgs, stop: &Stop, media: &SharedMedia) -> CallToo
     if let (Some(composition), Some(bridge)) = (composition.as_mut(), bridge.as_mut()) {
         composition.bridge = Some(bridge);
     }
+    if composition.is_none() && args.check.unwrap_or(true) && !is_react(&entry) {
+        composition = project_composition(&entry, &mut warnings);
+    }
     let comments: Vec<&Comment> = loaded
         .comments
         .iter()
-        .filter(|comment| shows_on(comment, &key, composition.as_ref()))
+        .filter(|comment| {
+            shows_on(
+                comment,
+                &key,
+                composition.as_ref(),
+                args.composition.as_deref(),
+            )
+        })
         .filter(|comment| match args.status {
             Status::Open => comment.is_open(),
             Status::Resolved => !comment.is_open(),
@@ -248,7 +287,7 @@ pub fn list(args: ListCommentsArgs, stop: &Stop, media: &SharedMedia) -> CallToo
         json!({
             "entry": key,
             "folder": store.dir(),
-            "compositionId": composition.as_ref().map(|composition| &composition.id),
+            "compositionId": composition.as_ref().and_then(|composition| composition.id.as_ref()),
             "comments": listed,
             "warnings": warnings,
         }),
@@ -417,7 +456,7 @@ fn write_comment(text: &mut String, comment: &Comment, value: &Value) {
     if let Some(layer) = &anchor.layer {
         let _ = write!(text, ", layer {layer}");
     }
-    if let Some(point) = anchor.point {
+    if let Some(point) = &anchor.point {
         let _ = write!(text, ", point ({}, {})", fmt(point.x), fmt(point.y));
     }
     text.push('\n');
@@ -465,7 +504,7 @@ fn write_comment(text: &mut String, comment: &Comment, value: &Value) {
 fn review_error(error: &ReviewError) -> CallToolResult {
     let code = match error {
         ReviewError::NotFound(_) => "comment_not_found",
-        ReviewError::BadId(_) => "usage",
+        ReviewError::BadId(_) | ReviewError::Refused(_) => "usage",
         ReviewError::Invalid { .. } => "invalid_comment",
         ReviewError::Io { .. } => "io",
     };
@@ -556,7 +595,7 @@ pub fn summary(
     let (store, key) = store_for(entry);
     let loaded = store.load();
     let shown = Composition {
-        id: composition_id.to_owned(),
+        id: Some(composition_id.to_owned()),
         first,
         frame_rate: Rational {
             numerator: 1,
@@ -570,7 +609,7 @@ pub fn summary(
     let mut resolved = 0;
     let mut orphaned = 0;
     for comment in &loaded.comments {
-        if !shows_on(comment, &key, Some(&shown)) {
+        if !shows_on(comment, &key, Some(&shown), None) {
             continue;
         }
         if comment.is_open() {
@@ -728,7 +767,7 @@ mod tests {
     fn an_unnamed_comment_shows_only_on_the_first_composition() {
         let unnamed = comment(None);
         let shown = |first| Composition {
-            id: "teaser".to_owned(),
+            id: Some("teaser".to_owned()),
             first,
             frame_rate: Rational {
                 numerator: 30,
@@ -737,9 +776,15 @@ mod tests {
             chapters: Vec::new(),
             bridge: None,
         };
-        assert!(shows_on(&unnamed, "film.tsx", Some(&shown(true))));
-        assert!(!shows_on(&unnamed, "film.tsx", Some(&shown(false))));
-        assert!(shows_on(&unnamed, "film.tsx", None));
+        assert!(shows_on(&unnamed, "film.tsx", Some(&shown(true)), None));
+        assert!(!shows_on(&unnamed, "film.tsx", Some(&shown(false)), None));
+        assert!(shows_on(&unnamed, "film.tsx", None, None));
+        // Unloaded, `composition` still leaves out another root's comments.
+        let mut named = comment(None);
+        named.composition = Some("main".to_owned());
+        assert!(!shows_on(&named, "film.tsx", None, Some("teaser")));
+        assert!(shows_on(&named, "film.tsx", None, Some("main")));
+        assert!(shows_on(&unnamed, "film.tsx", None, Some("teaser")));
     }
 
     #[test]
@@ -749,7 +794,7 @@ mod tests {
         let saved = comment(Some("intro"));
         store.save(&saved).expect("saved");
         let shown = Composition {
-            id: "main".to_owned(),
+            id: Some("main".to_owned()),
             first: true,
             frame_rate: Rational {
                 numerator: 30,
@@ -778,5 +823,42 @@ mod tests {
             &store,
         );
         assert_eq!(orphan["orphaned"], "chapter");
+    }
+}
+
+#[cfg(test)]
+mod project_tests {
+    use super::*;
+    use celesta_project::review::Anchor;
+
+    #[test]
+    fn a_json_project_places_comments_on_its_frames() {
+        let dir = tempfile::tempdir().expect("a temporary folder");
+        let root = dir.path();
+        std::fs::write(root.join("celesta.config.json"), "{}").expect("written");
+        let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/minimal.celesta.json");
+        let entry = root.join("minimal.celesta.json");
+        std::fs::copy(&source, &entry).expect("copied");
+        let mut warnings = Vec::new();
+        let shown = project_composition(&entry, &mut warnings).expect("read");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let (store, key) = store_for(&entry);
+        let comment = Comment::new(
+            key,
+            Anchor {
+                from: 15,
+                ..Anchor::default()
+            },
+            "Reviewer".to_owned(),
+            "x".to_owned(),
+        );
+        let value = describe(&comment, Some(&shown), false, &store);
+        assert_eq!(value["frame"], 15);
+        assert!(
+            value["seconds"]
+                .as_f64()
+                .is_some_and(|seconds| seconds > 0.0)
+        );
     }
 }

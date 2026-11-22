@@ -568,7 +568,9 @@ function nondeterminismWarnings() {
  * root's celesta-comments/ folder (the nearest folder with
  * celesta.config.json above the entry, else the entry's): a summary line
  * and the counts, or null without any. A comment is orphaned when its
- * chapter id is not declared any more.
+ * chapter id is not declared any more. Without chapters in the config
+ * (none declared, or an exporter older than the comments) orphans are not
+ * counted (`orphaned: null`).
  */
 function reviewComments(entry, ready, config) {
   const entryDir = path.dirname(path.resolve(entry));
@@ -590,7 +592,7 @@ function reviewComments(entry, ready, config) {
   const key = path.relative(root, path.resolve(entry)).split(path.sep).join('/');
   const selected = ready.compositionId ?? 'default';
   const first = (ready.compositions ?? [])[0]?.id ?? selected;
-  const chapters = new Set((config.chapters ?? []).map((chapter) => chapter.id));
+  const chapters = Array.isArray(config.chapters) ? new Set(config.chapters.map((chapter) => chapter.id)) : null;
   const counts = { open: 0, resolved: 0, orphaned: 0 };
   for (const name of names) {
     let comment;
@@ -607,9 +609,10 @@ function reviewComments(entry, ready, config) {
     }
     counts.open += 1;
     const chapter = comment.anchor?.chapter;
-    if (chapter && !chapters.has(chapter)) counts.orphaned += 1;
+    if (chapters && chapter && !chapters.has(chapter)) counts.orphaned += 1;
   }
   if (counts.open + counts.resolved === 0) return null;
+  if (!chapters) counts.orphaned = null;
   let line = `comments: ${counts.open} open${counts.orphaned ? ` (${counts.orphaned} orphaned)` : ''}, ${counts.resolved} resolved`;
   if (counts.open) line += `; read them with list_comments or in ${folder}`;
   return { line, counts };

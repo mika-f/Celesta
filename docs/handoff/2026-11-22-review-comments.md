@@ -28,8 +28,15 @@ in git; replies to one thread can. Fields (`Comment`, camelCase):
 | `resolved` | `{by, at}`; absent while open |
 | `replies` | `[{id, author, createdAt, body}]` |
 
-Unknown fields are kept on rewrite (`#[serde(flatten)] extra`). Writes go
-to `.<id>.json.tmp` and are renamed over the file. A file that does not
+Unknown fields are kept on rewrite, at the top and inside `anchor`,
+`point`, `lastSeen`, `resolved`, and each reply (`#[serde(flatten)]
+extra`). A write goes to a temporary file of its own
+(`.<id>.<w-…>.tmp`, opened with `create_new`, so a link planted there is
+never written through) and is renamed over the thread's file.
+`CommentStore::update` holds `.<id>.lock` (made with `create_new`) from the
+read to the write, so the editor and an agent replying at once both keep
+their reply; a writer waits up to 5 s, and a lock older than 30 s is taken
+over. A file that does not
 parse, or whose `id` is not its file name, is a `LoadProblem`; the others
 still load.
 
@@ -51,7 +58,11 @@ user.name`, `USER`/`USERNAME`, `Anonymous`. MCP replies default to `agent`.
 - **Add comment…** (`C`, Mark → Add Comment…, `AddComment`) opens the
   composer on the playhead frame, or the In/Out span when both are set, in
   the chapter showing at its first frame (`anchor_at`), on the selected
-  layer. **Pin** arms the canvas: the next press there sets the point
+  layer. A playhead at the end (one past the last frame) comments on the
+  last frame. The draft keeps the composition it was taken on; switching
+  roots before saving refuses the save (`ReviewError::Refused`) and drops
+  the draft. Saving clears the reply field, since the new comment is
+  selected. **Pin** arms the canvas: the next press there sets the point
   (`press_pin`; layer picking is off while armed). `Enter` saves,
   `Shift Enter` is a newline, `Escape` cancels.
 - Rows: number square, chapter name and timecode(s), layer, author, body
@@ -77,17 +88,22 @@ user.name`, `USER`/`USERNAME`, `Anonymous`. MCP replies default to `agent`.
 **MCP** (`crates/mcp/src/comments.rs`): `list_comments { entry,
 composition?, status?: open|resolved|all, chapter?, check? }` loads the
 entry through the bridge (`inspect::spawn_bridge`, factored out of
-`inspect`) and returns each comment with `frame`/`toFrame`/`seconds`,
+`inspect`), or reads a `.celesta.json` project's frame rate (no chapters:
+its frames are absolute), and returns each comment with `frame`/`toFrame`/`seconds`,
 `chapterName`, and `orphaned: null | "chapter" | "layer"` (`layer` when no
 layer with the id is in the scene at the comment's frame; at most 50
 distinct frames are evaluated for that, `LAYER_CHECK_FRAMES`). A bridge that
-fails to load is a warning and the comments are listed unplaced.
+fails to load is a warning and the comments are listed unplaced; with
+`composition` given, comments naming another root are still left out.
 `reply_to_comment { entry, id, body, author? }` and `resolve_comment {
 entry, id, reply?, author?, resolved? }` (false reopens). Errors:
 `comment_not_found`, `invalid_comment`, `io`, `usage`. `inspect` and
 `inspect.mjs` print `comments: N open (M orphaned), K resolved; read them
 with list_comments` (and `comments` counts in JSON) when the composition has
-any; `inspect.mjs` now also prints a `chapters:` line.
+any; `inspect.mjs` now also prints a `chapters:` line. `celesta-export
+--inspect` sends `config.chapters` when any are declared (from main's rough
+cut work); without them, from an older exporter or a composition without
+chapters, orphans are not counted (`orphaned: null`).
 
 **Docs.** `skills/celesta/references/review.md` (also `read_docs` topic
 `review`), a row and a workflow note in `SKILL.md`, a paragraph in the MCP
@@ -109,6 +125,30 @@ the en/ja preview guide.
 
 ## Checks
 
-See the PR for the commands run and their results; screenshots of the UI
-were taken by the user (the dev editor does not launch from an agent's
-shell, see the editor launch note in memory).
+On macOS (Apple silicon), Rust 1.99.1, with the React runtime built
+(`pnpm run build:runtime`):
+
+- `cargo test -p celesta-project` (38 passed, 18 of them `review`, one
+  loading the `scene-timing` example's comments), `cargo test -p
+  celesta-editor -p celesta-editor-theme` (1007 and 11 passed; `review`
+  and `review_panel` cover anchoring at the playhead and the In/Out span,
+  writing and reloading, composition filtering, stable numbers, orphans,
+  marks, pins, the folder stamp, and the canvas point mapping), `cargo test
+  -p celesta-mcp` (61 unit tests, 41 integration tests; the new
+  `comments::list_comments_places_them_and_finds_orphans` runs the tools
+  over the bridge: placement, a gone chapter, a missing layer, the
+  `inspect` line, resolving, and the filters).
+- Four export integration tests failed once with the test codec not
+  answering `hello` within 30 s while nine sessions were building on the
+  machine; they passed on a re-run, and touch nothing this changes.
+- `cargo clippy -p celesta-project -p celesta-mcp -p celesta-editor -p
+  celesta-editor-theme --all-targets -- -D warnings`, `cargo fmt --all --
+  --check`, `git diff --check`.
+- `node skills/celesta/scripts/inspect.mjs examples/scene-timing/film.tsx
+  --no-native --frames 0` prints the `chapters:` line and `comments: 3 open
+  (1 orphaned), 1 resolved`; `--json` carries the counts.
+- An `EditorView` cannot be built in a test window, so the tab, the marks,
+  and the pins were checked in the running editor on
+  `examples/scene-timing/film.tsx`; the screenshots are on the PR. The dev
+  editor does not start from an agent's shell (it stops at `_dyld_start`),
+  so the user took them.
