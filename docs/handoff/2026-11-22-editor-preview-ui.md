@@ -11,6 +11,7 @@ not the rendered video or the composition API.
   and Mark menu as fallbacks when the viewer is narrow.
 - Re-evaluate the toolbar layout when the measured viewer width crosses either
   rem breakpoint, so the controls follow panel resizes even while paused.
+  In the compact layout, groups can wrap rather than run underneath a dock.
 
 ## Validation
 

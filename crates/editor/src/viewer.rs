@@ -762,7 +762,8 @@ impl EditorView {
             .font_family(mono.clone())
             .child(
                 div()
-                    .text_lg()
+                    .when(show_marks, |label| label.text_lg())
+                    .when(!show_marks, |label| label.text_base())
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(cx.theme().foreground)
                     .child(format_timecode(self.clock.frame(), frame_rate)),
@@ -775,7 +776,10 @@ impl EditorView {
             });
         let leading = div()
             .flex()
-            .flex_1()
+            .when(show_marks, |group| group.flex_1())
+            .when(!show_marks, |group| {
+                group.flex_none().max_w_full().overflow_hidden()
+            })
             .items_center()
             .gap_1()
             .child(timecode)
@@ -806,6 +810,9 @@ impl EditorView {
         let transport = div()
             .flex()
             .flex_none()
+            .when(!show_marks, |group| {
+                group.max_w_full().flex_wrap().justify_center()
+            })
             .items_center()
             .gap_1()
             .child(
@@ -869,7 +876,10 @@ impl EditorView {
             );
         let trailing = div()
             .flex()
-            .flex_1()
+            .when(show_marks, |group| group.flex_1())
+            .when(!show_marks, |group| {
+                group.flex_none().max_w_full().flex_wrap()
+            })
             .justify_end()
             .items_center()
             .gap_1()
@@ -954,11 +964,18 @@ impl EditorView {
             .relative()
             .flex()
             .flex_none()
-            .h(rems(3.0))
             .w_full()
             .items_center()
-            .gap_3()
-            .px(metrics::panel_padding())
+            .when(show_marks, |bar| {
+                bar.h(rems(3.0)).gap_3().px(metrics::panel_padding())
+            })
+            .when(!show_marks, |bar| {
+                bar.flex_wrap()
+                    .justify_between()
+                    .min_h(rems(3.0))
+                    .gap_1()
+                    .p_1()
+            })
             .bg(cx.theme().title_bar)
             .border_t_1()
             .border_color(cx.theme().border)
