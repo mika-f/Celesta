@@ -94,7 +94,11 @@ frame 105):
   applies to every error the entry throws. With source maps on, a missing
   named export reaches the CLI in V8's words (`The requested module '…' does
   not provide an export named '…'`) instead of Node's (`Named export '…' not
-  found. …`), so `misplacedImportError` reads both. 150 preview frames of
+  found. …`), so `misplacedImportError` reads both. The determinism guard
+  (`determinism.ts`) told the entry's calls by the bundle's URL in the stack,
+  which the source map replaces with the original files, so it now reads
+  V8's own call sites (`Error.prepareStackTrace` set for that capture),
+  which still name `entry.mjs`. 150 preview frames of
   `examples/afterimage` took 3.84–3.88 s with and without source maps.
 - `collectAudio({ preview })`; the CLI passes the request's `preview`.
   Every frame reports a clip for the whole window it plays in, so a scene
@@ -141,6 +145,9 @@ frame 105):
   same `renderAt` call, without `preview`, so it still fails the frame (now
   naming the scene). Drawing the card in the browser preview needs the
   engine to tell the two apart first.
+- `SceneBoundary` and `SceneRenderError` are exported from the browser
+  entry (`browser.ts`) too, which `<TransitionSeries>` imports from in
+  `@celesta.studio/web`.
 - `<Sequence>` is not wrapped: it also times media and small parts inside
   scenes, and has no name for a card. `SceneBoundary` is public for the
   cases that want it.
@@ -149,9 +156,11 @@ frame 105):
 
 On macOS (Apple silicon), Node 26.13, after `pnpm run build:runtime`:
 
-- Vitest: `packages/react` (357, including `test/scene-boundary.test.mts`),
-  `packages/transitions` (30, including the TransitionSeries card case), and
-  `packages/cli` (124, including `test/scene-errors.test.mts`) pass, with
+- Vitest, after rebasing onto `main` at eaeb0c16: `packages/react` (379,
+  including `test/scene-boundary.test.mts`),
+  `packages/transitions` (30, including the TransitionSeries card case),
+  `packages/cli` (129, including `test/scene-errors.test.mts` and
+  `test/determinism.test.mts`), and `packages/web` (154) pass, with
   `tsc -b test` for each. `pnpm run test:runtime` passed every package but
   `packages/voicevox`'s "packaged CLI …" case, which timed out: the esbuild
   binary its staged runtime starts hung at `_dyld_start` (see below).

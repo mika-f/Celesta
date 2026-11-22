@@ -15,6 +15,8 @@ export { beatAt, cueAt, useBeat, useCue } from './timing';
 export { Series, Stagger, computeSeries } from './series';
 export { Scenes, defineScenes, sceneAt, useScene } from './scenes';
 export { ScenePlaceholder } from './scene-placeholder';
+export { SceneBoundary, SceneRenderError } from './scene-boundary';
+export type { SceneBoundaryProps, SceneErrorReport } from './scene-boundary';
 export { listChapters } from './chapters';
 export { frameKeyframes, keyframes } from './keyframes';
 export { measureText, textCaret, useTextMetrics } from './text-measure';

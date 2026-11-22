@@ -16,6 +16,7 @@ import {
 } from '../src/index.js';
 import type { Layer } from '../src/index.js';
 import { mount } from '../src/render.js';
+import * as browser from '../src/browser.js';
 import type { MountedComposition } from '../src/render.js';
 
 const h = React.createElement;
@@ -356,4 +357,9 @@ test('a cut clip resumes past a rate that steps at one time', () => {
   assert.ok(Math.abs(resumed.start - 2) < 1e-9);
   assert.ok(Math.abs(resumed.sourceStart - 3) < 1e-9, `${resumed.sourceStart}`);
   composition.dispose();
+});
+
+test('the browser entry exports <SceneBoundary> and SceneRenderError too', () => {
+  assert.equal(browser.SceneBoundary, SceneBoundary);
+  assert.equal(browser.SceneRenderError, SceneRenderError);
 });
