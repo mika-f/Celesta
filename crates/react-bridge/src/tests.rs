@@ -6,7 +6,7 @@ use crate::properties::{
     ENTRY_PROPS_FILE, EffectiveValue, PropertyInputError, PropertyInputs, PropertySource,
     ValueSource, effective_values, resolve_props_file,
 };
-use crate::protocol::{PropertyInputsMessage, ReadyMessage, Request, Response};
+use crate::protocol::{Answer, PropertyInputsMessage, ReadyMessage, Request, Response};
 use crate::types::{
     ComponentPropertyField, ComponentSchemaField, ElementKind, FrameSpan, LayerSource,
     LayerSourceReport, LegacyImport, PrimitivePropertyField, PrimitiveSize, PropOverride,
@@ -337,6 +337,55 @@ fn ready_message_carries_legacy_imports() {
         panic!("expected a Ready message");
     };
     assert!(legacy_imports.is_empty());
+}
+
+#[test]
+fn answers_carry_the_nondeterministic_calls_they_report() {
+    let json = serde_json::json!({
+        "scene": {
+            "width": 8, "height": 8,
+            "frameRate": {"numerator": 30, "denominator": 1},
+            "time": {"value": 0, "timescale": 30},
+            "layers": []
+        },
+        "audio": [],
+        "nondeterministic": ["Math.random()", "Date.now()"]
+    })
+    .to_string();
+    let Answer {
+        response: Response::Ok { .. },
+        nondeterministic,
+    } = serde_json::from_str(&json).unwrap()
+    else {
+        panic!("expected a frame");
+    };
+    assert_eq!(nondeterministic, ["Math.random()", "Date.now()"]);
+
+    // An error answer reports them too; an older runtime sends none.
+    let json = r#"{"error":"boom","nondeterministic":["new Date()"]}"#;
+    let answer: Answer = serde_json::from_str(json).unwrap();
+    assert!(matches!(answer.response, Response::Err { .. }));
+    assert_eq!(answer.nondeterministic, ["new Date()"]);
+    let answer: Answer = serde_json::from_str(r#"{"error":"boom"}"#).unwrap();
+    assert!(answer.nondeterministic.is_empty());
+
+    // So does the ready message, for the entry's first renders.
+    let json = serde_json::json!({
+        "config": {
+            "width": 8, "height": 8,
+            "frameRate": {"numerator": 30, "denominator": 1},
+            "durationInFrames": 1
+        },
+        "nondeterministic": ["performance.now()"]
+    })
+    .to_string();
+    let ReadyMessage::Ready {
+        nondeterministic, ..
+    } = serde_json::from_str(&json).unwrap()
+    else {
+        panic!("expected a Ready message");
+    };
+    assert_eq!(nondeterministic, ["performance.now()"]);
 }
 
 #[test]

@@ -23,6 +23,7 @@ import { resolveComponent } from './registry';
 import { type HostNode, type RootContainer, createRoot } from './reconciler';
 import { type LayerSourceReport, type SourcePos, layerSourceReport, occurrenceKeys } from './source-chain';
 import { checkCue } from './subtitles';
+import { evaluateDeterministically } from './determinism';
 import { type ChapterSource, compositionChapters } from './chapters';
 import type {
   BackfaceVisibility,
@@ -1685,7 +1686,9 @@ export function mount(defaultExport: EntryComponent, compositionId?: string): Mo
         React.createElement(PropOverridesContext.Provider, { value: overridesValue },
           React.createElement(defaultExport, { key: entryKey }))),
     );
-    root.render(element);
+    // Every pass restarts `Math.random`'s sequence, so a frame that took
+    // two passes draws what it would have in one.
+    evaluateDeterministically(time, () => root.render(element));
   };
 
   // IDs and size/clock props must be static, independent of the placeholder
@@ -1786,7 +1789,10 @@ export function mount(defaultExport: EntryComponent, compositionId?: string): Mo
   };
 
   /** `renderAt`; with `audioOnly`, only the audio is gathered and no layers are built. */
-  const renderFrame = (time: Time, project: ProjectFrame | null, options: RenderAtOptions & { audioOnly?: boolean } = {}) => {
+  const renderFrame = (time: Time, project: ProjectFrame | null, options: RenderAtOptions & { audioOnly?: boolean } = {}) =>
+    // The walk runs entry code too: host element preparation, plugin layers.
+    evaluateDeterministically(time, () => renderFrameAt(time, project, options));
+  const renderFrameAt = (time: Time, project: ProjectFrame | null, options: RenderAtOptions & { audioOnly?: boolean }) => {
     const { audioOnly = false, openEnd = false, compact = false, statics, debugGuides = false, preview = false } = options;
     const instance = settleTree(time, project, openEnd, debugGuides, preview, options.propOverrides);
     const audio: AudioClipDescriptor[] = [];
@@ -1836,7 +1842,7 @@ export function mount(defaultExport: EntryComponent, compositionId?: string): Mo
   };
 
   /** Settles the frame at `time` and maps each of its layer ids to the host node behind it. */
-  const walkLayerNodes = (time: Time, preview: boolean) => {
+  const walkLayerNodes = (time: Time, preview: boolean) => evaluateDeterministically(time, () => {
     const instance = settleTree(time, null, false, false, preview);
     const layerNodes = new Map<string, HostNode>();
     // No statics: a <Static> is walked, not referenced, so its layers are
@@ -1859,7 +1865,7 @@ export function mount(defaultExport: EntryComponent, compositionId?: string): Mo
     }
     walkChildren(instance, 'root', context, []);
     return { instance, layerNodes };
-  };
+  });
 
   return {
     dispose() { root.render(null); },
@@ -2035,43 +2041,52 @@ export function createResolver(lang?: string): Resolver {
 
   return {
     resolve(items, runtime, fonts = []) {
-      const runtimeValue = {
-        ...(runtime ?? PLACEHOLDER_RUNTIME),
-        preview: runtime?.preview === true,
-        lang,
-      };
-      let rerenderRequested = false;
-      const requestRerender = () => {
-        rerenderRequested = true;
-      };
-      const element = () => runtimeTree(
-        { layers: [], tracks: {}, runtime: runtimeValue, fonts, requestRerender },
-        React.createElement(ResolverHost, { items }),
-      );
-      root.render(element());
-      if (rerenderRequested) {
-        // A ref read during render is attached only by the commit.
-        root.render(element());
-      }
-      const walkContext = rootWalkContext(
-        runtimeValue.fps,
-        runtimeValue.durationInFrames,
-        runtime?.time ?? ZERO_TIME,
-        { lang: runtimeValue.lang },
-      );
-      const components = container.children.map((child, index) => {
-        // An unresolved name renders the empty 'rawLayers' marker; anything
-        // else is a resolved component's group (possibly one that rendered
-        // no layers, which is still "resolved").
-        if (child.type === 'rawLayers') {
-          return null;
-        }
-        const audio: AudioClipDescriptor[] = [];
-        return walkChildren(child, `resolve.${index}`, walkContext, audio);
-      });
-      // Every item shares `walkContext`, so this lists each source once.
-      const shaders = usedShaders(walkContext);
-      return shaders.length > 0 ? { components, shaders } : { components };
+      return evaluateDeterministically(runtime?.time ?? ZERO_TIME, () => resolveAt(items, runtime, fonts));
     },
   };
+
+  function resolveAt(
+    items: readonly ComponentResolutionRequest[],
+    runtime: ResolutionRuntime | undefined,
+    fonts: readonly ResolvedAsset[],
+  ): ComponentResolutions {
+    const runtimeValue = {
+      ...(runtime ?? PLACEHOLDER_RUNTIME),
+      preview: runtime?.preview === true,
+      lang,
+    };
+    let rerenderRequested = false;
+    const requestRerender = () => {
+      rerenderRequested = true;
+    };
+    const element = () => runtimeTree(
+      { layers: [], tracks: {}, runtime: runtimeValue, fonts, requestRerender },
+      React.createElement(ResolverHost, { items }),
+    );
+    const time = runtime?.time ?? ZERO_TIME;
+    evaluateDeterministically(time, () => root.render(element()));
+    if (rerenderRequested) {
+      // A ref read during render is attached only by the commit.
+      evaluateDeterministically(time, () => root.render(element()));
+    }
+    const walkContext = rootWalkContext(
+      runtimeValue.fps,
+      runtimeValue.durationInFrames,
+      time,
+      { lang: runtimeValue.lang },
+    );
+    const components = container.children.map((child, index) => {
+      // An unresolved name renders the empty 'rawLayers' marker; anything
+      // else is a resolved component's group (possibly one that rendered
+      // no layers, which is still "resolved").
+      if (child.type === 'rawLayers') {
+        return null;
+      }
+      const audio: AudioClipDescriptor[] = [];
+      return walkChildren(child, `resolve.${index}`, walkContext, audio);
+    });
+    // Every item shares `walkContext`, so this lists each source once.
+    const shaders = usedShaders(walkContext);
+    return shaders.length > 0 ? { components, shaders } : { components };
+  }
 }

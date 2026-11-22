@@ -13,6 +13,31 @@ out of order when scrubbing and exporting. Never use `Math.random()`,
 `Date.now()`, timers, `useEffect`, or state that accumulates across renders.
 For randomness and noise, use [`@celesta.studio/math`](math.md).
 
+Celesta holds every frame to this while it renders (the preview, exports,
+`inspect.mjs`, and the MCP tools alike):
+
+- `Math.random()` restarts, on every frame, from a seed made from the
+  frame's time, so a frame always gets the same numbers whatever order frames
+  render in, and the next frame gets different ones: a particle placed with
+  `Math.random()` jumps every frame. Seed by index with `random(seed)`
+  instead.
+- `Date.now()`, `performance.now()`, and `new Date()` (and `Date()`) read
+  the frame's time in milliseconds: `Date.now()` is `1500` at 1.5 s, as if
+  the film started at 1970-01-01T00:00:00Z. `new Date(value)`,
+  `Date.parse()`, and `Date.UTC()` are unchanged.
+- Inside a `<FreezeFrame>`, a `<MotionBlur>` sample, or a `<Trail>` copy,
+  both follow that subtree's moment: a frozen subtree keeps its values.
+- A `Math.random()` value kept across renders (`useMemo`, state) shifts the
+  numbers drawn after it depending on which frames rendered before, so
+  still exports and videos can differ; seed by index instead.
+- A call from the entry, the packages it bundles, or a plugin module warns
+  once per run, `nondeterministic_render: the entry calls Math.random() …`
+  ([errors.md](errors.md#entry-and-components-react)).
+
+Module scope and `prepare()` run outside any frame, with the real clock and
+`Math.random()`, so `prepare()` can time out a request or stamp a cache; keep
+what they produce constant across frames.
+
 ## Contents
 
 - [Pick a helper](#pick-a-helper)

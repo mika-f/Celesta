@@ -177,3 +177,43 @@ test('a timeout exits cleanly when the native process group is already gone', ()
     assert.doesNotMatch(result.stderr, /ESRCH|at process/);
   });
 });
+
+test('an entry that calls Math.random() or Date.now() while rendering gets a nondeterministic_render warning', () => {
+  withEntry('celesta-inspect-determinism-', ({ write, inspect }) => {
+    write(`
+      import { Composition, Text, useCurrentFrame } from '@celesta.studio/react';
+      function Value() {
+        const frame = useCurrentFrame();
+        return <Text>{String(frame > 10 ? Date.now() : Math.random())}</Text>;
+      }
+      export default () => <Composition width={64} height={64} fps={30} durationInFrames={30}><Value /></Composition>;
+    `);
+    const text = inspect('--frames', '0,20');
+    assert.equal(text.status, 0, text.stderr);
+    assert.match(
+      text.stdout,
+      /^warning: nondeterministic_render: the entry calls Math\.random\(\) and Date\.now\(\) while rendering;/m,
+    );
+    const json = inspect('--frames', '0,20', '--json');
+    assert.equal(json.status, 0, json.stderr);
+    const report = reportOf(json.stdout) as InspectReport & { warnings: string[] };
+    assert.equal(report.warnings.length, 1);
+    assert.match(report.warnings[0], /^nondeterministic_render: the entry calls Math\.random\(\) and Date\.now\(\)/);
+    // Frame 20 reads the frozen clock: two thirds of a second, in whole milliseconds.
+    const [, later] = report.frames;
+    assert.equal(contentOf(later.scene.layers[0], 'text').text, '666');
+  });
+});
+
+test('an entry that reads no clock gets no warning', () => {
+  withEntry('celesta-inspect-determinism-', ({ write, inspect }) => {
+    write(`
+      import { Composition, Text, useCurrentFrame } from '@celesta.studio/react';
+      const Value = () => <Text>{String(useCurrentFrame())}</Text>;
+      export default () => <Composition width={64} height={64} fps={30} durationInFrames={30}><Value /></Composition>;
+    `);
+    const json = inspect('--json');
+    assert.equal(json.status, 0, json.stderr);
+    assert.deepEqual((reportOf(json.stdout) as InspectReport & { warnings: string[] }).warnings, []);
+  });
+});

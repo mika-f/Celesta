@@ -99,35 +99,39 @@ pub(crate) struct ComponentRequest<'a> {
     pub(crate) props: &'a BTreeMap<String, serde_json::Value>,
 }
 
+/// A [`Response`] with the APIs the runtime reports with it.
+#[derive(Deserialize)]
+#[serde(try_from = "RawResponse")]
+pub(crate) struct Answer {
+    pub(crate) response: Response,
+    /// The clock and random APIs the entry was first seen calling since the
+    /// last answer; see [`NondeterministicCalls`](crate::NondeterministicCalls).
+    pub(crate) nondeterministic: Vec<String>,
+}
+
+/// What an answer says, read from its [`RawResponse`].
 #[derive(Deserialize)]
 #[serde(try_from = "RawResponse")]
 pub(crate) enum Response {
     CollectedAudio {
-        #[serde(rename = "collectedAudio")]
         collected_audio: Vec<ReactAudioClipDescriptor>,
     },
     CollectedSubtitles {
-        #[serde(rename = "collectedSubtitles")]
         collected_subtitles: Vec<ReactSubtitleDescriptor>,
     },
     CollectedOccurrences {
-        #[serde(rename = "collectedOccurrences")]
         collected_occurrences: OccurrenceIndex,
     },
     MeasureText {
-        #[serde(rename = "measureText")]
         measure_text: Box<MeasureTextRequest>,
     },
     Ok {
         scene: Scene,
-        #[serde(default)]
         audio: Vec<ReactAudioClipDescriptor>,
         /// Absent when the frame shows none.
-        #[serde(default)]
         subtitles: Vec<ReactSubtitleDescriptor>,
         /// The runtime's echo of an `openEnd` request; an older runtime
         /// ignores the request and leaves it out.
-        #[serde(default, rename = "openEnd")]
         open_end: bool,
         /// The frame's number among those answered with `<Static>`
         /// references; absent otherwise.
@@ -220,6 +224,21 @@ pub(crate) struct RawResponse {
     pub(crate) statics: Vec<StaticDefinition>,
     #[serde(default)]
     pub(crate) dropped_statics: Vec<u32>,
+    /// Absent from older runtimes, and when there is nothing new.
+    #[serde(default)]
+    pub(crate) nondeterministic: Vec<String>,
+}
+
+impl TryFrom<RawResponse> for Answer {
+    type Error = &'static str;
+
+    fn try_from(mut raw: RawResponse) -> Result<Self, Self::Error> {
+        let nondeterministic = std::mem::take(&mut raw.nondeterministic);
+        Ok(Self {
+            response: raw.try_into()?,
+            nondeterministic,
+        })
+    }
 }
 
 impl TryFrom<RawResponse> for Response {
@@ -291,6 +310,9 @@ pub(crate) enum ReadyMessage {
         project_property_order: Vec<String>,
         dependencies: Vec<PrepareDependency>,
         legacy_imports: Vec<LegacyImport>,
+        /// What mounting the entry (its first renders) was seen calling;
+        /// see [`Answer::nondeterministic`].
+        nondeterministic: Vec<String>,
     },
     ProbeMedia {
         probe_media: MediaProbeRequest,
@@ -331,6 +353,7 @@ struct RawReady {
     property_schema: Option<Ordered<ComponentPropertyField>>,
     dependencies: Vec<PrepareDependency>,
     legacy_imports: Vec<LegacyImport>,
+    nondeterministic: Vec<String>,
     probe_media: Option<MediaProbeRequest>,
     measure_text: Option<Box<MeasureTextRequest>>,
     decode_audio: Option<DecodeAudioRequest>,
@@ -339,7 +362,7 @@ struct RawReady {
 }
 
 /// The keys [`RawReady`] reads; others are skipped.
-const READY_KEYS: [&str; 13] = [
+const READY_KEYS: [&str; 14] = [
     "config",
     "compositionId",
     "compositions",
@@ -348,6 +371,7 @@ const READY_KEYS: [&str; 13] = [
     "propertySchema",
     "dependencies",
     "legacyImports",
+    "nondeterministic",
     "probeMedia",
     "measureText",
     "decodeAudio",
@@ -390,6 +414,7 @@ impl<'de> Deserialize<'de> for RawReady {
                         "propertySchema" => raw.property_schema = value(&mut map, known)?,
                         "dependencies" => raw.dependencies = value(&mut map, known)?,
                         "legacyImports" => raw.legacy_imports = value(&mut map, known)?,
+                        "nondeterministic" => raw.nondeterministic = value(&mut map, known)?,
                         "probeMedia" => raw.probe_media = Some(value(&mut map, known)?),
                         "measureText" => raw.measure_text = Some(value(&mut map, known)?),
                         "decodeAudio" => raw.decode_audio = Some(value(&mut map, known)?),
@@ -442,6 +467,7 @@ impl TryFrom<RawReady> for ReadyMessage {
                 project_property_order,
                 dependencies: raw.dependencies,
                 legacy_imports: raw.legacy_imports,
+                nondeterministic: raw.nondeterministic,
             })
         } else if let Some(probe_media) = raw.probe_media {
             Ok(Self::ProbeMedia { probe_media })

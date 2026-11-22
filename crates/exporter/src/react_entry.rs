@@ -13,7 +13,7 @@ use crate::subtitles;
 use celesta_composition::Time;
 use celesta_media::{AudioMixError, MediaBackend, mix_audio_graph_unclipped_cancellable};
 use celesta_project::Project;
-use celesta_react_bridge::{ReactCompositionMetadata, ReactSubtitleDescriptor};
+use celesta_react_bridge::{ReactBridge, ReactCompositionMetadata, ReactSubtitleDescriptor};
 use celesta_remote::StagedFile;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -279,6 +279,7 @@ impl Exporter {
             cancellation,
             progress,
         )?;
+        report_nondeterminism(&bridge, progress);
         let mut timing = ExportTiming {
             render: render_started.elapsed(),
             frames: session.frames_sent(),
@@ -404,6 +405,7 @@ impl Exporter {
                 total: frame_count,
             });
         }
+        report_nondeterminism(&bridge, &mut progress);
         ensure_not_cancelled(cancellation)?;
 
         let duration = Time::frames(
@@ -482,6 +484,18 @@ fn canonical_project<'a>(project: Option<(&'a Project, &Path)>) -> Option<(&'a P
             fs::canonicalize(project_asset_root).unwrap_or_else(|_| project_asset_root.to_owned());
         (project, project_asset_root)
     })
+}
+
+/// Warns about the clock and random APIs (`Math.random()`, `Date.now()`, …)
+/// the entry called while its frames were rendered; see
+/// [`celesta_react_bridge::NondeterministicCalls`].
+pub(crate) fn report_nondeterminism(
+    bridge: &ReactBridge,
+    progress: &mut impl FnMut(ExportProgress),
+) {
+    if let Some(warning) = bridge.nondeterministic_calls().warning() {
+        progress(ExportProgress::Warning(warning));
+    }
 }
 
 /// Reports the entry's compositions and the selected one's size and length.

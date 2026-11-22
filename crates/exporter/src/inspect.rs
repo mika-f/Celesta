@@ -11,6 +11,10 @@
 //! runtime error is fatal and ends inspection. A request with `"openEnd":
 //! true` evaluates a frame past the end as if the video went on (`inspect.mjs
 //! --loop`), and its answer echoes `"openEnd": true`.
+//!
+//! Like the CLI's own messages, the handshake and every answer carry
+//! `"nondeterministic": [...]`, the clock and random APIs the entry was
+//! first seen calling while rendering, when there are new ones.
 
 use std::io::{self, BufRead, Write};
 use std::path::Path;
@@ -20,6 +24,21 @@ use celesta_exporter::ReactRuntimeOptions;
 use celesta_plugin_host::InstalledPlugins;
 use celesta_react_bridge::{ReactBridge, ReactBridgeError, SpawnOptions};
 use serde_json::{Value, json};
+
+/// Adds to `message` the APIs `bridge` reports past the first `*sent`.
+fn with_new_calls(mut message: Value, bridge: &ReactBridge, sent: &mut Vec<String>) -> Value {
+    let new: Vec<&String> = bridge
+        .nondeterministic_calls()
+        .apis()
+        .iter()
+        .filter(|api| !sent.contains(api))
+        .collect();
+    if !new.is_empty() {
+        message["nondeterministic"] = json!(new);
+        sent.extend(new.into_iter().cloned());
+    }
+    message
+}
 
 #[derive(serde::Deserialize)]
 struct InspectRequest {
@@ -63,9 +82,9 @@ pub fn run(
     };
     let mut output = io::stdout().lock();
     let metadata = bridge.metadata();
-    write_line(
-        &mut output,
-        &json!({
+    let mut sent = Vec::new();
+    let handshake = with_new_calls(
+        json!({
             "compositionId": metadata.composition_id,
             "compositions": metadata.compositions,
             "config": {
@@ -77,7 +96,10 @@ pub fn run(
             "componentSchemas": metadata.component_schemas,
             "propertySchema": metadata.project_property_schema,
         }),
-    )?;
+        &bridge,
+        &mut sent,
+    );
+    write_line(&mut output, &handshake)?;
     let mut ok = true;
     for line in io::stdin().lock().lines() {
         let line = line?;
@@ -102,14 +124,13 @@ pub fn run(
             bridge.evaluate_at(request.time, None)
         };
         match evaluated {
-            Ok(frame) if request.open_end => write_line(
-                &mut output,
-                &json!({ "scene": frame.scene, "audio": frame.audio, "openEnd": true }),
-            )?,
-            Ok(frame) => write_line(
-                &mut output,
-                &json!({ "scene": frame.scene, "audio": frame.audio }),
-            )?,
+            Ok(frame) => {
+                let mut answer = json!({ "scene": frame.scene, "audio": frame.audio });
+                if request.open_end {
+                    answer["openEnd"] = json!(true);
+                }
+                write_line(&mut output, &with_new_calls(answer, &bridge, &mut sent))?;
+            }
             Err(error) => {
                 ok = false;
                 // A scene error leaves the runtime ready for the next frame,
@@ -121,14 +142,12 @@ pub fn run(
                     _ => "runtimeError",
                 };
                 let fatal = status == "runtimeError";
-                write_line(
-                    &mut output,
-                    &json!({
-                        "error": message(&error),
-                        "status": status,
-                        "fatal": fatal,
-                    }),
-                )?;
+                let answer = json!({
+                    "error": message(&error),
+                    "status": status,
+                    "fatal": fatal,
+                });
+                write_line(&mut output, &with_new_calls(answer, &bridge, &mut sent))?;
                 if fatal {
                     break;
                 }

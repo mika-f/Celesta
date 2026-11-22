@@ -31,6 +31,11 @@ React compositions reload automatically. Use **File → Reload** to retry, and c
 `fontFamily` must match the family name of a font installed on the computer that renders the video, or of a font file loaded with `<Font>`. When it does not, Celesta falls back to another font and warns: the app lists the family with the preview’s warnings, and `celesta-exporter` prints a warning that names the family, weight, and text layer. Check the exact family name in your system’s font manager. To avoid installing the font on every machine that exports the project, keep the font file next to the entry and load it with `<Font>`.
 
 :::
+:::toggle[A warning says nondeterministic_render]
+
+The composition calls `Math.random()`, `Date.now()`, `performance.now()`, or `new Date()` while a frame renders. Celesta makes them follow the frame (each frame reseeds `Math.random()`, and the clock reads the frame’s time), so the video still renders the same every time, but the values are not what those calls usually give: a “random” number changes every frame, and the date is 1970-01-01 plus the frame’s time. Use the seeded `random` and `noise` from [`@celesta.studio/math`](/en/docs/math/) with an index as the seed, and `useCurrentFrame()` or `useCurrentTime()` for time. Read a real date in `prepare()`. See [Animation](/en/docs/animation/).
+
+:::
 :::toggle[The mouth does not move]
 
 Lip sync needs an uncompressed WAV voice and a transcript with readable vowels (kana or romaji). Check that `loadLipSync()` runs in `prepare()`, that the track is passed as `lipSync`, and that each mouth path matches a layer in the PSD exactly. For a PSD that shows nothing, set `layers` from a PSDTool preset.

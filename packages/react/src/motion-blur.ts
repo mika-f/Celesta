@@ -12,9 +12,11 @@ import {
   CompositionRuntimeContext,
   type CompositionRuntimeContextValue,
   FreezeFrameContext,
+  RootRuntimeContext,
   runtimeFrame,
   useCurrentFrame,
 } from './hooks';
+import { type FrameClock, FrameClockContext, enclosingFrameClock } from './determinism';
 import { markTransparent } from './source-chain';
 import { secondsToTime } from './time';
 
@@ -95,6 +97,7 @@ function useScopes(count: number): object[] {
  */
 function moment(
   context: CompositionRuntimeContextValue,
+  parent: FrameClock,
   frame: number,
   key: string | number,
   scope: object | null,
@@ -105,11 +108,53 @@ function moment(
   const base = runtimeFrame(context.time, context.fps, offset);
   const time = secondsToTime(frame / context.fps);
   const sample = React.createElement('time-sample', { ...hostProps, time }, momentChildren(children));
-  return React.createElement(
+  const drawn = React.createElement(
     CompositionRuntimeContext.Provider,
-    { key, value: { ...context, time, frameOffset: offset + (frame - base) } },
+    { value: { ...context, time, frameOffset: offset + (frame - base) } },
     scope ? React.createElement(FreezeFrameContext.Provider, { value: scope }, sample) : sample,
   );
+  // `Date.now()` and `Math.random()` inside follow the frame the sample
+  // draws: `frame` taken from this context's frames to the clock's, so a
+  // `<Trail>` copy of frame 30 reads what frame 30 reads, inside a
+  // `<Sequence>` too, and a sample held at the window's first frame reads
+  // that frame's.
+  return React.createElement(
+    FrameClockContext.Provider,
+    { key, value: { frame: parent.frame + (frame - exactFrame(context)), fps: parent.fps } },
+    drawn,
+  );
+}
+
+/**
+ * The clock a sample is placed against: the enclosing subtree's, or the
+ * frame's, as the root's composition frame, which matches `exactFrame` of
+ * the context that subtree (or the root) began.
+ */
+function useParentClock(): FrameClock {
+  const root = React.useContext(RootRuntimeContext);
+  const enclosing = enclosingFrameClock();
+  if (enclosing) return enclosing;
+  if (!root) return { frame: 0, fps: 1 };
+  return { frame: snapToFrame((root.time.value * root.fps) / root.time.timescale), fps: root.fps };
+}
+
+/**
+ * The frame a context is at, not rounded to a whole one: a component the
+ * editor previews against a project timeline of another fps is drawn between
+ * the entry's frames. Inside a sample, `frameOffset` makes it exact.
+ */
+function exactFrame(context: CompositionRuntimeContextValue): number {
+  if (context.frameOffset !== undefined) return runtimeFrame(context.time, context.fps, context.frameOffset);
+  return snapToFrame((context.time.value * context.fps) / context.time.timescale);
+}
+
+/**
+ * A frame within a thousandth of a whole one, as a whole one: a `Time` rounded
+ * to microseconds (a `<FreezeFrame>`'s) lands that close to its frame.
+ */
+function snapToFrame(frame: number): number {
+  const whole = Math.round(frame);
+  return Math.abs(frame - whole) < 1e-3 ? whole : frame;
 }
 
 /**
@@ -146,6 +191,7 @@ export function motionBlurFrames(
  */
 export function MotionBlur(props: MotionBlurProps): React.ReactElement {
   const context = requireRuntime('MotionBlur');
+  const parent = useParentClock();
   const { shutterAngle = 180, samples = 8, children, ...rest } = props;
   requireNumber(shutterAngle, '<MotionBlur> shutterAngle', 0, 720);
   requireNumber(samples, '<MotionBlur> samples', 1, 64, true);
@@ -159,7 +205,7 @@ export function MotionBlur(props: MotionBlurProps): React.ReactElement {
   return React.createElement(
     'motion-blur',
     rest,
-    frames.map((sampleFrame, index) => moment(context, sampleFrame, index, scopes[index], {}, children)),
+    frames.map((sampleFrame, index) => moment(context, parent, sampleFrame, index, scopes[index], {}, children)),
   );
 }
 
@@ -176,6 +222,7 @@ export function MotionBlur(props: MotionBlurProps): React.ReactElement {
  */
 export function Trail(props: TrailProps): React.ReactElement {
   const context = requireRuntime('Trail');
+  const parent = useParentClock();
   const { copies = 4, lagInFrames = 1, trailOpacity = 0.5, children, ...rest } = props;
   requireNumber(copies, '<Trail> copies', 0, 64, true);
   if (!Number.isFinite(lagInFrames) || lagInFrames <= 0) {
@@ -190,7 +237,7 @@ export function Trail(props: TrailProps): React.ReactElement {
     const copyFrame = frame - copy * lagInFrames;
     if (copyFrame < 0) continue;
     const opacity = trailOpacity * (1 - (copy - 1) / copies);
-    moments.push(moment(context, copyFrame, copy, scopes[copy - 1], { opacity }, children));
+    moments.push(moment(context, parent, copyFrame, copy, scopes[copy - 1], { opacity }, children));
   }
   moments.push(React.createElement('time-sample', { key: 'live', live: true, time: context.time }, momentChildren(children)));
   return React.createElement('trail', rest, moments);

@@ -26,8 +26,10 @@ import {
   prepareDependencies,
   setAudioDecoder,
   setMediaProbe,
+  setNondeterminismSource,
   setProjectPropertyValues,
   setTextMeasurer,
+  takeNondeterministicCalls,
 } from '@celesta.studio/react/internal';
 import type {
   AudioClipDescriptor,
@@ -38,6 +40,7 @@ import type {
   LayerSourceReport,
   MeasureTextRequest,
   MountedComposition,
+  NondeterministicApi,
   OccurrenceIndex,
   PrepareDependency,
   ProbedMediaInfo,
@@ -162,6 +165,17 @@ export interface ReadyMessage {
 }
 
 /**
+ * Carried by every answer (the ready message, a frame, a collection, an
+ * error) after which the entry was first seen calling one of these while a
+ * frame was evaluated: each API once per process, in the answer that follows
+ * the call. Celesta reseeds `Math.random` and freezes the clock per frame
+ * either way; this is for a warning. Absent when there is nothing new.
+ */
+export interface NondeterminismReport {
+  nondeterministic?: NondeterministicApi[];
+}
+
+/**
  * An import of a package by its name before the `@celesta.studio` scope, or
  * of a package that became a first-party plugin (`@celesta.studio/code`).
  */
@@ -204,18 +218,18 @@ export interface FrameMessage {
 
 /** Every message written to stdout. */
 export type Message =
-  | ReadyMessage
-  | FrameMessage
-  | { collectedAudio: AudioClipDescriptor[] }
-  | { collectedSubtitles: SubtitleDescriptor[] }
-  | { collectedOccurrences: OccurrenceIndex }
-  | { layerSource: LayerSourceReport | { chain: null } }
-  | ComponentResolutions
+  | (ReadyMessage & NondeterminismReport)
+  | (FrameMessage & NondeterminismReport)
+  | ({ collectedAudio: AudioClipDescriptor[] } & NondeterminismReport)
+  | ({ collectedSubtitles: SubtitleDescriptor[] } & NondeterminismReport)
+  | ({ collectedOccurrences: OccurrenceIndex } & NondeterminismReport)
+  | ({ layerSource: LayerSourceReport | { chain: null } } & NondeterminismReport)
+  | (ComponentResolutions & NondeterminismReport)
   | { probeMedia: { path: string } }
   | { decodeAudio: { path: string } }
   | { measureText: MeasureTextRequest }
   | { invalidProperties: PropertyIssue[] }
-  | { error: string };
+  | ({ error: string } & NondeterminismReport);
 
 interface ProbeMediaResponse {
   media?: ProbedMediaInfo;
@@ -335,7 +349,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  writeLine({
+  answer({
     config: mounted.config,
     compositionId: mounted.compositionId,
     compositions: mounted.compositions,
@@ -367,25 +381,25 @@ async function main(): Promise<void> {
     try {
       request = JSON.parse(trimmed);
     } catch (error) {
-      writeLine({ error: `invalid request JSON: ${describeError(error)}` });
+      answer({ error: `invalid request JSON: ${describeError(error)}` });
       continue;
     }
     try {
       if ('collectAudio' in request) {
         if (request.collectAudio !== true) throw new Error('collectAudio must be true');
-        writeLine({ collectedAudio: mounted.collectAudio() });
+        answer({ collectedAudio: mounted.collectAudio() });
       } else if ('collectSubtitles' in request) {
         const { from, frames } = request.collectSubtitles;
         if (!Number.isInteger(from) || !Number.isInteger(frames)) {
           throw new Error('collectSubtitles requires integer `from` and `frames`');
         }
-        writeLine({ collectedSubtitles: mounted.collectSubtitles(from, frames) });
+        answer({ collectedSubtitles: mounted.collectSubtitles(from, frames) });
       } else if ('collectOccurrences' in request) {
         const { from, frames, preview } = request.collectOccurrences;
         if (!Number.isInteger(from) || !Number.isInteger(frames)) {
           throw new Error('collectOccurrences requires integer `from` and `frames`');
         }
-        writeLine({
+        answer({
           collectedOccurrences: mounted.collectOccurrences(from, frames, resolveSourceFile, { preview: preview === true }),
         });
       } else if (isLayerSourceRequest(request)) {
@@ -395,10 +409,10 @@ async function main(): Promise<void> {
           resolveSourceFile,
           { preview: request.preview === true },
         );
-        writeLine({ layerSource: report ?? { chain: null } });
+        answer({ layerSource: report ?? { chain: null } });
       } else if (isResolveRequest(request)) {
         resolver ??= createResolver(mounted.config.lang);
-        writeLine(resolver.resolve(request.components, request.runtime, mounted.fonts));
+        answer(resolver.resolve(request.components, request.runtime, mounted.fonts));
       } else {
         const openEnd = request.openEnd === true;
         // Compact frames leave out what Rust reads back by default, which
@@ -413,7 +427,7 @@ async function main(): Promise<void> {
             ? { propOverrides: { overrides: request.propOverrides, resolveFile: resolveSourceFile } }
             : {}),
         });
-        writeLine({
+        answer({
           scene,
           audio,
           ...(subtitles.length > 0 ? { subtitles } : {}),
@@ -428,9 +442,18 @@ async function main(): Promise<void> {
         });
       }
     } catch (error) {
-      writeLine({ error: describeError(error) });
+      answer({ error: describeError(error) });
     }
   }
+}
+
+/**
+ * Writes an answer to Celesta's request (or the ready message), with the
+ * APIs the entry was first seen calling while evaluating it.
+ */
+function answer(message: Message): void {
+  const nondeterministic = takeNondeterministicCalls();
+  writeLine(nondeterministic.length > 0 ? { ...message, nondeterministic } : message);
 }
 
 /** With this option the first stdin line carries `{ "propertyInputs": PropertyInputLayer[] }`. */
@@ -752,7 +775,14 @@ async function loadEntry(entryPath: string, sourceLocations: boolean): Promise<L
   let mod: unknown;
   try {
     fs.writeFileSync(bundlePath, output.text);
-    mod = await import(pathToFileURL(bundlePath).href);
+    // Node names an ES module by its real path (`/private/var/…` for macOS's
+    // `/var/…` temporary folder), and so do its stack traces.
+    const bundleUrl = pathToFileURL(fs.realpathSync(bundlePath)).href;
+    // The entry's own code, the npm packages it uses and the plugin modules
+    // are all in the bundle; React and the Celesta packages are not, so
+    // their own clock reads are not reported.
+    setNondeterminismSource((frame) => frame.includes(bundleUrl));
+    mod = await import(bundleUrl);
   } catch (error) {
     throw misplacedImportError(error) ?? error;
   } finally {

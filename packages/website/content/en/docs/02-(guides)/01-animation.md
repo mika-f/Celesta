@@ -180,6 +180,15 @@ Slides travel `distance` pixels (64 by default); scales start from `scaleFrom` (
 > **Keep animation tied to the frame**
 > Compute visual changes from frame or time values so scrubbing and exporting can reproduce each moment. A browser timer or `Math.random()` is not the composition’s clock; derive “random” values from the frame or an index instead, with [`@celesta.studio/math`](/en/docs/math/)’s seeded `random` and `noise`.
 
+Celesta holds every frame to this while it renders, in the preview, in exports, and when an agent inspects the composition:
+
+- `Math.random()` starts again on every frame from a seed made from that frame’s time. A frame always gets the same numbers, whatever order frames render in, and the next frame gets different ones, so a shape placed with `Math.random()` jumps every frame.
+- `Date.now()`, `performance.now()`, and `new Date()` read the frame’s time in milliseconds, as if the video started at 1970-01-01 00:00 UTC: at 1.5 seconds, `Date.now()` is `1500`. A `new Date()` with a value, `Date.parse()`, and `Date.UTC()` work as usual.
+- Inside a `<FreezeFrame>`, a `<MotionBlur>` sample, or a `<Trail>` copy, both follow that moment instead, so a frozen scene keeps its values.
+- When the composition (or a package or plugin it uses) calls one of them while rendering, Celesta warns once: `nondeterministic_render: the entry calls Math.random() …`. The app lists it with the preview’s warnings in **Problems**, and `celesta-exporter` prints it (`warnings` in `--json`).
+
+Module scope and `prepare()` run before any frame, with the real clock and `Math.random()`. Read today’s date or time a request there, and keep the result in a module variable so every frame reads the same value.
+
 ## Hold a scene at one frame
 
 `<FreezeFrame frame={60}>` draws its children at root composition frame 60, even when wrapped in a Sequence. Child hooks, video, lip sync, and blinking follow that time; nested sequences still apply their own offsets. Audio inside FreezeFrame is muted.
