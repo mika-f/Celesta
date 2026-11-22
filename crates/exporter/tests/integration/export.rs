@@ -2099,11 +2099,21 @@ fn export_gif(
     name: &str,
     options: &[(&str, &str)],
 ) -> Option<(PathBuf, Vec<String>, Vec<ExportedFile>)> {
+    export_gif_as(project, dir, name, video_options(options))
+}
+
+/// [`export_gif`] with `output` chosen.
+fn export_gif_as(
+    project: &Project,
+    dir: &Path,
+    name: &str,
+    output: OutputChoice,
+) -> Option<(PathBuf, Vec<String>, Vec<ExportedFile>)> {
     let path = dir.join(name);
     let media = celesta_exporter::with_builtin(vec![celesta_codec_test::registered()]);
     let exporter = Exporter::with_media(
         ExportOptions {
-            output: video_options(options),
+            output,
             ..ExportOptions::default()
         },
         media,
@@ -2153,6 +2163,33 @@ fn gif_frames(path: &Path) -> (gif::Repeat, Vec<(u16, Vec<u8>)>) {
         }
     }
     (decoder.repeat(), frames)
+}
+
+#[test]
+fn a_named_gif_muxer_writes_a_gif_to_another_extension_with_a_warning() {
+    let directory = tempfile::tempdir().unwrap();
+    let red = [200, 40, 90, 255];
+    let project = solid_video_project(directory.path(), &[red]);
+    let output = OutputChoice {
+        muxer: Some("builtin/gifFile".parse().unwrap()),
+        ..OutputChoice::default()
+    };
+    let Some((path, warnings, files)) =
+        export_gif_as(&project, directory.path(), "preview.mp4", output)
+    else {
+        return;
+    };
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("builtin/gifFile"), "{warnings:?}");
+    let [ExportedFile::Video { muxer, .. }] = files.as_slice() else {
+        panic!("{files:?}")
+    };
+    assert_eq!(muxer.to_string(), "builtin/gifFile");
+    let (_, frames) = gif_frames(&path);
+    assert_solid(&frames[0].1, red, "gif frame");
+    let mut left = files_in(directory.path());
+    left.sort();
+    assert_eq!(left, ["preview.mp4", "source.ctc"]);
 }
 
 #[test]

@@ -23,9 +23,9 @@ use celesta_media::{
     Encoded, InvalidSetting, MediaError, MuxerRequest, Packet, PixelFormat, SettingField,
     SettingKind, SettingValue, Settings, Track, TrackConfig, TrackPacket, VideoEncoderRequest,
 };
+use celesta_plugin_host::PluginKillSwitch;
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
-use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -319,6 +319,9 @@ pub(crate) struct EncoderSession {
     /// open; the header goes with the first packet.
     writer: Option<gif::Encoder<Vec<u8>>>,
     header: Option<Vec<u8>>,
+    /// Stops the final encode of a global palette once the export is
+    /// cancelled.
+    kill: PluginKillSwitch,
 }
 
 fn failed(error: impl std::fmt::Display) -> MediaError {
@@ -350,7 +353,10 @@ fn header(
 
 impl EncoderSession {
     /// Opens the encoder `request` asks for: whether it keeps alpha.
-    pub(crate) fn open(request: &VideoEncoderRequest<'_>) -> Result<(Self, bool), MediaError> {
+    pub(crate) fn open(
+        request: &VideoEncoderRequest<'_>,
+        kill: PluginKillSwitch,
+    ) -> Result<(Self, bool), MediaError> {
         let options = options(request.settings, request.frame_rate)?;
         if !request.offered.contains(&PixelFormat::Rgba8) {
             return Err(invalid_setting(
@@ -397,6 +403,7 @@ impl EncoderSession {
             held: Vec::new(),
             writer,
             header,
+            kill,
         };
         Ok((session, options.transparent))
     }
@@ -433,9 +440,20 @@ impl EncoderSession {
     fn prepare(&self, frame: Vec<u8>) -> Vec<u8> {
         let (width, height) = self.source;
         let (to_width, to_height) = (u32::from(self.size.0), u32::from(self.size.1));
-        let mut pixels = if (to_width, to_height) == (width, height) {
-            frame
-        } else {
+        let transparent = self.options.transparent;
+        let scaled = (to_width, to_height) != (width, height);
+        let mut pixels = if scaled {
+            let mut frame = frame;
+            if transparent {
+                // Straight alpha is premultiplied to scale, so transparent
+                // pixels' colour does not darken the edges they blend into.
+                for pixel in frame.as_chunks_mut::<4>().0 {
+                    let alpha = u16::from(pixel[3]);
+                    for channel in &mut pixel[..3] {
+                        *channel = ((u16::from(*channel) * alpha + 127) / 255) as u8;
+                    }
+                }
+            }
             let image = image::RgbaImage::from_raw(width, height, frame)
                 .expect("the frame's length was checked");
             image::imageops::resize(
@@ -445,13 +463,21 @@ impl EncoderSession {
                 image::imageops::FilterType::Triangle,
             )
             .into_raw()
+        } else {
+            frame
         };
         for pixel in pixels.as_chunks_mut::<4>().0 {
-            if self.options.transparent && pixel[3] < ALPHA_THRESHOLD {
+            if transparent && pixel[3] < ALPHA_THRESHOLD {
                 *pixel = [0; 4];
-            } else {
-                pixel[3] = 255;
+                continue;
             }
+            if transparent && scaled && pixel[3] < 255 {
+                let alpha = u16::from(pixel[3]);
+                for channel in &mut pixel[..3] {
+                    *channel = ((u16::from(*channel) * 255 + alpha / 2) / alpha).min(255) as u8;
+                }
+            }
+            pixel[3] = 255;
         }
         pixels
     }
@@ -533,9 +559,11 @@ impl EncoderSession {
     ) -> Result<Packet, MediaError> {
         let (width, height) = (usize::from(self.size.0), usize::from(self.size.1));
         let transparent = self.options.transparent;
-        // A transparent GIF clears each frame and draws it whole; an opaque
-        // one draws only what changed, over what is shown.
-        let shown = if transparent {
+        // A transparent GIF clears each frame and draws it whole, and so does
+        // one with a palette per frame, whose colours for an unchanged pixel
+        // differ from the palette before; an opaque GIF with a global palette
+        // draws only what changed, over what is shown.
+        let shown = if transparent || local {
             None
         } else {
             self.shown.as_deref()
@@ -608,6 +636,17 @@ impl EncoderSession {
         })
     }
 
+    /// Fails once the export was cancelled, which kills the plugins.
+    fn check_killed(&self) -> Result<(), MediaError> {
+        if self.kill.is_killed() {
+            Err(MediaError::CodecStopped(
+                "the export was cancelled while the GIF was written".to_owned(),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
     /// The last frames: the one kept last, and with a global palette every
     /// frame, after the header.
     pub(crate) fn finish(&mut self) -> Result<Encoded, MediaError> {
@@ -623,6 +662,7 @@ impl EncoderSession {
         let delay = u16::try_from(delay).unwrap_or(u16::MAX);
         self.held.push((last, delay));
         let held = std::mem::take(&mut self.held);
+        self.check_killed()?;
         let palette = Palette::learn(
             held.iter().map(|(frame, _)| frame.pixels.as_slice()),
             self.options.colors - 1,
@@ -634,6 +674,7 @@ impl EncoderSession {
         let mut packets = Vec::with_capacity(held.len());
         let mut frames = held.into_iter().peekable();
         while let Some((frame, delay)) = frames.next() {
+            self.check_killed()?;
             // Each packet lasts until the next frame.
             self.pending = frames.peek().map(|(next, _)| Kept {
                 pts: next.pts,
@@ -885,13 +926,6 @@ impl MuxerSession {
             return Err(tracks_refused(format!(
                 "builtin/gifFile takes gif video, not {}",
                 config.codec
-            )));
-        }
-        let extension = request.output.extension().and_then(OsStr::to_str);
-        if !extension.is_some_and(|extension| extension.eq_ignore_ascii_case(GIF)) {
-            return Err(tracks_refused(format!(
-                "builtin/gifFile writes .gif files, not {}",
-                request.output.display()
             )));
         }
         let Some(header) = &config.description else {
@@ -1197,6 +1231,28 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_palette_per_frame_redraws_pixels_the_palette_before_missed() {
+        // One colour per frame: the first frame's palette cannot hold red,
+        // and the all-red frame after it must still show red everywhere.
+        let (width, height) = (4, 2);
+        let mixed = frame(width, height, |x, _| if x < 3 { BLUE } else { RED });
+        let red = flat(width, height, RED);
+        let options = settings(&[
+            ("palette", text("frame")),
+            ("colors", SettingValue::Number(2.0)),
+        ]);
+        let (bytes, _, _) = gif_of(
+            &options,
+            (width, height),
+            Rational::new(10, 1),
+            &[mixed, red.clone()],
+        );
+        let (_, _, shown) = decode(&bytes);
+        assert_eq!(shown[1].canvas, red);
+        assert_eq!(shown[1].rect, (0, 0, 4, 2));
+    }
+
     /// The delays of `count` distinct frames at `frame_rate` with
     /// `options`.
     fn delays(options: &Settings, frame_rate: Rational, count: u32) -> Vec<u16> {
@@ -1294,6 +1350,64 @@ mod tests {
             frame(width, height, |x, _| if x >= 2 { BLUE } else { clear })
         );
         assert!(shown.iter().all(|shown| shown.rect == (0, 0, 4, 2)));
+    }
+
+    #[test]
+    fn a_scaled_transparent_edge_keeps_its_colour() {
+        // Transparent black beside red: the edge it blends into stays red.
+        let (width, height) = (8, 2);
+        let half = frame(width, height, |x, _| if x < 4 { RED } else { [0; 4] });
+        let options = settings(&[
+            ("transparent", SettingValue::Boolean(true)),
+            ("scale", SettingValue::Number(50.0)),
+        ]);
+        let (bytes, _, _) = gif_of(
+            &options,
+            (width, height),
+            Rational::new(10, 1),
+            std::slice::from_ref(&half),
+        );
+        let (_, _, shown) = decode(&bytes);
+        let pixels = shown[0].canvas.as_chunks::<4>().0;
+        let kept: Vec<_> = pixels.iter().filter(|pixel| pixel[3] != 0).collect();
+        // A pixel of red alone and one blended from red and transparent,
+        // red within 8-bit rounding (unpremultiplied it would be about 190);
+        // the next, mostly transparent, is dropped.
+        assert_eq!(kept.len(), 2, "{pixels:?}");
+        assert!(
+            kept.iter()
+                .all(|pixel| pixel.iter().zip(RED).all(|(&a, b)| a.abs_diff(b) <= 2)),
+            "{pixels:?}"
+        );
+    }
+
+    #[test]
+    fn cancel_stops_the_final_encode() {
+        let kill = PluginKillSwitch::new();
+        let mut provider = ImageComponents::new(kill.clone());
+        let color = Color::bt709_limited();
+        let opened = provider
+            .open_video(&VideoEncoderRequest {
+                component: GIF,
+                settings: &Settings::new(),
+                width: 2,
+                height: 2,
+                frame_rate: Rational::new(10, 1),
+                timescale: 10,
+                offered: &[PixelFormat::Rgba8],
+                color: &color,
+            })
+            .unwrap();
+        for (pts, color) in [RED, BLUE, RED].into_iter().enumerate() {
+            provider
+                .encode_video(opened.session, pts as i64, flat(2, 2, color))
+                .unwrap();
+        }
+        kill.kill();
+        assert!(matches!(
+            provider.finish_video(opened.session),
+            Err(MediaError::CodecStopped(_))
+        ));
     }
 
     #[test]
@@ -1455,7 +1569,6 @@ mod tests {
             })
         };
         assert_eq!(key(mux("a.gif", &[video("png", header.clone())])), "tracks");
-        assert_eq!(key(mux("a.png", &[video("gif", header.clone())])), "tracks");
         assert_eq!(key(mux("a.gif", &[video("gif", None)])), "tracks");
         let audio = Track::Audio {
             config: TrackConfig {
@@ -1471,8 +1584,12 @@ mod tests {
             key(mux("a.gif", &[video("gif", header.clone()), audio])),
             "tracks"
         );
+        // A muxer named for another extension still writes a GIF there:
+        // Celesta warns of the mismatch.
+        let named: SessionId = mux("a.mp4", &[video("gif", header.clone())]).unwrap();
         // An aborted GIF names its file for Celesta to remove.
         let session: SessionId = mux("b.gif", &[video("gif", header)]).unwrap();
+        assert_eq!(provider.abort_muxer(named), [folder.path().join("a.mp4")]);
         assert_eq!(provider.abort_muxer(session), [folder.path().join("b.gif")]);
         assert!(provider.describe().unwrap().iter().any(|c| c.id == GIF));
     }

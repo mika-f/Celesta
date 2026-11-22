@@ -433,10 +433,12 @@ Celesta-export --describe builtin/gif
   4, 3, … and the GIF keeps the composition's length). No frame is kept
   under 2 hundredths after the one before: browsers play shorter frames at
   10. So 60 fps keeps every second frame by default.
-- Identical frames are folded into the one before (which lasts longer), and
-  each frame stores only the rectangle that changed; a still background
-  costs almost nothing. Colours that fit the palette are kept exactly;
-  otherwise NeuQuant learns a palette.
+- Identical frames are folded into the one before (which lasts longer).
+  With `palette=global` each frame stores only the rectangle that changed,
+  so a still background costs almost nothing; `palette=frame` stores each
+  frame whole. Colours that fit the palette are kept exactly; otherwise
+  NeuQuant learns a palette. A scaled `transparent=true` GIF keeps the
+  colour of its edges (alpha is premultiplied to scale).
 - `palette=global` (one palette, steady colours, smallest files) holds every
   kept frame in memory until the end; `palette=frame` writes each frame as
   it comes. Prefer `frame` for a long or large GIF, or scenes whose colours

@@ -815,6 +815,16 @@ fn unsupported_output_hint(path: &Path, extensions: &[String], cli: bool) -> Cow
     } else {
         format!("{} or {last}", rest.join(", "))
     };
+    // Only the built-in GIF: no media plugin is installed, and that is
+    // what MP4, MOV, or WebM needs.
+    if extensions
+        .iter()
+        .all(|extension| extension.eq_ignore_ascii_case(celesta_media_image::GIF))
+    {
+        return Cow::Owned(format!(
+            "write an animated GIF to a {listed} path; for other formats, {NO_DECODER_HINT}"
+        ));
+    }
     let still = StillFormat::from_extension(path).is_some();
     Cow::Owned(match (cli, still) {
         (true, false) => format!("write video to a {listed} path"),
@@ -1396,6 +1406,18 @@ mod tests {
         assert_eq!(
             classified(&two, HintStyle::Cli).1.unwrap(),
             "write video to a .ivf or .mp4 path"
+        );
+        // With only the built-in GIF, the media plugin is what is missing.
+        let gif = ExportError::UnsupportedOutput {
+            path: PathBuf::from("out.mp4"),
+            extensions: vec!["gif".into()],
+        };
+        let hint = classified(&gif, HintStyle::Cli).1.unwrap();
+        assert!(
+            hint.starts_with(
+                "write an animated GIF to a .gif path; for other formats, install a media plugin"
+            ),
+            "{hint}"
         );
         // With no muxer at all, the media plugin is what is missing.
         let none = ExportError::UnsupportedOutput {

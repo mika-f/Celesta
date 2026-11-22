@@ -365,7 +365,7 @@ impl VideoEncoder for ImageComponents {
         request: &VideoEncoderRequest<'_>,
     ) -> Result<VideoEncoderOpened, MediaError> {
         if request.component == GIF {
-            let (open, alpha) = animated_gif::EncoderSession::open(request)?;
+            let (open, alpha) = animated_gif::EncoderSession::open(request, self.kill.clone())?;
             let session = self.next_session();
             self.gif_encoders.insert(session, open);
             return Ok(VideoEncoderOpened {

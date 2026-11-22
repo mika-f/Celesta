@@ -26,7 +26,7 @@ use celesta_media::{
 };
 use celesta_plugin_host::{
     CELESTA_VERSION, MediaManifest, MediaMuxerEntry, MediaOrigin, MediaVideoEncoderEntry,
-    RESERVED_PLUGIN_ID,
+    PluginKillSwitch, RESERVED_PLUGIN_ID,
 };
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -111,7 +111,8 @@ pub fn manifest() -> MediaManifest {
 }
 
 /// The built-in components as the `builtin` media plugin, made in this
-/// process: its factory ignores the kill switch and what it is made for.
+/// process: its factory ignores what it is made for, and gives the kill
+/// switch to the GIF encoder, whose last frames take long.
 pub fn registered() -> RegisteredPlugin {
     RegisteredPlugin {
         id: RESERVED_PLUGIN_ID.to_owned(),
@@ -121,9 +122,9 @@ pub fn registered() -> RegisteredPlugin {
         directory: PathBuf::new(),
         executable: None,
         media: manifest(),
-        factory: Arc::new(
-            |_, _| Ok(Box::new(ImageComponents::default()) as Box<dyn MediaProvider>),
-        ),
+        factory: Arc::new(|kill, _| {
+            Ok(Box::new(ImageComponents::new(kill.clone())) as Box<dyn MediaProvider>)
+        }),
     }
 }
 
@@ -136,9 +137,19 @@ pub struct ImageComponents {
     gif_muxers: HashMap<SessionId, animated_gif::MuxerSession>,
     /// The last session number given, one count for every kind.
     last: u64,
+    /// What stops a GIF's final encode when the export is cancelled.
+    kill: PluginKillSwitch,
 }
 
 impl ImageComponents {
+    /// The provider, its GIF encodes stopped by `kill`.
+    pub fn new(kill: PluginKillSwitch) -> Self {
+        Self {
+            kill,
+            ..Self::default()
+        }
+    }
+
     fn next_session(&mut self) -> SessionId {
         self.last += 1;
         SessionId(self.last)

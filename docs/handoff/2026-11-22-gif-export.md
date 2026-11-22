@@ -84,10 +84,15 @@ process; it needs no media plugin.
   `finish_video`, then writes the header with a global colour table and
   every frame; `frame` writes the header at open and each frame with a
   local table as soon as the next kept frame gives its delay.
-- **Drawing.** Opaque GIFs: the first frame is drawn whole; later frames
-  draw only the bounding rectangle of the pixels that changed, with
-  unchanged pixels as the transparent index and disposal "keep".
-  `transparent=true`: alpha under 128 is transparent, the rest opaque
+- **Drawing.** Opaque GIFs with a global palette: the first frame is
+  drawn whole; later frames draw only the bounding rectangle of the pixels
+  that changed, with unchanged pixels as the transparent index and
+  disposal "keep". With a palette per frame every frame is drawn whole
+  (disposal "keep"): a pixel left undrawn would keep the colour the palette
+  before chose for it, which the new palette may show better.
+  `transparent=true`: scaling premultiplies alpha first and divides it out
+  of the pixels kept after, so transparent black does not darken edges;
+  then alpha under 128 is transparent, the rest opaque
   (`alpha: true`, so the export clears the background and reads back
   straight `rgba8`); each frame is drawn whole with disposal "restore to
   background".
@@ -97,10 +102,18 @@ process; it needs no media plugin.
   `finish_video`; the export opens the muxer then, as for any encoder whose
   config comes late.
 - **Muxer.** Takes exactly one video track of the `gif` family with a
-  header, to a `.gif` output (any case); else `invalidSettings` key
-  `tracks`. Creates the file at open and writes the header, appends each
+  header; else `invalidSettings` key `tracks`. It writes any extension:
+  only `.gif` picks it, and a named `--muxer builtin/gifFile` (or preset)
+  to another extension writes a GIF there with Celesta's mismatch warning. Creates the file at open and writes the header, appends each
   packet's bytes, and writes the trailer (`;`) at finish; abort names the
   file for Celesta to remove.
+- **Cancel.** The built-in provider keeps the export's plugin kill switch,
+  which cancel throws; a global palette's final encode checks it before
+  learning the palette and before each frame, and fails with
+  `codecStopped`, which the export reports as `cancelled` and cleans up.
+- **No media plugin.** When `.gif` is the only extension a muxer writes,
+  `unsupported_output`'s hint is "write an animated GIF to a .gif path; for
+  other formats, install a media plugin …".
 - **Warnings** (`celesta_media_image::gif_warnings`, from
   `ExportSession::output_warnings` once the export's span is known, for the
   JSON project and React paths): "a {s} s GIF of {n} {w}x{h} frames will be

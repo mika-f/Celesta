@@ -380,7 +380,7 @@ Celesta-export --react badge.tsx badge.gif --video-option transparent=true
 | `transparent` | `true`, `false` | `false` |
 
 - GIF times frames in hundredths of a second, and browsers play a frame shorter than 2 hundredths at 10, so a GIF plays at 50 fps at most, and no frame is kept less than 2 hundredths after the one before. Delays are rounded on each frame's time, so 30 fps alternates 3 and 4 hundredths and the GIF keeps the composition's length.
-- A frame identical to the one before is folded into it, which then lasts longer, and each frame stores only the rectangle that changed. A still background costs almost nothing.
+- A frame identical to the one before is folded into it, which then lasts longer. With `palette=global`, each frame stores only the rectangle that changed, so a still background costs almost nothing; with `palette=frame`, each frame is stored whole, because its palette shows an unchanged pixel in a different colour than the palette before.
 - A frame with no more colours than the palette holds keeps them exactly; otherwise the palette is learned from the pixels (NeuQuant). `palette=global` keeps colours steady from frame to frame and makes the smallest files, but holds every frame in memory until the end; `palette=frame` writes each frame as it comes and suits scenes whose colours change.
 - `scale` sets the GIF's size from the composition's (rendered at full size, then scaled down); a GIF holds at most 65535 pixels on a side.
 - `transparent=true` keeps what nothing draws on transparent. GIF transparency is one bit: a pixel with alpha under 128 is transparent, the rest opaque, so soft edges come out hard. Each frame then clears the one before and is stored whole.

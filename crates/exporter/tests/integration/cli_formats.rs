@@ -294,10 +294,15 @@ fn a_plain_error_prints_its_hint() {
         "{stderr}"
     );
 
-    // With no media plugin at all, how to install one.
+    // With no media plugin at all, the built-in GIF, and how to install one.
     let empty = tempfile::tempdir().unwrap();
     let stderr = plain_failure(empty.path(), &[output.to_str().unwrap()]);
-    assert!(stderr.contains("hint: install a media plugin"), "{stderr}");
+    assert!(
+        stderr.contains(
+            "hint: write an animated GIF to a .gif path; for other formats, install a media plugin"
+        ),
+        "{stderr}"
+    );
     assert!(!output.exists());
 }
 
