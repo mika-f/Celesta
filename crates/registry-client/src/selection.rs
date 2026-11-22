@@ -188,7 +188,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::testing::{TestRegistry, at};
+    use crate::testing::TestRegistry;
 
     #[test]
     fn file_urls_become_dir_transports() {
@@ -208,7 +208,10 @@ mod tests {
         .unwrap();
         let cache = TempDir::new().unwrap();
         let registry = access.client(cache.path(), None).unwrap();
-        registry.keyring(at("2026-11-21T00:00:00Z")).unwrap();
+        // `TestRegistry::file` stamps its files a day before now, so check
+        // on the real clock: a fixed time falls before them once that day
+        // has passed.
+        registry.keyring(time::OffsetDateTime::now_utc()).unwrap();
     }
 
     #[test]
