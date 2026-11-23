@@ -37,6 +37,8 @@ While a field has the keyboard focus, these keys type or move the caret instead:
 
 Playback synchronizes the picture and audio. Use waveforms and track levels to check timing, mute or solo tracks to isolate a sound, and adjust the preview volume. Drag along the timeline ruler to scrub to a specific moment, or swipe sideways over the tracks to move the playhead back and forth. Pinch over the tracks to zoom the timeline, and hold Option (Alt) while you scroll over them to pan it.
 
+The ruler keeps its tick marks when a timecode won't fit, and shows only complete timecodes. Hover over an abbreviated track name to see the full name.
+
 ## Debug guides
 
 `<DebugOverlay />` outlines a safe area, shades the canvas outside it, and marks the center point, and `<DebugBounds>` outlines a group of layers. They appear in the Celesta preview, and in PNG frames and contact sheets exported with `--debug-guides`, but never in a video, so you can leave them in while you work. `useDebugGuides()` tells your own components when guides are drawn.

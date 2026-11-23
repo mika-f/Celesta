@@ -128,6 +128,7 @@ impl RenderOnce for TrackHeader {
         let theme = cx.theme();
         let muted = theme.muted_foreground;
         let id = self.id;
+        let full_name = self.name.clone();
         let level_slot = div()
             .debug_selector({
                 let id = id.clone();
@@ -183,7 +184,7 @@ impl RenderOnce for TrackHeader {
             .flex()
             .flex_none()
             .items_center()
-            .gap_3()
+            .gap_2()
             .w(metrics::track_header_width())
             .h_full()
             .pl(metrics::panel_padding())
@@ -213,10 +214,14 @@ impl RenderOnce for TrackHeader {
                     .gap_1()
                     .child(
                         div()
+                            .id(SharedString::from(format!("{id}-name-tooltip")))
                             .min_w_0()
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis()
+                            .tooltip(move |window, cx| {
+                                Tooltip::new(full_name.clone()).build(window, cx)
+                            })
                             .text_base()
                             .text_color(if self.disabled {
                                 muted
