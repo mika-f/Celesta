@@ -23,8 +23,8 @@ use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _};
 use gpui_kit::{
     Bounds, ClickEvent, Context, CursorStyle, Hsla, IntoElement, Modifiers, MouseButton,
     MouseDownEvent, MouseMoveEvent, ParentElement as _, PathBuilder, PinchEvent, Pixels, Point,
-    Rems, ScrollDelta, ScrollEvent, SharedString, TouchPhase, Window, canvas, div, fill, point,
-    prelude::*, px, relative, rems, rgb, size,
+    Rems, ScrollDelta, ScrollEvent, SharedString, TextRun, TouchPhase, Window, canvas, div, fill,
+    font, point, prelude::*, px, relative, rems, rgb, size,
 };
 
 use crate::actions::{ZoomTimelineIn, ZoomTimelineOut, ZoomTimelineToFit};
@@ -732,7 +732,7 @@ impl EditorView {
             .min_w_0()
             .h_full()
             .bg(cx.theme().secondary)
-            .child(self.ruler_row(view, cx))
+            .child(self.ruler_row(view, window, cx))
             .child(
                 // The playhead and In/Out shading are drawn over the lanes by
                 // a plain (non-interactive) layer, so clip clicks pass
@@ -793,7 +793,12 @@ impl EditorView {
         })
     }
 
-    fn ruler_row(&self, view: LaneView, cx: &mut Context<Self>) -> impl IntoElement {
+    fn ruler_row(
+        &self,
+        view: LaneView,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let geometry = self.timeline_geometry.get();
         let frame_rate = self.frame_rate_value;
         let fps = nominal_fps(frame_rate);
@@ -816,33 +821,56 @@ impl EditorView {
                 Tier::Minor
             }
         };
-        let ticks: Vec<(f32, Tier)> = (first_frame.div_euclid(scale.minor)
-            ..=last_frame.div_euclid(scale.minor) + 1)
+        let theme = cx.theme();
+        let label_font = font(theme.mono_font_family.clone());
+        let label_color = theme.foreground;
+        let label_inset = rems(0.375);
+        let measured_lane_width = px(lane_width); // physical: measured lane width
+        let mut ticks = Vec::new();
+        let mut labels = Vec::new();
+        for frame in (first_frame.div_euclid(scale.minor)..=last_frame.div_euclid(scale.minor) + 1)
             .map(|index| index * scale.minor)
             .filter(|frame| (0..=self.clock.end_frame()).contains(frame))
-            .map(|frame| (view.x(view.frame_fraction(frame)), tier(frame)))
-            .filter(|(x, _)| (-0.01..=1.01).contains(x))
-            .collect();
-        let labels = ticks
-            .iter()
-            .filter(|(_, tier)| *tier == Tier::Major)
-            .map(|(x, _)| *x)
-            .map(|x| {
-                let frame =
-                    ((view.view_start + f64::from(x) / view.zoom) * view.end_frame).round() as i64;
-                div()
-                    .absolute()
-                    .top(rems(0.375))
-                    .left(relative(x))
-                    .ml(rems(0.375))
-                    .font_family(cx.theme().mono_font_family.clone())
-                    .text_sm()
-                    .text_color(cx.theme().muted_foreground)
-                    .whitespace_nowrap()
-                    .child(format_timecode(frame, frame_rate))
-            })
-            .collect::<Vec<_>>();
-        let tick_color = cx.theme().muted_foreground.opacity(0.6);
+        {
+            let x = view.x(view.frame_fraction(frame));
+            if !(0.0..=1.0).contains(&x) {
+                continue;
+            }
+            let tier = tier(frame);
+            ticks.push((x, tier));
+            if tier != Tier::Major {
+                continue;
+            }
+            let text: SharedString = format_timecode(frame, frame_rate).into();
+            let run = TextRun {
+                len: text.len(),
+                font: label_font.clone(),
+                color: label_color,
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            let width = window
+                .text_system()
+                .shape_line(text.clone(), geometry.rem, &[run], None)
+                .width();
+            if ruler_label_fits(x, measured_lane_width, width, geometry.rem * label_inset.0) {
+                labels.push(
+                    div()
+                        .absolute()
+                        .top(rems(0.25))
+                        .left(relative(x))
+                        .ml(label_inset)
+                        .font(label_font.clone())
+                        .text_base()
+                        .line_height(rems(1.25))
+                        .text_color(label_color)
+                        .whitespace_nowrap()
+                        .child(text),
+                );
+            }
+        }
+        let tick_color = theme.muted_foreground.opacity(0.6);
         let lane_bounds = self.timeline_lane_bounds.clone();
         let playhead_x = view.x(self.playhead_fraction());
         let range = self.export_range_fractions();
@@ -883,7 +911,13 @@ impl EditorView {
             }))
             .child(
                 canvas(
-                    move |bounds, _, _| lane_bounds.set(Some(bounds)),
+                    move |bounds, window, _| {
+                        let previous = lane_bounds.replace(Some(bounds));
+                        if previous.is_none_or(|previous| previous.size.width != bounds.size.width)
+                        {
+                            window.request_animation_frame();
+                        }
+                    },
                     move |bounds, _, window, _| {
                         paint_ruler(bounds, &ticks, playhead_x, tick_color, geometry, window)
                     },
@@ -900,6 +934,7 @@ impl EditorView {
             .flex_none()
             .h(metrics::ruler_height())
             .w_full()
+            .bg(cx.theme().title_bar)
             .border_b_1()
             .border_color(cx.theme().border)
             // The corner above the track headers: the playhead's timecode
@@ -1805,6 +1840,10 @@ enum Tier {
     Minor,
 }
 
+fn ruler_label_fits(x: f32, lane_width: Pixels, label_width: Pixels, inset: Pixels) -> bool {
+    (1.0 - x) * lane_width >= label_width + inset * 2.0
+}
+
 /// Ruler ticks (the ruler's full height for labelled marks, half for mid
 /// ticks, short for the rest) and the playhead's head.
 fn paint_ruler(
@@ -2080,15 +2119,24 @@ fn wheel_zoom_factor(delta_y: f32) -> f64 {
 mod tests {
     use super::{
         LaneGesture, LaneView, LaneWheel, RulerDrag, SelectionBand, band_geometry, chapter_lanes,
-        chapter_tooltip, edit_points, follow_playhead, merge_close_bands, scrub_frames,
-        selection_bands, timeline_rows,
+        chapter_tooltip, edit_points, follow_playhead, merge_close_bands, ruler_label_fits,
+        scrub_frames, selection_bands, timeline_rows,
     };
     use crate::impact::ImpactView;
     use celesta_composition::Time;
     use celesta_editor_core::{ClipKind, ClipSummary, TrackSummary};
     use celesta_project::TrackKind;
     use celesta_react_bridge::{ChapterStatus, ReactChapter};
-    use gpui_kit::{Modifiers, TouchPhase, point};
+    use gpui_kit::{Modifiers, TouchPhase, point, px};
+
+    #[test]
+    fn ruler_labels_need_room_for_the_whole_timecode() {
+        let fits = |x, lane_width| ruler_label_fits(x, px(lane_width), px(32.0), px(4.0));
+        assert!(fits(0.75, 160.0));
+        assert!(!fits(0.75, 159.0));
+        assert!(fits(0.0, 159.0));
+        assert!(!fits(1.0, 160.0));
+    }
 
     #[test]
     fn a_ruler_drag_ends_at_a_move_without_the_button() {

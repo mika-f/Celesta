@@ -222,6 +222,8 @@ copied into `assets/`.
   If the viewer hides its start/end jump buttons, use the **Playback** menu.
   **Export** in the title bar (or **File → Export…**) opens the export page
   beside the viewer, whose **Export…** writes the file.
+- The timeline ruler shows complete timecodes only; ticks still mark frames
+  near the edges. Hover over a shortened track name to see its full name.
 - Track mute/solo in the app change what the preview (and an export started
   from the app) plays, and the volume slider is a monitor gain; neither is
   written to the files.
