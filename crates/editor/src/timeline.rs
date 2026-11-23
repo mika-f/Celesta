@@ -825,6 +825,7 @@ impl EditorView {
         let label_font = font(theme.mono_font_family.clone());
         let label_color = theme.foreground;
         let label_inset = rems(0.375);
+        let measured_lane_width = px(lane_width); // physical: measured lane width
         let mut ticks = Vec::new();
         let mut labels = Vec::new();
         for frame in (first_frame.div_euclid(scale.minor)..=last_frame.div_euclid(scale.minor) + 1)
@@ -853,7 +854,7 @@ impl EditorView {
                 .text_system()
                 .shape_line(text.clone(), geometry.rem, &[run], None)
                 .width();
-            if ruler_label_fits(x, px(lane_width), width, geometry.rem * label_inset.0) {
+            if ruler_label_fits(x, measured_lane_width, width, geometry.rem * label_inset.0) {
                 labels.push(
                     div()
                         .absolute()
