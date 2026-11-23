@@ -6,8 +6,8 @@ import { copy, isLocale } from '../site/copy/index.ts';
 import { downloadLinks, type Platform } from '../site/downloads.ts';
 import { repository } from '../site/links.ts';
 import { DownloadAlternatives, DownloadButton } from './_components/DownloadButton.tsx';
+import { HeroShowcase } from './_components/HeroShowcase.tsx';
 import { PlaygroundMount } from './_components/PlaygroundMount.tsx';
-import { Timecode } from './_components/Timecode.tsx';
 import './_components/landing.css';
 
 const platforms: Platform[] = ['macOS', 'Windows'];
@@ -40,14 +40,16 @@ export default function Landing({ locale: urlLocale }: StaticPageComponentProps)
 
   return <div className="lp">
     <section className="lp-hero" aria-labelledby="hero-title">
-      <div className="nr-shell">
-        <p className="lp-hero-meta nr-eyebrow">{home.openSourceInActiveDevelopmentTc(
-          children => <a className="lp-badge" href={`${repository}/commits`}>{children}</a>,
-          external,
-          () => null,
-          () => null,
-        )}</p>
-        <h1 id="hero-title">{home.motionWrittenDown(br, em)}</h1>
+      <div className="nr-shell lp-hero-grid">
+        <div className="lp-hero-head">
+          <p className="lp-hero-meta nr-eyebrow">{home.openSourceInActiveDevelopmentTc(
+            children => <a className="lp-badge" href={`${repository}/commits`}>{children}</a>,
+            external,
+            () => null,
+            () => null,
+          )}</p>
+          <h1 id="hero-title">{home.motionWrittenDown(br, em)}</h1>
+        </div>
         <div className="lp-hero-lower">
           <p className="lp-hero-description">{home.celestaRendersReactComponentsToVideoScrub}</p>
           <div className="lp-hero-cta">
@@ -55,11 +57,14 @@ export default function Landing({ locale: urlLocale }: StaticPageComponentProps)
             <DownloadAlternatives variants={variants} />
           </div>
         </div>
-        {/* The rail: three clips on a ten-second track, a sweeping playhead, and the running timecode. */}
-        <div className="lp-timeline" aria-hidden="true">
-          <div className="nr-rail lp-rail"><i className="nr-rail-clip">{home.storyTsx}</i><i className="nr-rail-clip">{home.atmosphere}</i><i className="nr-rail-clip">{home.voiceWav}</i><span className="nr-rail-head" /></div>
-          <div className="nr-rail-tc"><span>00:00</span><b>{home.openSourceInActiveDevelopmentTc(() => null, () => null, children => children, () => <Timecode />)}</b><span>00:10</span></div>
-        </div>
+        <HeroShowcase labels={{
+          clips: [home.storyTsx, home.atmosphere, home.voiceWav],
+          stageLabel: home.heroTimeline.stageLabel,
+          scrubberLabel: home.heroTimeline.scrubberLabel,
+          play: home.heroTimeline.play,
+          pause: home.heroTimeline.pause,
+          tcPrefix: home.heroTimeline.tcPrefix,
+        }} />
       </div>
       <dl className="lp-specs nr-shell" aria-label={home.atAGlance}>
         <div><dt>{home['01Write']}</dt><dd>{home.plainReactComponentsAndHooksWrittenIn(children => <small>{children}</small>)}</dd></div>
