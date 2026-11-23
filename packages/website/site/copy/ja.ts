@@ -103,6 +103,13 @@ export const ja: Copy = {
     },
     previewStep: '02 — プレビュー',
     exportStep: '03 — 書き出し',
+    heroTimeline: {
+      stageLabel: 'タイムラインと連動するライブプレビュー',
+      scrubberLabel: 'ヒーロータイムラインのスクラブバー',
+      play: 'プレビューを再生',
+      pause: 'プレビューを一時停止',
+      tcPrefix: 'TC',
+    },
   },
   download: {
     label: 'Celesta をダウンロード',

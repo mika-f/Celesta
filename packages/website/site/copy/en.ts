@@ -104,6 +104,13 @@ export const en = {
     },
     previewStep: '02 — Preview',
     exportStep: '03 — Export',
+    heroTimeline: {
+      stageLabel: 'Live preview synchronized with the timeline',
+      scrubberLabel: 'Hero timeline scrubber',
+      play: 'Play preview',
+      pause: 'Pause preview',
+      tcPrefix: 'TC',
+    },
   },
   download: {
     label: 'Download Celesta',
