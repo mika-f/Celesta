@@ -211,6 +211,37 @@ pub(crate) fn sps_colour(codec: Codec, sps: &[u8]) -> Option<VuiColour> {
     }
 }
 
+/// Range is signalled even when the VUI omits its colour description.
+pub(crate) fn sps_full_range(codec: Codec, sps: &[u8]) -> Option<bool> {
+    let mut bits = to_vui_flag(codec, sps)?;
+    if !bits.flag()? {
+        return Some(false);
+    }
+    if bits.flag()? && bits.bits(8)? == 255 {
+        bits.skip(32)?;
+    }
+    if bits.flag()? {
+        bits.bit()?;
+    }
+    if !bits.flag()? {
+        return Some(false);
+    }
+    bits.skip(3)?;
+    bits.flag()
+}
+
+pub(crate) fn sps_left_chroma(codec: Codec, sps: &[u8]) -> Option<bool> {
+    let mut bits = to_vui_flag(codec, sps)?;
+    if !bits.flag()? {
+        return Some(true);
+    }
+    read_signal(&mut bits)?;
+    if !bits.flag()? {
+        return Some(true);
+    }
+    Some(bits.ue()? == 0 && bits.ue()? == 0)
+}
+
 /// Bits, written from the most significant of the first byte on.
 #[derive(Default)]
 struct BitWriter {
@@ -480,6 +511,33 @@ mod tests {
         }
     }
 
+    #[test]
+    fn native_decode_rejects_unsupported_sps_primaries_and_transfer() {
+        for (codec, text) in [(Codec::H264, AVC_SOFTWARE), (Codec::Hevc, HEVC_SOFTWARE)] {
+            for (primaries, transfer, eligible) in [
+                (1u8, 1u8, true),
+                (5, 6, true),
+                (6, 6, true),
+                (12, 1, false),
+                (11, 1, false),
+                (1, 8, false),
+                (1, 13, false),
+            ] {
+                let mut signal = vec![1, 1, 0, 1, 0, 1];
+                for value in [primaries, transfer, 1] {
+                    signal.extend((0..8).rev().map(|shift| value >> shift & 1));
+                }
+                let mut header = vec![0, 0, 0, 1];
+                header.extend(with_signal_bits(codec, &hex(text), &signal));
+                assert_eq!(
+                    crate::nv12::source_8bit420(codec, &header),
+                    eligible,
+                    "{codec:?} {primaries} {transfer}"
+                );
+            }
+        }
+    }
+
     /// `sps` (with a VUI) cut down to an SPS whose VUI flag is 0.
     fn without_vui(codec: Codec, sps: &[u8]) -> Vec<u8> {
         let mut bits = to_vui_flag(codec, sps).unwrap();
@@ -570,6 +628,7 @@ mod tests {
                 // video_full_range_flag, colour_description_present_flag 0.
                 let signal = with_signal_bits(codec, &sps, &[1, 1, 0, 1, full_range, 0]);
                 assert_eq!(sps_colour(codec, &signal), None, "{text}");
+                assert_eq!(sps_full_range(codec, &signal), Some(full_range == 1));
                 let rewritten = with_bt709(codec, &signal);
                 assert_eq!(
                     sps_colour(codec, &rewritten),

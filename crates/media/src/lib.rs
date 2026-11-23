@@ -10,6 +10,7 @@ mod duck;
 mod error;
 mod loudness;
 mod mix;
+mod nv12;
 mod process;
 pub mod protocol;
 mod provider;
@@ -36,6 +37,7 @@ pub use mix::{
     frame_byte_len, mix_audio_graph, mix_audio_graph_cancellable,
     mix_audio_graph_unclipped_cancellable, mix_audio_graph_with_ducks_cancellable, video_seconds,
 };
+pub use nv12::pack_nv12;
 pub use process::{
     DECODE_PREFETCH_VARIABLE, FrameTransport, MediaProcess, SHARED_FRAME_BYTES,
     SHARED_MEMORY_VARIABLE,

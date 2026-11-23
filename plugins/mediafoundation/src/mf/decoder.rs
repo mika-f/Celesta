@@ -1,10 +1,11 @@
 //! The decoder, on Media Foundation's source reader
-//! (`MFCreateSourceReaderFromURL`, advanced video processing on): probes by
+//! (`MFCreateSourceReaderFromURL`): probes by
 //! path, video frames as the FFmpeg plugin's decoder gives them, and a
 //! file's first audio stream. Its sequential sessions follow P5's
 //! (`plugins/avfoundation/src/decoder.rs`), with P5's constants.
 //!
-//! - Video comes out as `MFVideoFormat_RGB32`, made opaque RGBA. The
+//! - Eligible offered video stays NV12 with video processing disabled.
+//!   Other video comes out as `MFVideoFormat_RGB32`, made opaque RGBA. The
 //!   reader's video processor converts from the stream's colour and turns
 //!   the frame upright by its `MF_MT_VIDEO_ROTATION` (Task 1), so frames are
 //!   at the displayed size; the native type's rotation only gives the
@@ -33,35 +34,40 @@
 //! answered, except a sequential session's, which goes when the session
 //! closes.
 
+use crate::annexb::Codec;
 use crate::edit_list::{TrackEdit, track_edits};
 use crate::mf::mft::{check, sample_bytes};
 use crate::names::{codec_name, matrix_name, pcm_name, primaries_name, transfer_name};
+use crate::nv12::Crop;
 use celesta_composition::{Rational, Time};
 use celesta_media::{
-    AudioBuffer, AudioStream, MediaError, MediaProbe, VideoColor, VideoFrame, VideoRequest,
-    VideoStream, frame_byte_len, resample_audio, timestamps_match, video_seconds,
+    AudioBuffer, AudioStream, DecodedColor, DecodedMatrix, DecodedPixelFormat, DecodedRange,
+    MediaError, MediaProbe, VideoColor, VideoFrame, VideoRequest, VideoStream, frame_byte_len,
+    resample_audio, timestamps_match, video_seconds,
 };
 use std::collections::HashMap;
 use std::mem::ManuallyDrop;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use windows::Win32::Media::MediaFoundation::{
-    IMFMediaType, IMFSample, IMFSourceReader, MF_E_INVALIDSTREAMNUMBER,
-    MF_MT_AUDIO_BITS_PER_SAMPLE, MF_MT_AUDIO_NUM_CHANNELS, MF_MT_AUDIO_SAMPLES_PER_SECOND,
-    MF_MT_DEFAULT_STRIDE, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE, MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE,
-    MF_MT_TRANSFER_FUNCTION, MF_MT_VIDEO_PRIMARIES, MF_MT_VIDEO_ROTATION, MF_MT_YUV_MATRIX,
+    IMF2DBuffer, IMF2DBuffer2, IMFMediaType, IMFSample, IMFSourceReader, MF_E_INVALIDSTREAMNUMBER,
+    MF_MT_ALPHA_MODE, MF_MT_AUDIO_BITS_PER_SAMPLE, MF_MT_AUDIO_NUM_CHANNELS,
+    MF_MT_AUDIO_SAMPLES_PER_SECOND, MF_MT_DEFAULT_STRIDE, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE,
+    MF_MT_GEOMETRIC_APERTURE, MF_MT_MAJOR_TYPE, MF_MT_MINIMUM_DISPLAY_APERTURE,
+    MF_MT_MPEG_SEQUENCE_HEADER, MF_MT_SUBTYPE, MF_MT_TRANSFER_FUNCTION, MF_MT_VIDEO_CHROMA_SITING,
+    MF_MT_VIDEO_NOMINAL_RANGE, MF_MT_VIDEO_PRIMARIES, MF_MT_VIDEO_ROTATION, MF_MT_YUV_MATRIX,
     MF_PD_DURATION, MF_SOURCE_READER_ALL_STREAMS,
     MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING, MF_SOURCE_READER_MEDIASOURCE,
     MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED, MF_SOURCE_READERF_ENDOFSTREAM,
-    MF_SOURCE_READERF_ERROR, MFAudioFormat_Float, MFAudioFormat_PCM, MFCreateAttributes,
-    MFCreateMediaType, MFCreateSourceReaderFromURL, MFMediaType_Audio, MFMediaType_Video,
-    MFVideoFormat_RGB32,
+    MF_SOURCE_READERF_ERROR, MF2DBuffer_LockFlags_Read, MFAudioFormat_Float, MFAudioFormat_PCM,
+    MFCreateAttributes, MFCreateMediaType, MFCreateSourceReaderFromURL, MFMediaType_Audio,
+    MFMediaType_Video, MFVideoArea, MFVideoFormat_NV12, MFVideoFormat_RGB32,
 };
 use windows::Win32::System::Com::StructuredStorage::{
     PROPVARIANT, PROPVARIANT_0, PROPVARIANT_0_0, PROPVARIANT_0_0_0, PropVariantClear,
 };
 use windows::Win32::System::Variant::{VT_I8, VT_UI8};
-use windows_core::{GUID, HSTRING};
+use windows_core::{GUID, HSTRING, Interface};
 
 /// How far past the last request a sequential session's next may be while
 /// its reader is walked forward to it; past it, the reader seeks.
@@ -251,6 +257,10 @@ fn native_type(reader: &IMFSourceReader, stream: u32) -> Result<Option<IMFMediaT
 /// gives it: its size the displayed one.
 fn video_stream(stream: u32, native: &IMFMediaType, edit: Edit) -> Option<VideoStream> {
     let (width, height) = pair_of(native, &MF_MT_FRAME_SIZE)?;
+    let (width, height) = aperture(native)
+        .ok()
+        .flatten()
+        .map_or((width, height), |(_, _, w, h)| (w, h));
     let rotation = u32_of(native, &MF_MT_VIDEO_ROTATION).unwrap_or(0);
     let (width, height) = if rotation % 180 == 90 {
         (height, width)
@@ -308,6 +318,10 @@ fn presentation_duration(reader: &IMFSourceReader) -> Option<Time> {
 /// Opens `path` with a source reader: what it holds. The edit lists are
 /// read first, and the file closed, before the reader opens it.
 fn open_source(path: &Path) -> Result<Source, MediaError> {
+    open_source_processing(path, true)
+}
+
+fn open_source_processing(path: &Path, processing: bool) -> Result<Source, MediaError> {
     ensure_exists(path)?;
     let edits = std::fs::File::open(path)
         .ok()
@@ -337,10 +351,12 @@ fn open_source(path: &Path) -> Result<Source, MediaError> {
         check("MFCreateAttributes", MFCreateAttributes(&mut attributes, 1))?;
         let attributes = attributes
             .ok_or_else(|| MediaError::Codec("MFCreateAttributes gave nothing".to_owned()))?;
-        check(
-            "SetUINT32(MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING)",
-            attributes.SetUINT32(&MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING, 1),
-        )?;
+        if processing {
+            check(
+                "SetUINT32(MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING)",
+                attributes.SetUINT32(&MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING, 1),
+            )?;
+        }
         MFCreateSourceReaderFromURL(&HSTRING::from(full.as_path()), &attributes)
     }
     .map_err(|_| unsupported(path))?;
@@ -429,6 +445,295 @@ fn select_output(
     }
 }
 
+fn blob(media_type: &IMFMediaType, key: &GUID) -> Option<Vec<u8>> {
+    // SAFETY: live attribute store; GetBlob is bounded by the allocated slice.
+    unsafe {
+        let mut bytes = vec![0; media_type.GetBlobSize(key).ok()? as usize];
+        media_type.GetBlob(key, &mut bytes, None).ok()?;
+        Some(bytes)
+    }
+}
+
+fn aperture(media_type: &IMFMediaType) -> Result<Option<(u32, u32, u32, u32)>, MediaError> {
+    let bad = || MediaError::Codec("invalid Media Foundation display aperture".into());
+    for key in [MF_MT_MINIMUM_DISPLAY_APERTURE, MF_MT_GEOMETRIC_APERTURE] {
+        if let Some(bytes) = blob(media_type, &key) {
+            if bytes.len() != std::mem::size_of::<MFVideoArea>() {
+                return Err(bad());
+            }
+            // SAFETY: exact-size POD structure copied from the attribute's bytes.
+            let area = unsafe { bytes.as_ptr().cast::<MFVideoArea>().read_unaligned() };
+            if area.OffsetX.fract != 0 || area.OffsetY.fract != 0 {
+                return Err(bad());
+            }
+            return Ok(Some((
+                u32::try_from(area.OffsetX.value).map_err(|_| bad())?,
+                u32::try_from(area.OffsetY.value).map_err(|_| bad())?,
+                u32::try_from(area.Area.cx).map_err(|_| bad())?,
+                u32::try_from(area.Area.cy).map_err(|_| bad())?,
+            )));
+        }
+    }
+    Ok(None)
+}
+
+fn native_color(native: &IMFMediaType) -> Option<DecodedColor> {
+    if u32_of(native, &MF_MT_VIDEO_ROTATION).unwrap_or(0) != 0
+        || !matches!(u32_of(native, &MF_MT_ALPHA_MODE), None | Some(0 | 3))
+    {
+        return None;
+    }
+    let (width, height) = pair_of(native, &MF_MT_FRAME_SIZE)?;
+    if !crate::nv12::even_size(width, height) {
+        return None;
+    }
+    if let Some((left, top, w, h)) = aperture(native).ok()? {
+        Crop {
+            width: w,
+            height: h,
+            coded_width: width,
+            coded_height: height,
+            left,
+            top,
+        }
+        .extent(width as usize)?;
+    }
+    let codec = match subtype_codec(native)?.as_str() {
+        "h264" => Codec::H264,
+        "hevc" => Codec::Hevc,
+        _ => return None,
+    };
+    let header = blob(native, &MF_MT_MPEG_SEQUENCE_HEADER)?;
+    if !crate::nv12::source_8bit420(codec, &header) {
+        return None;
+    }
+    let (full, matrix) = crate::nv12::source_signal(codec, &header)?;
+    let tag = |key: &GUID, name: fn(u32) -> Option<&'static str>| -> Option<Option<String>> {
+        match u32_of(native, key).unwrap_or(0) {
+            0 => Some(None),
+            value => Some(Some(name(value)?.to_owned())),
+        }
+    };
+    crate::nv12::color(
+        &VideoColor {
+            matrix: tag(&MF_MT_YUV_MATRIX, matrix_name)?.or_else(|| match matrix {
+                Some(1) => Some("bt709".into()),
+                Some(5 | 6) => Some("smpte170m".into()),
+                _ => None,
+            }),
+            primaries: tag(&MF_MT_VIDEO_PRIMARIES, primaries_name)?,
+            transfer: tag(&MF_MT_TRANSFER_FUNCTION, transfer_name)?,
+        },
+        u32_of(native, &MF_MT_VIDEO_NOMINAL_RANGE)
+            .filter(|v| *v != 0)
+            .unwrap_or(if full { 1 } else { 2 }),
+        u32_of(native, &MF_MT_VIDEO_CHROMA_SITING).unwrap_or(0),
+    )
+}
+
+fn color_attributes(color: DecodedColor) -> [(GUID, u32); 3] {
+    [
+        (
+            MF_MT_YUV_MATRIX,
+            match color.matrix {
+                DecodedMatrix::Bt601 => 2,
+                DecodedMatrix::Bt709 => 1,
+            },
+        ),
+        (
+            MF_MT_VIDEO_NOMINAL_RANGE,
+            match color.range {
+                DecodedRange::Limited => 2,
+                DecodedRange::Full => 1,
+            },
+        ),
+        (MF_MT_VIDEO_CHROMA_SITING, 5),
+    ]
+}
+
+fn select_nv12(
+    reader: &IMFSourceReader,
+    stream: u32,
+    color: DecodedColor,
+) -> Result<IMFMediaType, MediaError> {
+    let current = select_output(reader, stream, MFMediaType_Video, MFVideoFormat_NV12)?;
+    // SAFETY: live reader and the complete uncompressed media type it selected.
+    unsafe {
+        for (key, value) in color_attributes(color) {
+            check("SetUINT32(NV12 color)", current.SetUINT32(&key, value))?;
+        }
+        check(
+            "SetCurrentMediaType(NV12 color)",
+            reader.SetCurrentMediaType(stream, None, &current),
+        )?;
+        check(
+            "GetCurrentMediaType(NV12)",
+            reader.GetCurrentMediaType(stream),
+        )
+    }
+}
+
+#[derive(Clone, Copy)]
+struct NativeLayout {
+    crop: Crop,
+    stride: Option<usize>,
+    color: DecodedColor,
+}
+
+impl NativeLayout {
+    fn of(
+        current: &IMFMediaType,
+        video: &VideoStream,
+        expected: DecodedColor,
+    ) -> Result<Self, MediaError> {
+        let bad = || {
+            MediaError::Codec(format!(
+                "unexpected Media Foundation NV12 type, color or aperture: subtype={:?} size={:?} matrix={:?} range={:?} chroma={:?} expected={expected:?}",
+                guid_of(current, &MF_MT_SUBTYPE),
+                pair_of(current, &MF_MT_FRAME_SIZE),
+                u32_of(current, &MF_MT_YUV_MATRIX),
+                u32_of(current, &MF_MT_VIDEO_NOMINAL_RANGE),
+                u32_of(current, &MF_MT_VIDEO_CHROMA_SITING),
+            ))
+        };
+        if guid_of(current, &MF_MT_SUBTYPE) != Some(MFVideoFormat_NV12)
+            || !crate::nv12::matrix_matches(u32_of(current, &MF_MT_YUV_MATRIX), expected.matrix)
+            || color_attributes(expected)
+                .iter()
+                .filter(|(key, _)| *key != MF_MT_YUV_MATRIX)
+                .any(|(key, value)| u32_of(current, key) != Some(*value))
+            || u32_of(current, &MF_MT_VIDEO_ROTATION).unwrap_or(0) != 0
+        {
+            return Err(bad());
+        }
+        let (coded_width, coded_height) = pair_of(current, &MF_MT_FRAME_SIZE).ok_or_else(bad)?;
+        let mut crop = Crop {
+            width: video.width,
+            height: video.height,
+            coded_width,
+            coded_height,
+            left: 0,
+            top: 0,
+        };
+        if let Some((left, top, width, height)) = aperture(current)? {
+            if (width, height) != (video.width, video.height) {
+                return Err(bad());
+            }
+            crop.left = left;
+            crop.top = top;
+        }
+        crop.extent(coded_width as usize).ok_or_else(bad)?;
+        let stride = u32_of(current, &MF_MT_DEFAULT_STRIDE).map(|n| n as i32);
+        if stride.is_some_and(|n| n <= 0) {
+            return Err(bad());
+        }
+        // Response metadata is read from the negotiated type, not just the offer.
+        let color = crate::nv12::color(
+            &VideoColor {
+                matrix: u32_of(current, &MF_MT_YUV_MATRIX)
+                    .and_then(matrix_name)
+                    .map(str::to_owned),
+                ..Default::default()
+            },
+            u32_of(current, &MF_MT_VIDEO_NOMINAL_RANGE).ok_or_else(bad)?,
+            u32_of(current, &MF_MT_VIDEO_CHROMA_SITING).ok_or_else(bad)?,
+        )
+        .ok_or_else(bad)?;
+        Ok(Self {
+            crop,
+            stride: stride.map(|n| n as usize),
+            color,
+        })
+    }
+}
+
+fn convert_nv12(sample: &IMFSample, layout: NativeLayout) -> Result<VideoFrame, MediaError> {
+    let bad = || MediaError::Codec("invalid Media Foundation NV12 buffer".into());
+    // SAFETY: each successful lock is balanced on both success and error;
+    // plane slices are bounded by the locked allocation and never escape.
+    let pixels = unsafe {
+        if check("GetBufferCount", sample.GetBufferCount())? != 1 {
+            return Err(bad());
+        }
+        let buffer = check("GetBufferByIndex", sample.GetBufferByIndex(0))?;
+        let mut scan = std::ptr::null_mut();
+        let mut pitch = 0;
+        if let Ok(two) = buffer.cast::<IMF2DBuffer2>() {
+            let mut start = std::ptr::null_mut();
+            let mut length = 0;
+            check(
+                "Lock2DSize",
+                two.Lock2DSize(
+                    MF2DBuffer_LockFlags_Read,
+                    &mut scan,
+                    &mut pitch,
+                    &mut start,
+                    &mut length,
+                ),
+            )?;
+            let result = (|| {
+                let pitch = usize::try_from(pitch).map_err(|_| bad())?;
+                let extent = layout.crop.extent(pitch).ok_or_else(bad)?;
+                let offset = (scan as usize)
+                    .checked_sub(start as usize)
+                    .ok_or_else(bad)?;
+                if scan.is_null()
+                    || start.is_null()
+                    || offset
+                        .checked_add(extent)
+                        .is_none_or(|n| n > length as usize)
+                {
+                    return Err(bad());
+                }
+                layout
+                    .crop
+                    .pack(std::slice::from_raw_parts(scan, extent), pitch)
+            })();
+            let unlock = check("Unlock2D", two.Unlock2D());
+            unlock?;
+            result?
+        } else if let Ok(two) = buffer.cast::<IMF2DBuffer>() {
+            let length = check("GetMaxLength", buffer.GetMaxLength())? as usize;
+            check("Lock2D", two.Lock2D(&mut scan, &mut pitch))?;
+            let result = (|| {
+                let pitch = usize::try_from(pitch).map_err(|_| bad())?;
+                let extent = layout.crop.extent(pitch).ok_or_else(bad)?;
+                if scan.is_null() || extent > length {
+                    return Err(bad());
+                }
+                layout
+                    .crop
+                    .pack(std::slice::from_raw_parts(scan, extent), pitch)
+            })();
+            let unlock = check("Unlock2D", two.Unlock2D());
+            unlock?;
+            result?
+        } else {
+            let mut length = 0;
+            check("Lock", buffer.Lock(&mut scan, None, Some(&mut length)))?;
+            let result = (|| {
+                if scan.is_null() || length as usize > isize::MAX as usize {
+                    return Err(bad());
+                }
+                let pitch = layout.stride.unwrap_or(layout.crop.coded_width as usize);
+                layout
+                    .crop
+                    .pack(std::slice::from_raw_parts(scan, length as usize), pitch)
+            })();
+            let unlock = check("Unlock", buffer.Unlock());
+            unlock?;
+            result?
+        }
+    };
+    VideoFrame::new(
+        layout.crop.width,
+        layout.crop.height,
+        DecodedPixelFormat::Nv12,
+        Some(layout.color),
+        pixels,
+    )
+}
+
 /// One `ReadSample` of `stream`: the sample (none for a gap) at its time in
 /// hns, and whether the stream ended; whether the output type changed.
 struct Read {
@@ -498,6 +803,7 @@ fn seek(reader: &IMFSourceReader, seconds: f64, duration: Option<Time>) -> Resul
 struct Shown {
     seconds: f64,
     sample: IMFSample,
+    native: Option<NativeLayout>,
     /// The frame, once converted.
     frame: Option<VideoFrame>,
 }
@@ -536,6 +842,7 @@ struct Run {
     /// ([`reader_shift`]).
     shift: f64,
     layout: Layout,
+    native: Option<NativeLayout>,
     /// The last frame shown by the last request.
     current: Option<Shown>,
     /// The frame read after it, not shown yet.
@@ -545,26 +852,56 @@ struct Run {
 }
 
 impl Run {
-    /// A reader of `path`'s video, its output set to RGB32.
-    fn open(path: &Path) -> Result<Self, MediaError> {
-        let source = open_source(path)?;
+    /// A reader of `path`'s video in the negotiated pixel format.
+    fn open(path: &Path, accepted: &[DecodedPixelFormat]) -> Result<Self, MediaError> {
+        let wants_nv12 = accepted.contains(&DecodedPixelFormat::Nv12);
+        let mut source = open_source_processing(path, !wants_nv12)?;
+        let color = wants_nv12
+            .then(|| {
+                let video = source.video.as_ref()?;
+                let display = source.probe.video.as_ref()?;
+                if !crate::nv12::even_size(display.width, display.height) {
+                    return None;
+                }
+                let native = native_type(&source.reader, video.stream).ok()??;
+                native_color(&native)
+            })
+            .flatten();
+        if wants_nv12 && color.is_none() {
+            drop(source);
+            source = open_source(path)?;
+        }
         let Some(video) = &source.video else {
             return Err(MediaError::NoVideoStream(path.to_owned()));
         };
         let (stream, edit, first_shown) = (video.stream, video.edit, video.first_shown);
-        let current = select_output(
-            &source.reader,
-            stream,
-            MFMediaType_Video,
-            MFVideoFormat_RGB32,
-        )?;
+        let current = if let Some(color) = color {
+            select_nv12(&source.reader, stream, color)?
+        } else {
+            select_output(
+                &source.reader,
+                stream,
+                MFMediaType_Video,
+                MFVideoFormat_RGB32,
+            )?
+        };
         let layout = Layout::of(&current)?;
+        let native = color
+            .map(|color| {
+                NativeLayout::of(
+                    &current,
+                    source.probe.video.as_ref().expect("video stream"),
+                    color,
+                )
+            })
+            .transpose()?;
         let mut run = Self {
             source,
             stream,
             edit,
             shift: 0.0,
             layout,
+            native,
             current: None,
             next: None,
             ended: false,
@@ -605,11 +942,19 @@ impl Run {
                     self.source.reader.GetCurrentMediaType(self.stream)
                 })?;
                 self.layout = Layout::of(&current)?;
+                if let Some(native) = self.native {
+                    self.native = Some(NativeLayout::of(
+                        &current,
+                        self.source.probe.video.as_ref().expect("video stream"),
+                        native.color,
+                    )?);
+                }
             }
             if let Some((sample, time)) = read.sample {
                 return Ok(Some(Shown {
                     seconds: time as f64 / HNS_PER_SECOND,
                     sample,
+                    native: self.native,
                     frame: None,
                 }));
             }
@@ -652,7 +997,11 @@ impl Run {
         if let Some(frame) = &shown.frame {
             return Ok(frame.clone());
         }
-        let frame = convert(&shown.sample, layout)?;
+        let frame = if let Some(native) = shown.native {
+            convert_nv12(&shown.sample, native)?
+        } else {
+            convert(&shown.sample, layout)?
+        };
         shown.frame = Some(frame.clone());
         Ok(frame)
     }
@@ -747,7 +1096,7 @@ struct Session {
 }
 
 /// A sequential session: the renderer's name for it, and the file.
-type SessionKey = (String, PathBuf);
+type SessionKey = (String, PathBuf, Vec<DecodedPixelFormat>);
 
 /// The decoder's sequential sessions; nothing else keeps a reader.
 #[derive(Default)]
@@ -785,7 +1134,7 @@ impl MfDecoder {
             return Err(MediaError::InvalidTimestamp(time));
         }
         let Some(sequential) = request.sequential else {
-            let mut run = Run::open(path)?;
+            let mut run = Run::open(path, request.accepted_pixel_formats)?;
             let time = clamped(time, &run.source);
             let media = run.reader_seconds(time);
             if media > 0.0 {
@@ -795,7 +1144,11 @@ impl MfDecoder {
         };
 
         self.requests = self.requests.saturating_add(1);
-        let key = (sequential.session.to_owned(), path.to_owned());
+        let key = (
+            sequential.session.to_owned(),
+            path.to_owned(),
+            request.accepted_pixel_formats.to_vec(),
+        );
         let reusable = self.sessions.get(&key).and_then(|session| {
             let time = clamped(time, &session.run.source);
             (timestamps_match(session.last, time)
@@ -806,7 +1159,7 @@ impl MfDecoder {
             Some(time) => time,
             None => {
                 self.sessions.remove(&key);
-                let mut run = Run::open(path)?;
+                let mut run = Run::open(path, request.accepted_pixel_formats)?;
                 let time = clamped(time, &run.source);
                 let media = run.reader_seconds(time);
                 if media > 0.0 {

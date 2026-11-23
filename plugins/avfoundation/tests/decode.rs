@@ -4,6 +4,9 @@
 //! them, and what it refuses.
 #![cfg(target_os = "macos")]
 
+#[path = "support/yuv_decode.rs"]
+mod yuv_decode;
+
 use block2::RcBlock;
 use celesta_codec_avfoundation::{AvfCodec, DECODER_ID};
 use celesta_codec_ffmpeg::FfmpegCodec;

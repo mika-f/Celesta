@@ -201,11 +201,8 @@ pub(crate) fn hvcc_from(sets: &ParameterSets) -> Result<Vec<u8>, MediaError> {
 /// Every parameter set in an `avcC` or `hvcC` record, in order, each a NAL
 /// unit with its header.
 #[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "for a muxer, which Task 1's ruling B leaves unbuilt; only its tests use it"
-    )
+    not(any(windows, test)),
+    expect(dead_code, reason = "used by the Windows NV12 decoder and its tests")
 )]
 pub(crate) fn record_units(codec: Codec, record: &[u8]) -> Result<Vec<&[u8]>, MediaError> {
     let what = match codec {

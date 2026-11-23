@@ -61,6 +61,12 @@ mod names;
 )]
 mod params;
 
+#[cfg_attr(
+    not(any(target_os = "macos", test)),
+    expect(dead_code, reason = "only the macOS decoder selects native colour")
+)]
+mod nv12;
+
 #[cfg(target_os = "macos")]
 mod apple;
 #[cfg(target_os = "macos")]

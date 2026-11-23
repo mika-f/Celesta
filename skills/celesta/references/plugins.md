@@ -259,6 +259,16 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   Unset or any other value preserves the usual format negotiation. Encoding
   and the plugin's RGBA conversion are unchanged.
 
+- Decoded YUV: `ffmpeg` can answer NV12/I420; macOS `avfoundation` and
+  Windows `mediafoundation` can answer
+  offered NV12 for even-sized upright 8-bit 4:2:0 H.264/HEVC Main SDR with
+  BT.601/709 matrix, compatible 601/709 primaries/transfer (or untagged),
+  and left chroma siting. P3, linear and other transfers use RGBA.
+  Alpha, rotation/mirroring, HDR, 10-bit,
+  unsupported metadata and RGBA-only offers keep its existing RGBA path.
+  Media Foundation disables video processing for NV12, validates negotiated
+  matrix/range, and crops aligned decoder surfaces to the display aperture.
+
 ## The VRM plugin
 
 The `vrm` plugin draws VRM 1.0 avatars (`.vrm`) as a 3D layer,

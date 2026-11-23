@@ -101,6 +101,76 @@ fn avc_sps(avcc: &[u8]) -> Result<&[u8], MediaError> {
     Ok(sps)
 }
 
+/// Whether every SPS in an AVC configuration declares 8-bit 4:2:0.
+pub(crate) fn avc_8bit420(avcc: &[u8]) -> bool {
+    fn sps(unit: &[u8]) -> Option<bool> {
+        if unit.first()? & 0x1f != 7 {
+            return None;
+        }
+        let mut bits = Bits::new(unescaped(unit.get(1..)?));
+        let profile = bits.bits(8)? as u8;
+        bits.skip(16)?;
+        bits.ue()?;
+        if PROFILES_WITH_CHROMA_FORMAT.contains(&profile) {
+            Some(bits.ue()? == 1 && bits.ue()? == 0 && bits.ue()? == 0)
+        } else {
+            Some(matches!(profile, 66 | 77 | 88))
+        }
+    }
+    let Some(&count) = avcc.get(5) else {
+        return false;
+    };
+    if avcc.first() != Some(&1) || count & 31 == 0 {
+        return false;
+    }
+    let mut offset = 6;
+    for _ in 0..count & 31 {
+        let Some(length) = avcc.get(offset..offset + 2) else {
+            return false;
+        };
+        let length = usize::from(u16::from_be_bytes([length[0], length[1]]));
+        offset += 2;
+        let Some(unit) = avcc.get(offset..offset + length) else {
+            return false;
+        };
+        if sps(unit) != Some(true) {
+            return false;
+        }
+        offset += length;
+    }
+    true
+}
+
+/// HEVC Main, 8-bit 4:2:0; auxiliary and higher-bit-depth profiles stay RGB.
+pub(crate) fn hevc_8bit420(hvcc: &[u8]) -> bool {
+    fn sps(unit: &[u8]) -> Option<bool> {
+        let mut bits = Bits::new(unescaped(unit.get(2..)?));
+        bits.skip(4)?;
+        let layers = bits.bits(3)?;
+        bits.bit()?;
+        skip_profile_tier_level(&mut bits, layers)?;
+        bits.ue()?;
+        if bits.ue()? != 1 {
+            return Some(false);
+        }
+        bits.ue()?;
+        bits.ue()?;
+        if bits.flag()? {
+            for _ in 0..4 {
+                bits.ue()?;
+            }
+        }
+        Some(bits.ue()? == 0 && bits.ue()? == 0)
+    }
+    hvcc.len() >= 23
+        && hvcc[0] == 1
+        && hvcc[1] & 31 == 1
+        && hvcc[16] & 3 == 1
+        && hvcc[17] & 7 == 0
+        && hvcc[18] & 7 == 0
+        && hevc_sps(hvcc).ok().and_then(sps) == Some(true)
+}
+
 /// `avc1.` and the SPS's profile, constraint flags, and level in upper-case
 /// hexadecimal, as WebCodecs names them.
 pub(crate) fn avc_codec_string(avcc: &[u8]) -> Result<String, MediaError> {
@@ -380,6 +450,67 @@ mod tests {
 
     const AVCC: &str = "0164000dffe1000f2764000dac56505067e79a8080808101000428ee3cb0fdf8f800";
     const HVCC: &str = "010220000000b000000000003cf000fcfdfafa00000b03a00001001840010c01ffff022000000300b0000003000003003c15c090a100010023420101022000000300b0000003000003003ca00a080c1f3b62057b9165535010101008a2000100084401c02835182992";
+
+    #[test]
+    fn native_decode_rejects_missing_truncated_and_ten_bit_records() {
+        assert!(avc_8bit420(&hex(AVCC)));
+        assert!(!avc_8bit420(&[]));
+        assert!(!avc_8bit420(&hex(AVCC)[..10]));
+        let ten = hex(HVCC);
+        assert!(!hevc_8bit420(&ten));
+        assert!(!hevc_8bit420(&[]));
+        assert!(!hevc_8bit420(&ten[..20]));
+        let mut eight = ten.clone();
+        eight[1] = (eight[1] & !31) | 1;
+        eight[16] = (eight[16] & !3) | 1;
+        eight[17] &= !7;
+        eight[18] &= !7;
+        assert!(!hevc_8bit420(&eight));
+        eight[16] = (eight[16] & !3) | 3;
+        assert!(!hevc_8bit420(&eight));
+    }
+
+    #[test]
+    fn eight_bit_hevc_sps_and_header_must_agree() {
+        let mut w = Writer::default();
+        w.bits(0, 4).bits(0, 3).bits(1, 1);
+        for _ in 0..12 {
+            w.bits(0, 8);
+        }
+        w.ue(0).ue(1).ue(64).ue(36).bits(0, 1).ue(0).ue(0);
+        let mut sps = vec![0x42, 1];
+        sps.extend(w.bytes());
+        let mut hvcc = vec![0; 23];
+        hvcc[0] = 1;
+        hvcc[1] = 1;
+        hvcc[16] = 1;
+        hvcc[22] = 1;
+        hvcc.extend([33, 0, 1]);
+        hvcc.extend((sps.len() as u16).to_be_bytes());
+        hvcc.extend(sps);
+        assert!(hevc_8bit420(&hvcc));
+        hvcc[17] = 2;
+        assert!(!hevc_8bit420(&hvcc));
+    }
+
+    #[test]
+    fn high_profile_avc_checks_chroma_and_both_bit_depths() {
+        for (chroma, luma, chroma_depth, expected) in [
+            (1, 0, 0, true),
+            (3, 0, 0, false),
+            (1, 2, 2, false),
+            (1, 0, 2, false),
+        ] {
+            let mut w = Writer::default();
+            w.ue(0).ue(chroma).ue(luma).ue(chroma_depth);
+            let mut sps = vec![0x67, 100, 0, 30];
+            sps.extend(w.bytes());
+            let mut avcc = vec![1, 100, 0, 30, 0xff, 0xe1];
+            avcc.extend((sps.len() as u16).to_be_bytes());
+            avcc.extend(sps);
+            assert_eq!(avc_8bit420(&avcc), expected);
+        }
+    }
 
     #[test]
     fn avc_strings_and_depth() {
