@@ -215,8 +215,16 @@ fn plan(
             }
         }
         VideoCodec::Vp9 => {
-            let input = rgba16()?;
             let alpha = settings.get("alpha") == Some(&SettingValue::Boolean(true));
+            let input = if alpha {
+                rgba16()?
+            } else {
+                choose(
+                    offered,
+                    &[PixelFormat::Yuv420p, PixelFormat::Rgba16],
+                    "needs yuv420p or rgba16",
+                )?
+            };
             let crf = whole(settings, "crf").unwrap_or(20);
             Plan {
                 input,
@@ -626,6 +634,76 @@ mod tests {
     use super::*;
     use celesta_composition::Rational;
     use celesta_media::Color;
+
+    #[test]
+    fn vp9_input_selection_preserves_alpha_and_eight_bit_output() {
+        use PixelFormat::{Nv12, P010, Rgba8, Rgba16, Yuv420p, Yuv420p10};
+
+        let opaque = [("alpha".to_owned(), SettingValue::Boolean(false))]
+            .into_iter()
+            .collect();
+        let defaults = validate(&VideoCodec::Vp9.settings(), &Settings::new()).unwrap();
+        for (settings, offered, input, format) in [
+            (
+                &opaque,
+                vec![Rgba16, Yuv420p],
+                Yuv420p,
+                AVPixelFormat::AV_PIX_FMT_YUV420P,
+            ),
+            (
+                &opaque,
+                vec![Rgba16, Rgba8],
+                Rgba16,
+                AVPixelFormat::AV_PIX_FMT_YUV420P,
+            ),
+            (
+                &defaults,
+                vec![Yuv420p, Rgba16],
+                Rgba16,
+                AVPixelFormat::AV_PIX_FMT_YUVA420P,
+            ),
+        ] {
+            let chosen = plan(VideoCodec::Vp9, settings, &offered).unwrap();
+            assert_eq!(chosen.input, input);
+            assert_eq!(chosen.format, format);
+            assert_eq!(chosen.alpha, settings == &defaults);
+            assert_eq!(chosen.codec, Some("vp09.00.10.08"));
+        }
+        for offered in [vec![], vec![Rgba8], vec![Yuv420p10, Nv12, P010]] {
+            assert!(plan(VideoCodec::Vp9, &opaque, &offered).is_err());
+        }
+        assert!(plan(VideoCodec::Vp9, &defaults, &[Yuv420p]).is_err());
+        assert_eq!(
+            plan(VideoCodec::ProRes, &Settings::new(), &[Yuv420p, Rgba16])
+                .unwrap()
+                .input,
+            Rgba16
+        );
+    }
+
+    #[test]
+    fn vp9_yuv_input_has_no_scaler() {
+        let settings = [("alpha".to_owned(), SettingValue::Boolean(false))]
+            .into_iter()
+            .collect();
+        let opened = open(
+            VideoCodec::Vp9,
+            &VideoEncoderRequest {
+                component: "vp9",
+                settings: &settings,
+                width: 32,
+                height: 16,
+                frame_rate: Rational::new(30, 1),
+                timescale: 30,
+                offered: &[PixelFormat::Yuv420p, PixelFormat::Rgba16],
+                color: &Color::bt709_limited(),
+            },
+        )
+        .unwrap();
+        assert_eq!(opened.input, PixelFormat::Yuv420p);
+        assert_eq!(opened.session.format, AVPixelFormat::AV_PIX_FMT_YUV420P);
+        assert!(opened.session.scaler.is_none());
+    }
 
     #[test]
     fn ntsc_packets_are_timed_in_the_frame_rates_numerator() {

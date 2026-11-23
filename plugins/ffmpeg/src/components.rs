@@ -83,7 +83,8 @@ impl VideoCodec {
                 PixelFormat::Rgba8,
                 PixelFormat::Rgba16,
             ],
-            Self::ProRes | Self::Vp9 => vec![PixelFormat::Rgba16],
+            Self::ProRes => vec![PixelFormat::Rgba16],
+            Self::Vp9 => vec![PixelFormat::Yuv420p, PixelFormat::Rgba16],
         }
     }
 

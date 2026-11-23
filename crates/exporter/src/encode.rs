@@ -782,8 +782,20 @@ impl ExportSession {
     /// when it converts on a hardware GPU (planar, then interleaved), then
     /// straight-alpha 16-bit and 8-bit RGBA.
     pub(crate) fn offered_formats(renderer: &GpuRenderer) -> Vec<PixelFormat> {
+        Self::offered_formats_with(
+            renderer.supports_yuv420p_readback(),
+            renderer.is_software(),
+            std::env::var_os("CELESTA_EXPORT_YUV").as_deref(),
+        )
+    }
+
+    pub(crate) fn offered_formats_with(
+        supports_yuv: bool,
+        software: bool,
+        setting: Option<&std::ffi::OsStr>,
+    ) -> Vec<PixelFormat> {
         let mut offered = Vec::with_capacity(6);
-        if renderer.supports_yuv420p_readback() && !renderer.is_software() {
+        if supports_yuv && !software && !setting.is_some_and(|value| value == "0") {
             offered.extend([
                 PixelFormat::Yuv420p,
                 PixelFormat::Yuv420p10,
