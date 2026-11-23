@@ -152,7 +152,7 @@ impl RenderOnce for InspectorSection {
                                             .overflow_hidden()
                                             .whitespace_nowrap()
                                             .text_ellipsis()
-                                            .text_sm()
+                                            .text_base()
                                             .font_weight(FontWeight::MEDIUM)
                                             .text_color(theme.foreground)
                                             .child(self.title),
@@ -332,10 +332,10 @@ impl RenderOnce for InspectorRow {
             .id(ElementId::Name(format!("{id}-label").into()))
             .flex_none()
             .w(label_width)
-            .overflow_hidden()
-            .whitespace_nowrap()
+            .whitespace_normal()
+            .line_clamp(2)
             .text_ellipsis()
-            .text_sm()
+            .text_base()
             .text_color(theme.muted_foreground)
             .debug_selector(selector("label"))
             .tooltip(move |window, cx| Tooltip::new(full_label.clone()).build(window, cx))
@@ -663,5 +663,41 @@ mod tests {
         assert!((f32::from(trailing.size.width) - expected).abs() < 1.0);
         assert!(value.origin.x + value.size.width <= trailing.origin.x);
         assert!(trailing.origin.x + trailing.size.width <= px(220.));
+    }
+
+    #[gpui_kit::test]
+    fn long_labels_wrap_without_moving_values_or_actions(cx: &mut TestAppContext) {
+        let handle = window_with(cx, 220., false, |_, _, _| {
+            div()
+                .flex()
+                .flex_col()
+                .child(InspectorRow::new("short", "Width").value("100"))
+                .child(
+                    InspectorRow::new("long", "Longest Custom Field Label in the Inspector")
+                        .value("100")
+                        .trailing(
+                            Button::new("reset")
+                                .ghost()
+                                .xsmall()
+                                .icon(IconName::RotateCcw),
+                        ),
+                )
+                .into_any_element()
+        });
+        let cx = &mut VisualTestContext::from_window(handle.into(), cx);
+        cx.run_until_parked();
+        let short = cx.debug_bounds("short-label").expect("short label");
+        let long = cx.debug_bounds("long-label").expect("long label");
+        assert_eq!(long.size.width, short.size.width);
+        assert!((f32::from(long.size.height - short.size.height * 2.0)).abs() <= 1.0);
+        for (short, long) in [
+            ("short-value", "long-value"),
+            ("short-trailing", "long-trailing"),
+        ] {
+            let short = cx.debug_bounds(short).expect("short row lane");
+            let long = cx.debug_bounds(long).expect("long row lane");
+            assert_eq!(long.origin.x, short.origin.x);
+            assert_eq!(long.size.width, short.size.width);
+        }
     }
 }

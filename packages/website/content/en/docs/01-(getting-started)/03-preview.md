@@ -224,6 +224,8 @@ Other elements, such as `<Path>`, `<Line>`, `<Arrow>`, and `<Mask>`, show only X
 
 Click a section's header to collapse it, and again to expand it; with the header focused (Tab), Space or Enter does the same. Sections collapse the same way in the **Inspector** and **React Preview** tabs. A collapsed section stays collapsed while you select other layers, until you quit Celesta.
 
+Long field labels wrap to two lines so values and controls stay aligned without widening the right pane. Hover over a shortened label to read it in full.
+
 Each row writes its prop where your source states it plainly, by the rules of the previous section: on the element, at the call of your component (the row then shows **Set at `<file>`:`<line>`**), or in a `const` used once. Strings, `true` and `false`, and the text of a `<Text>` are written like numbers, and a string keeps the quotes it was written with. Anything else is locked with its reason, as on the canvas. A prop your source leaves out shows, dimmed, the value it is drawn with: the default of your component's parameter when the prop is one, otherwise the value the layer received, or the element's own default. Entering a value adds the prop.
 
 Each row has a control for its kind of value:
