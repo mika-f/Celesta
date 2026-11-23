@@ -431,12 +431,13 @@ fn nesting(step: &GpuStep) -> i32 {
 /// The column multiple a blended draw's backdrop copy is widened to.
 ///
 /// This works around a Metal fault, not a Celesta bug (mika-f/Celesta#130).
-/// On Apple GPUs, about 0.26% of copies of a partial area into the backdrop
+/// On an Apple M5, about 0.26% of copies of a partial area into the backdrop
 /// left one 128-pixel block (16×8 or 8×16) of unrelated values. The block was
 /// always in the 16-pixel column just left of the one holding the copy's
 /// right edge. With the copy widened to 64-pixel columns, 2,000 redraws of
-/// NEBULA's frames gave no fault, and Windows output was unchanged. Whether
-/// wgpu's Metal backend or Apple's driver is at fault is not known.
+/// NEBULA's frames gave no fault, and Windows output was unchanged. An Apple M4
+/// showed no fault in 3,000 frames either way. Whether wgpu's Metal backend or
+/// Apple's driver is at fault is not known.
 const BACKDROP_COPY_ALIGN: u32 = 64;
 
 /// Widens the columns `x..x + width` to whole `BACKDROP_COPY_ALIGN` columns,
