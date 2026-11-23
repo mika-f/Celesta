@@ -157,7 +157,10 @@ impl Compositor<'_> {
                 }
                 let [x, y, width, height] = draw.area.expect("blended draws have an area");
                 // `fs_blend` reads the backdrop only under the draw, so only
-                // that part of the canvas needs copying.
+                // that part of the canvas needs copying, widened to whole
+                // `BACKDROP_COPY_ALIGN` columns (see there).
+                let limit = canvas.texture.width().min(self.backdrop.texture.width());
+                let (x, width) = aligned_copy_columns(x, width, limit);
                 let origin = wgpu::Origin3d { x, y, z: 0 };
                 encoder.copy_texture_to_texture(
                     wgpu::TexelCopyTextureInfo {
@@ -425,6 +428,30 @@ fn nesting(step: &GpuStep) -> i32 {
     }
 }
 
+/// The column multiple a blended draw's backdrop copy is widened to.
+///
+/// This works around a Metal fault, not a Celesta bug (mika-f/Celesta#130).
+/// On Apple GPUs, about 0.26% of copies of a partial area into the backdrop
+/// left one 128-pixel block (16×8 or 8×16) of unrelated values. The block was
+/// always in the 16-pixel column just left of the one holding the copy's
+/// right edge. With the copy widened to 64-pixel columns, 2,000 redraws of
+/// NEBULA's frames gave no fault, and Windows output was unchanged. Whether
+/// wgpu's Metal backend or Apple's driver is at fault is not known.
+const BACKDROP_COPY_ALIGN: u32 = 64;
+
+/// Widens the columns `x..x + width` to whole `BACKDROP_COPY_ALIGN` columns,
+/// cut at `limit` (the narrower of the two textures). Extra columns copy
+/// pixels `fs_blend` does not read, so the output is the same.
+fn aligned_copy_columns(x: u32, width: u32, limit: u32) -> (u32, u32) {
+    let start = x / BACKDROP_COPY_ALIGN * BACKDROP_COPY_ALIGN;
+    let end = (x + width)
+        .div_ceil(BACKDROP_COPY_ALIGN)
+        .saturating_mul(BACKDROP_COPY_ALIGN)
+        .min(limit)
+        .max(x + width);
+    (start, end - start)
+}
+
 pub(crate) struct BackdropTexture {
     pub(crate) texture: wgpu::Texture,
     /// Binds the backdrop as group 1 of a `PipelineKind::Blend` pipeline.
@@ -452,4 +479,23 @@ pub(crate) fn begin_pass<'a>(
         occlusion_query_set: None,
         multiview_mask: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::aligned_copy_columns;
+
+    #[test]
+    fn a_backdrop_copy_is_widened_to_whole_64_pixel_columns() {
+        // NEBULA's frames 146 and 303: a right edge at 1265..1271.
+        assert_eq!(aligned_copy_columns(130, 1140, 1920), (128, 1152));
+        assert_eq!(aligned_copy_columns(0, 64, 1920), (0, 64));
+        assert_eq!(aligned_copy_columns(64, 1, 1920), (64, 64));
+    }
+
+    #[test]
+    fn a_widened_backdrop_copy_stops_at_the_narrower_texture() {
+        assert_eq!(aligned_copy_columns(1900, 20, 1920), (1856, 64));
+        assert_eq!(aligned_copy_columns(1000, 240, 1250), (960, 290));
+    }
 }
