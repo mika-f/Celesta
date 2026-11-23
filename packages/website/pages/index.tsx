@@ -62,10 +62,10 @@ export default function Landing({ locale: urlLocale }: StaticPageComponentProps)
         </div>
       </div>
       <dl className="lp-specs nr-shell" aria-label={home.atAGlance}>
-        <div><dt>{home['01Write']}</dt><dd>{home.plainReactComponentsAndHooksWrittenIn(children => <small>{children}</small>)}</dd></div>
-        <div><dt>{home['02Preview']}</dt><dd>{home.frameAccurateScrubInTheBrowserOr(children => <small>{children}</small>)}</dd></div>
-        <div><dt>{home['03Export']}</dt><dd>{home.h264AndAacMp4FilesFrom(children => <small>{children}</small>)}</dd></div>
-        <div><dt>{home['04License']}</dt><dd>{home.mitOrApache20FreeAnd(children => <small>{children}</small>)}</dd></div>
+        <div><dt>{home['01Write']}</dt><dd>{home.reactAndTypescriptWrittenIn(children => <small>{children}</small>)}</dd></div>
+        <div><dt>{home['02Preview']}</dt><dd>{home.scrubAndAdjustInTheBrowserOr(children => <small>{children}</small>)}</dd></div>
+        <div><dt>{home['03Export']}</dt><dd>{home.videoGifAndStillsFrom(children => <small>{children}</small>)}</dd></div>
+        <div><dt>{home['04Extend']}</dt><dd>{home.pluginsAndMcpOpenSource(children => <small>{children}</small>)}</dd></div>
       </dl>
     </section>
 
@@ -112,8 +112,8 @@ export default function Landing({ locale: urlLocale }: StaticPageComponentProps)
             </dl>
           </div>
           <span className="lp-feature-number">{home.exportStep}</span>
-          <h3>{home.aStandardMp4}</h3>
-          <p>{home.h264VideoWithAacAudioReady}</p>
+          <h3>{home.readyToPublish}</h3>
+          <p>{home.exportFormatsReadyForAnyPlayer}</p>
           {docsLink('export', home.exporting(forward))}
         </article>
       </div>
@@ -133,7 +133,7 @@ export default function Landing({ locale: urlLocale }: StaticPageComponentProps)
         <div className="lp-start-intro">
           <p className="lp-eyebrow">{home.getStarted}</p>
           <h2 id="start-heading">{home.startWithOneFile(br, em)}</h2>
-          <p className="lp-section-description">{home.theDesktopAppShipsWithNodeJs}</p>
+          <p className="lp-section-description">{home.theDesktopAppShipsWithRuntimeAndMedia}</p>
           {button}
           <DownloadAlternatives variants={variants} />
         </div>
@@ -141,7 +141,7 @@ export default function Landing({ locale: urlLocale }: StaticPageComponentProps)
           <p className="lp-eyebrow">{home.setup}</p>
           <ol>
             <li><span>01</span><div><h3>{home.installTheApp}</h3><p>{home.packagesAreAvailableForMacosAndWindows}</p></div></li>
-            <li><span>02</span><div><h3>{home.writeAComposition}</h3><p>{home.aSingleFileInAnyFolder(() => <code>.tsx</code>)}</p></div></li>
+            <li><span>02</span><div><h3>{home.writeAComposition}</h3><p>{home.createProjectOrSingleFile(() => <code>.tsx</code>)}</p></div></li>
             <li><span>03</span><div><h3>{home.openPreviewExport}</h3><p>{home.openTheFileInCelestaItReloads}</p></div></li>
           </ol>
           {docsLink('examples', home.browseTheExamples(forward))}
