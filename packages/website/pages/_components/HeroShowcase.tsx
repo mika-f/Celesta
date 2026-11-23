@@ -21,8 +21,9 @@ import {
   HERO_STAGE_HEIGHT,
   HERO_STAGE_WIDTH,
   HERO_TOTAL_FRAMES,
-  normalizeFrame,
   ratioToFrame,
+  startHeroPlayback,
+  stepClampedFrame,
   type HeroPalette,
 } from './hero-stage-draw.ts';
 
@@ -125,27 +126,22 @@ export function HeroShowcase({ labels }: { labels: HeroShowcaseLabels }) {
   // Single 30 fps playback clock, paused while the tab is hidden or the user is scrubbing.
   useEffect(() => {
     if (!playing) return;
-    let raf = 0;
-    let startTime = performance.now();
-    let baseFrame = frameRef.current;
-
-    const tick = (now: number) => {
-      if (document.hidden) {
-        startTime = now;
-        baseFrame = frameRef.current;
-      } else {
-        const elapsedFrames = Math.floor(((now - startTime) * HERO_FPS) / 1000);
-        const next = normalizeFrame(baseFrame + elapsedFrames);
-        if (next !== frameRef.current) {
-          frameRef.current = next;
-          setFrame(next);
-        }
-      }
-      raf = requestAnimationFrame(tick);
-    };
-
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return startHeroPlayback(
+      () => frameRef.current,
+      (next) => {
+        frameRef.current = next;
+        setFrame(next);
+      },
+      {
+        isHidden: () => document.hidden,
+        onVisibilityChange: (listener) => {
+          document.addEventListener('visibilitychange', listener);
+          return () => document.removeEventListener('visibilitychange', listener);
+        },
+        requestFrame: (cb) => requestAnimationFrame(cb),
+        cancelFrame: (id) => cancelAnimationFrame(id),
+      },
+    );
   }, [playing]);
 
   const ratioFromClientX = (clientX: number): number => {
@@ -158,8 +154,6 @@ export function HeroShowcase({ labels }: { labels: HeroShowcaseLabels }) {
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 && event.pointerType === 'mouse') return;
-    // Keep keyboard `:focus-visible` clean without showing a focus ring on pointer scrub.
-    event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     scrubbingRef.current = true;
     resumeAfterScrubRef.current = playing;
@@ -191,11 +185,11 @@ export function HeroShowcase({ labels }: { labels: HeroShowcaseLabels }) {
     if (event.key === 'ArrowRight') {
       event.preventDefault();
       setPlaying(false);
-      setFrame((current) => normalizeFrame(current + step));
+      setFrame((current) => stepClampedFrame(current, step));
     } else if (event.key === 'ArrowLeft') {
       event.preventDefault();
       setPlaying(false);
-      setFrame((current) => normalizeFrame(current - step));
+      setFrame((current) => stepClampedFrame(current, -step));
     } else if (event.key === 'Home') {
       event.preventDefault();
       setPlaying(false);

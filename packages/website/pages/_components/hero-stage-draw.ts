@@ -66,6 +66,80 @@ export function normalizeFrame(frame: number): number {
   return ((floored % HERO_TOTAL_FRAMES) + HERO_TOTAL_FRAMES) % HERO_TOTAL_FRAMES;
 }
 
+export function stepClampedFrame(frame: number, delta: number): number {
+  return clamp(Math.floor(frame) + delta, 0, HERO_TOTAL_FRAMES - 1);
+}
+
+export interface HeroPlaybackEnv {
+  isHidden: () => boolean;
+  onVisibilityChange: (listener: () => void) => () => void;
+  requestFrame: (cb: (now: number) => void) => number;
+  cancelFrame: (id: number) => void;
+}
+
+/**
+ * Runs the 30 fps hero playback loop and pauses/rebases across tab visibility changes
+ * even when the browser suspends `requestAnimationFrame` while hidden.
+ */
+export function startHeroPlayback(
+  getFrame: () => number,
+  onFrame: (next: number) => void,
+  env: HeroPlaybackEnv,
+): () => void {
+  let raf = 0;
+  let startTime: number | null = null;
+  let baseFrame = getFrame();
+
+  const stopRaf = () => {
+    if (raf !== 0) {
+      env.cancelFrame(raf);
+      raf = 0;
+    }
+  };
+
+  const tick = (now: number) => {
+    raf = 0;
+    if (env.isHidden()) {
+      startTime = null;
+      return;
+    }
+    if (startTime === null) {
+      startTime = now;
+      baseFrame = getFrame();
+    } else {
+      const elapsedFrames = Math.floor((Math.max(0, now - startTime) * HERO_FPS) / 1000);
+      const next = normalizeFrame(baseFrame + elapsedFrames);
+      if (next !== getFrame()) {
+        onFrame(next);
+      }
+    }
+    raf = env.requestFrame(tick);
+  };
+
+  const handleVisibilityChange = () => {
+    if (env.isHidden()) {
+      stopRaf();
+      startTime = null;
+    } else {
+      startTime = null;
+      baseFrame = getFrame();
+      if (raf === 0) {
+        raf = env.requestFrame(tick);
+      }
+    }
+  };
+
+  const unsubscribe = env.onVisibilityChange(handleVisibilityChange);
+  if (!env.isHidden()) {
+    raf = env.requestFrame(tick);
+  }
+
+  return () => {
+    unsubscribe();
+    stopRaf();
+  };
+}
+
 export function easeOutExpo(t: number): number {
   const x = clamp(t, 0, 1);
   return x >= 1 ? 1 : 1 - 2 ** (-10 * x);
