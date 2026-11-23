@@ -21,7 +21,7 @@
       { "id": "prores", "name": "ProRes (prores_ks)", "codecs": ["ap4h", "apch"],
         "inputFormats": ["rgba16"] },
       { "id": "vp9", "name": "VP9 (libvpx)", "codecs": ["vp09"],
-        "inputFormats": ["rgba16"] }
+        "inputFormats": ["yuv420p", "rgba16"] }
     ],
     "audioEncoders": [
       { "id": "aac", "name": "AAC", "codecs": ["mp4a"] },

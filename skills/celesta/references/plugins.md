@@ -259,6 +259,13 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   Unset or any other value preserves the usual format negotiation. Encoding
   and the plugin's RGBA conversion are unchanged.
 
+- GPU export: opaque `ffmpeg/vp9` accepts YUV420P readback on supported
+  hardware GPUs, skipping plugin swscale. Software renderers use RGBA16.
+  VP9's default **Keep alpha** and ProRes retain RGBA16. To A/B, set
+  `CELESTA_EXPORT_YUV=0` before starting Celesta: every encoder gets only
+  RGBA offers (VP9: RGBA16; x264: RGBA8, or RGBA16 for 10-bit). Unset or
+  other values keep normal negotiation. Decoding is unaffected.
+
 - Decoded YUV: `ffmpeg` can answer NV12/I420; macOS `avfoundation` and
   Windows `mediafoundation` can answer
   offered NV12 for even-sized upright 8-bit 4:2:0 H.264/HEVC Main SDR with

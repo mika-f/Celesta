@@ -493,6 +493,130 @@ fn an_unknown_color_name_is_refused() {
 }
 
 #[test]
+fn opaque_vp9_yuv_matches_swscale_color_and_image() {
+    use encoding::{HEIGHT, WIDTH, encode_frames, little_endian};
+
+    let pixels = |index: i64, x: u32, y: u32| {
+        [
+            40.0 + x as f64 * 3.0 + index as f64 * 2.0,
+            60.0 + y as f64 * 5.0,
+            180.0 - x as f64 * 2.0 - index as f64 * 3.0,
+        ]
+    };
+    let sample = |rgb: [f64; 3], channel: usize| {
+        let [r, g, b] = rgb.map(|value| value / 255.0);
+        let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        match channel {
+            0 => 16.0 + 219.0 * y,
+            1 => 128.0 + 224.0 * (b - y) / (2.0 * (1.0 - 0.0722)),
+            _ => 128.0 + 224.0 * (r - y) / (2.0 * (1.0 - 0.2126)),
+        }
+        .round() as u8
+    };
+    let frame = |format: PixelFormat, index: i64| {
+        if format == PixelFormat::Rgba16 {
+            return (0..HEIGHT)
+                .flat_map(|y| {
+                    (0..WIDTH).flat_map(move |x| {
+                        little_endian(
+                            pixels(index, x, y)
+                                .map(|v| v as u16 * 257)
+                                .into_iter()
+                                .chain([65535]),
+                        )
+                    })
+                })
+                .collect();
+        }
+        let mut planes = Vec::new();
+        for channel in 0..3 {
+            let step = if channel == 0 { 1 } else { 2 };
+            for y in (0..HEIGHT).step_by(step) {
+                for x in (0..WIDTH).step_by(step) {
+                    let mut rgb = [0.0; 3];
+                    for dy in 0..step as u32 {
+                        for dx in 0..step as u32 {
+                            for (value, source) in rgb.iter_mut().zip(pixels(index, x + dx, y + dy))
+                            {
+                                *value += source / (step * step) as f64;
+                            }
+                        }
+                    }
+                    planes.push(sample(rgb, channel));
+                }
+            }
+        }
+        planes
+    };
+    let mut codec = FfmpegCodec::new();
+    let settings = settings(&[("alpha", SettingValue::Boolean(false))]);
+    let mut decoded = Vec::new();
+    for input in [PixelFormat::Rgba16, PixelFormat::Yuv420p] {
+        let opened = open(&mut codec, "vp9", &settings, &[input]).unwrap();
+        assert_eq!(opened.input, input);
+        assert!(!opened.alpha);
+        assert!(
+            codec
+                .video_encoder()
+                .unwrap()
+                .encode_video(opened.session, 0, vec![])
+                .is_err()
+        );
+        let (packets, config) = encode_frames(
+            &mut codec,
+            opened.session,
+            (0..FRAMES).map(|i| frame(input, i)),
+        );
+        assert_eq!(config.codec, "vp09.00.10.08");
+        assert_eq!(
+            (packets[0].bytes[0] >> 4) & 3,
+            0,
+            "VP9 profile 0 is eight bit"
+        );
+        decoded.push(decode("libvpx-vp9", None, &packets));
+    }
+    assert_eq!(decoded[0].len(), FRAMES as usize);
+    assert_eq!(decoded[1].len(), FRAMES as usize);
+    for (rgba, yuv) in decoded[0].iter().zip(&decoded[1]) {
+        assert_eq!(yuv.size, (WIDTH as i32, HEIGHT as i32));
+        assert_eq!(
+            (yuv.colorspace, yuv.range),
+            (
+                AVColorSpace::AVCOL_SPC_BT709,
+                AVColorRange::AVCOL_RANGE_MPEG
+            )
+        );
+        assert_eq!(
+            (yuv.colorspace, yuv.range, yuv.primaries, yuv.transfer),
+            (rgba.colorspace, rgba.range, rgba.primaries, rgba.transfer)
+        );
+        assert_eq!(yuv.planes.len(), 3);
+        let mut squared_error = 0.0;
+        let mut samples = 0;
+        for (a, b) in rgba.planes.iter().zip(&yuv.planes) {
+            assert_eq!(a.len(), b.len());
+            for (&a, &b) in a.iter().zip(b) {
+                squared_error += (a as f64 - b as f64).powi(2);
+                samples += 1;
+            }
+        }
+        let psnr = 10.0 * (255.0_f64.powi(2) / (squared_error / samples as f64)).log10();
+        eprintln!("VP9 YUV vs swscale PSNR={psnr:.3} dB");
+        assert!(psnr >= 40.0, "PSNR={psnr:.3} dB");
+    }
+    let empty = open(&mut codec, "vp9", &settings, &[PixelFormat::Yuv420p]).unwrap();
+    assert!(
+        codec
+            .video_encoder()
+            .unwrap()
+            .finish_video(empty.session)
+            .unwrap()
+            .packets
+            .is_empty()
+    );
+}
+
+#[test]
 fn an_rgb_matrix_libswscale_cannot_convert_to_is_refused() {
     let mut codec = FfmpegCodec::new();
     let ycgco = Color {
@@ -551,6 +675,18 @@ fn describe_names_every_manifest_component() {
             .unwrap();
         assert!(encoder.available, "{id}: {:?}", encoder.reason);
         assert_eq!(encoder.transports, ["sharedMemory", "pipe"], "{id}");
+        let manifest: serde_json::Value =
+            serde_json::from_str(include_str!("../plugin.json")).unwrap();
+        let declared = manifest["media"]["videoEncoders"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["id"] == id)
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(&encoder.input_formats).unwrap(),
+            declared["inputFormats"]
+        );
     }
     let audio = |id: &str| {
         described

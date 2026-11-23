@@ -36,12 +36,48 @@ fn nv12_and_p010_are_offered_after_the_planar_formats() {
             return;
         }
     };
-    let expected = if renderer.supports_yuv420p_readback() && !renderer.is_software() {
+    let expected = if renderer.supports_yuv420p_readback()
+        && !renderer.is_software()
+        && std::env::var_os("CELESTA_EXPORT_YUV").as_deref() != Some(std::ffi::OsStr::new("0"))
+    {
         vec![Yuv420p, Yuv420p10, Nv12, P010, Rgba16, Rgba8]
     } else {
         vec![Rgba16, Rgba8]
     };
     assert_eq!(ExportSession::offered_formats(&renderer), expected);
+}
+
+#[test]
+fn export_yuv_offers_require_hardware_support_and_no_opt_out() {
+    use crate::encode::ExportSession;
+    use celesta_media::PixelFormat::{Nv12, P010, Rgba8, Rgba16, Yuv420p, Yuv420p10};
+    use std::ffi::OsStr;
+
+    for setting in [
+        None,
+        Some(OsStr::new("")),
+        Some(OsStr::new("1")),
+        Some(OsStr::new("false")),
+    ] {
+        assert_eq!(
+            ExportSession::offered_formats_with(true, false, setting),
+            [Yuv420p, Yuv420p10, Nv12, P010, Rgba16, Rgba8]
+        );
+    }
+    for supports in [false, true] {
+        for software in [false, true] {
+            assert_eq!(
+                ExportSession::offered_formats_with(supports, software, Some(OsStr::new("0"))),
+                [Rgba16, Rgba8]
+            );
+        }
+    }
+    for (supports, software) in [(false, false), (false, true), (true, true)] {
+        assert_eq!(
+            ExportSession::offered_formats_with(supports, software, None),
+            [Rgba16, Rgba8]
+        );
+    }
 }
 
 fn static_clip(src: &str, start: f64, duration: f64, volume: f64) -> ReactAudioClipDescriptor {
