@@ -1,6 +1,10 @@
-//! One test binary for every integration test, so each links once.
+//! One test binary for every integration test that needs nothing but the
+//! Rust build, so each links once. The tests of React entries, which need
+//! the built React runtime, are the `runtime` target (`tests/runtime/`).
 
 mod cli_formats;
+#[path = "../common/mod.rs"]
+mod common;
 mod export;
 mod inspect;
 mod plugins_lock;

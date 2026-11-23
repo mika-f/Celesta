@@ -1,6 +1,7 @@
-//! Starts the built `celesta-mcp` and talks to it as an MCP client.
+//! Starts the built `celesta-mcp` and talks to it as an MCP client: shared
+//! by the `integration` and `runtime` test targets.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use celesta_codec_test::{PLUGIN_PATH_ENV, TestCodecPlugin, isolated_home_env};
 use rmcp::model::{CallToolRequestParams, CallToolResult, ProgressNotificationParam};
@@ -9,27 +10,6 @@ use rmcp::transport::TokioChildProcess;
 use rmcp::{ClientHandler, RoleClient, ServiceExt};
 use serde_json::Value;
 use tokio::sync::mpsc;
-
-pub fn root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
-}
-
-/// Whether the React runtime the server spawns has been built.
-pub fn runtime_built() -> bool {
-    let built = root().join("packages/cli/dist/cli.js").exists();
-    if !built {
-        eprintln!("skipping: build packages/cli first (pnpm run build:runtime)");
-    }
-    built
-}
-
-/// An entry in a directory where `@celesta.studio/react` resolves.
-pub fn entry(source: &str) -> (tempfile::TempDir, PathBuf) {
-    let dir = tempfile::tempdir_in(root().join("packages/cli")).unwrap();
-    let entry = dir.path().join("scene.tsx");
-    std::fs::write(&entry, source).unwrap();
-    (dir, entry)
-}
 
 /// Forwards progress notifications to the test.
 pub struct TestClient {
@@ -48,11 +28,11 @@ impl ClientHandler for TestClient {
 
 pub type Client = RunningService<RoleClient, TestClient>;
 
-fn server() -> tokio::process::Command {
+pub fn server() -> tokio::process::Command {
     tokio::process::Command::new(env!("CARGO_BIN_EXE_celesta-mcp"))
 }
 
-async fn serve(
+pub async fn serve(
     command: tokio::process::Command,
 ) -> (Client, mpsc::UnboundedReceiver<ProgressNotificationParam>) {
     let (progress, received) = mpsc::unbounded_channel();

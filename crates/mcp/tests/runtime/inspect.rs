@@ -1,7 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use crate::common::{call, client, entry, is_error, params, root, runtime_built, structured, text};
+use crate::common::{call, client, is_error, params, structured, text};
+use crate::{entry, root};
 use rmcp::model::{ClientRequest, Request};
 use rmcp::service::PeerRequestOptions;
 use serde_json::json;
@@ -17,9 +18,7 @@ export default function Root() {
 
 #[tokio::test]
 async fn inspect_lists_layers() {
-    if !runtime_built() {
-        return;
-    }
+    crate::require_runtime();
     let (_dir, entry) = entry(RECT);
     let (client, _) = client().await;
     let result = call(&client, "inspect", json!({ "entry": entry })).await;
@@ -37,9 +36,7 @@ async fn inspect_lists_layers() {
 
 #[tokio::test]
 async fn inspect_reports_quality_warnings_from_the_layers() {
-    if !runtime_built() {
-        return;
-    }
+    crate::require_runtime();
     let (_dir, source) = entry(
         r##"
 import { Composition, Rect, Text } from '@celesta.studio/react';
@@ -86,9 +83,7 @@ export default function Root() {
 
 #[tokio::test]
 async fn inspect_resolves_negative_frames() {
-    if !runtime_built() {
-        return;
-    }
+    crate::require_runtime();
     let (_dir, entry) = entry(RECT);
     let (client, _) = client().await;
     let result = call(
@@ -103,9 +98,7 @@ async fn inspect_resolves_negative_frames() {
 
 #[tokio::test]
 async fn inspect_reports_missing_files() {
-    if !runtime_built() {
-        return;
-    }
+    crate::require_runtime();
     let (_dir, entry) = entry(
         r##"
 import { Composition, Image } from '@celesta.studio/react';
@@ -132,9 +125,7 @@ export default function Root() {
 
 #[tokio::test]
 async fn inspect_finds_a_loop_seam() {
-    if !runtime_built() {
-        return;
-    }
+    crate::require_runtime();
     let (_dir, fading) = entry(
         r##"
 import { Composition, Rect, useCurrentFrame } from '@celesta.studio/react';
@@ -160,9 +151,7 @@ function Fade() {
 
 #[tokio::test]
 async fn inspect_measures_text() {
-    if !runtime_built() {
-        return;
-    }
+    crate::require_runtime();
     let (dir, entry) = entry(
         r##"
 import { Composition, Font, Rect, useTextMetrics } from '@celesta.studio/react';
@@ -191,9 +180,7 @@ export default function Root() {
 
 #[tokio::test]
 async fn inspect_reports_a_failing_prepare() {
-    if !runtime_built() {
-        return;
-    }
+    crate::require_runtime();
     let (_dir, entry) = entry(
         r##"
 import { Composition } from '@celesta.studio/react';
@@ -214,9 +201,7 @@ export default function Root() {
 
 #[tokio::test]
 async fn inspect_reports_invalid_properties() {
-    if !runtime_built() {
-        return;
-    }
+    crate::require_runtime();
     let (_dir, entry) = entry(
         r##"
 import { Composition, defineProjectProperties } from '@celesta.studio/react';
@@ -240,9 +225,7 @@ export default function Root() {
 
 #[tokio::test]
 async fn inspect_rejects_frames_outside_the_composition() {
-    if !runtime_built() {
-        return;
-    }
+    crate::require_runtime();
     let (_dir, entry) = entry(RECT);
     let (client, _) = client().await;
     let result = call(
@@ -266,9 +249,7 @@ async fn inspect_rejects_frames_outside_the_composition() {
 
 #[tokio::test]
 async fn inspect_refuses_every_past_the_frame_cap() {
-    if !runtime_built() {
-        return;
-    }
+    crate::require_runtime();
     let (_dir, entry) = entry(
         r##"
 import { Composition, Rect } from '@celesta.studio/react';
@@ -357,9 +338,7 @@ async fn wait_for_exit(pid: &str) {
 
 #[tokio::test]
 async fn inspect_times_out_a_hanging_prepare_and_ends_its_runtime() {
-    if !runtime_built() {
-        return;
-    }
+    crate::require_runtime();
     let (_dir, entry, pid_file) = hanging_entry();
     let (client, _) = client().await;
     let result = tokio::time::timeout(
@@ -382,9 +361,7 @@ async fn inspect_times_out_a_hanging_prepare_and_ends_its_runtime() {
 
 #[tokio::test]
 async fn inspect_cancel_ends_a_hanging_prepare() {
-    if !runtime_built() {
-        return;
-    }
+    crate::require_runtime();
     let (_dir, entry, pid_file) = hanging_entry();
     let (client, _) = client().await;
     let handle = client

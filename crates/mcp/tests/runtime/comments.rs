@@ -1,4 +1,5 @@
-use crate::common::{call, client, entry, is_error, runtime_built, structured, text};
+use crate::common::{call, client, is_error, structured, text};
+use crate::entry;
 use serde_json::{Value, json};
 
 /// Two chapters of 30 frames, and a layer with an explicit id in the second.
@@ -31,9 +32,7 @@ fn comment(id: &str, anchor: Value) -> Value {
 
 #[tokio::test]
 async fn list_comments_places_them_and_finds_orphans() {
-    if !runtime_built() {
-        return;
-    }
+    crate::require_runtime();
     let (dir, entry) = entry(CHAPTERS);
     let folder = dir.path().join("celesta-comments");
     std::fs::create_dir_all(&folder).unwrap();
