@@ -79,6 +79,8 @@ export const ja: Copy = {
     exporting: (s0: Slot) => h(Fragment, null, '書き出しの使い方 ', s0()),
     goodFor: '活用例',
     videoYouWouldRatherDescribeThanDrag: (s0: Slot, s1: Slot) => h(Fragment, null, 'コードで広がる、', s0(), s1('動画の表現。')),
+    ideasDescription: 'すべて Celesta の React コードから作った実例です。各カードから作り方のガイドへ進めます。',
+    exploreShowcase: (s0: Slot) => h(Fragment, null, 'ショーケースですべての作品を見る ', s0()),
     getStarted: 'はじめ方',
     startWithOneFile: (s0: Slot, s1: Slot) => h(Fragment, null, 'まずは、', s0(), s1('ファイルひとつ。')),
     theDesktopAppShipsWithNodeJs: 'アプリには Node.js と FFmpeg が含まれているので、別途インストールする必要はありません。Celesta は現在も開発を進めています。不具合の報告や機能の提案は GitHub で受け付けています。',
@@ -91,10 +93,26 @@ export const ja: Copy = {
     openTheFileInCelestaItReloads: 'Celesta でファイルを開くとプレビューできます。コードを保存するたびに表示が更新され、完成した動画は MP4 に書き出せます。',
     browseTheExamples: (s0: Slot) => h(Fragment, null, 'サンプルを見る ', s0()),
     ideas: {
-      title: 'タイトル・オープニング',
-      dialogue: '口パク付きの会話シーン',
-      data: 'データを使った動画',
-      loops: 'コードで生成するループ映像',
+      explainer: {
+        title: '解説・リリース動画',
+        description: '図解やコードを部品化し、シリーズ動画や紹介映像を同じデザインで量産。',
+        link: 'レイアウト',
+      },
+      dialogue: {
+        title: 'ゆっくり風・会話動画',
+        description: '立ち絵や VRM に音声から口パク・まばたき・字幕を自動同期。',
+        link: '台詞・口パク',
+      },
+      data: {
+        title: 'データ駆動・一括生成',
+        description: 'JSON や Git 履歴からグラフ付き動画を CLI や CI でまとめて出力。',
+        link: 'データ連携',
+      },
+      generative: {
+        title: 'ジェネラティブ表現',
+        description: '数式やノイズ、音声連動で手作業では組みにくい動きやループを描画。',
+        link: 'アニメーション',
+      },
     },
     metadata: {
       title: 'コードで、動画を作る。',

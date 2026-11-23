@@ -80,6 +80,8 @@ export const en = {
     exporting: (s0: Slot) => h(Fragment, null, 'Exporting ', s0()),
     goodFor: 'Good for',
     videoYouWouldRatherDescribeThanDrag: (s0: Slot, s1: Slot) => h(Fragment, null, 'Video you would rather', s0(), s1('describe than drag.')),
+    ideasDescription: 'Each example below is built with Celesta—open any card to read its guide, or browse live works in the showcase.',
+    exploreShowcase: (s0: Slot) => h(Fragment, null, 'Explore all works in the showcase ', s0()),
     getStarted: 'Get started',
     startWithOneFile: (s0: Slot, s1: Slot) => h(Fragment, null, 'Start with', s0(), s1('one file.')),
     theDesktopAppShipsWithNodeJs: 'The desktop app ships with Node.js and FFmpeg, so there is nothing else to install. Celesta is early and changing quickly; bug reports and ideas are welcome on GitHub.',
@@ -92,10 +94,26 @@ export const en = {
     openTheFileInCelestaItReloads: 'Open the file in Celesta. It reloads on save, and exports to MP4 when you are ready.',
     browseTheExamples: (s0: Slot) => h(Fragment, null, 'Browse the examples ', s0()),
     ideas: {
-      title: 'Title sequences',
-      dialogue: 'Dialogue with lip sync',
-      data: 'Data-driven video',
-      loops: 'Generative loops',
+      explainer: {
+        title: 'Explainers & releases',
+        description: 'Reuse diagrams and code blocks as components across series and release videos.',
+        link: 'Layout',
+      },
+      dialogue: {
+        title: 'Dialogue & lip sync',
+        description: 'Auto-sync character portraits or VRM avatars with lip sync, blinking, and subtitles.',
+        link: 'Dialogue',
+      },
+      data: {
+        title: 'Data-driven video',
+        description: 'Render charts and captions from JSON or Git history via CLI or CI.',
+        link: 'Data',
+      },
+      generative: {
+        title: 'Generative motion',
+        description: 'Build math-, noise-, and audio-driven motion graphics and seamless loops.',
+        link: 'Animation',
+      },
     },
     metadata: {
       title: 'Motion, written down.',

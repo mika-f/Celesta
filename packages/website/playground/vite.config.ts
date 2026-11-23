@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, type Manifest, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
-import { showcase, showcaseAssetDirectories } from '../site/showcase-catalog.ts';
+import { showcase, showcaseAssetDirectories, showcaseExtraImages } from '../site/showcase-catalog.ts';
 import { sampleSources } from './sample-sources.ts';
 
 /** The repository root: examples are read from here. */
@@ -40,6 +40,9 @@ function islandOutput(): Plugin {
       // Only the catalog's works with `poster: true`; a missing poster fails the build.
       for (const work of showcase) {
         if ('poster' in work && work.poster) copyFileSync(join(repoRoot, 'examples', work.slug, 'poster.jpg'), join(posters, `${work.slug}.jpg`));
+      }
+      for (const extra of showcaseExtraImages) {
+        copyFileSync(join(repoRoot, extra.source), join(posters, extra.dest));
       }
     },
   };

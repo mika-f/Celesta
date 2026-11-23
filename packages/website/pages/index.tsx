@@ -11,6 +11,12 @@ import { Timecode } from './_components/Timecode.tsx';
 import './_components/landing.css';
 
 const platforms: Platform[] = ['macOS', 'Windows'];
+const ideaCards = [
+  { key: 'explainer', slug: 'layout', image: '/showcase/feature-tour.jpg' },
+  { key: 'dialogue', slug: 'dialogue', image: '/showcase/dialogue-demo.jpg' },
+  { key: 'data', slug: 'data', image: '/showcase/36-days.jpg' },
+  { key: 'generative', slug: 'animation', image: '/showcase/afterimage.jpg' },
+] as const;
 const br = () => <br />;
 const em = (children?: ReactNode) => <em>{children}</em>;
 const hidden = (children?: ReactNode) => <span aria-hidden="true">{children}</span>;
@@ -122,10 +128,35 @@ export default function Landing({ locale: urlLocale }: StaticPageComponentProps)
     <section className="lp-section nr-shell" aria-labelledby="ideas-heading">
       <div className="lp-section-top">
         <p className="lp-eyebrow">{home.goodFor}</p>
-        <div><h2 id="ideas-heading">{home.videoYouWouldRatherDescribeThanDrag(br, em)}</h2></div>
+        <div>
+          <h2 id="ideas-heading">{home.videoYouWouldRatherDescribeThanDrag(br, em)}</h2>
+          <p className="lp-section-description">{home.ideasDescription}</p>
+        </div>
       </div>
-      <ul className="lp-ideas">{[home.ideas.title, home.ideas.dialogue, home.ideas.data, home.ideas.loops].map((idea, i) =>
-        <li key={idea}><span>{String(i + 1).padStart(2, '0')}</span>{idea}</li>)}</ul>
+      <ul className="lp-ideas">{ideaCards.map((item, i) => {
+        const entry = home.ideas[item.key];
+        return <li key={item.key}>
+          <RouteLink className="lp-idea-card" href={docs(item.slug)}>
+            <div className="lp-idea-visual">
+              <img src={item.image} alt="" loading="lazy" width="1920" height="1080" />
+            </div>
+            <div className="lp-idea-body">
+              <div className="lp-idea-meta">
+                <span className="lp-idea-number nr-mono">{String(i + 1).padStart(2, '0')}</span>
+                <span className="lp-idea-link">
+                  {entry.link}
+                  <ArrowRight size={13} strokeWidth={1.75} aria-hidden="true" />
+                </span>
+              </div>
+              <h3>{entry.title}</h3>
+              <p>{entry.description}</p>
+            </div>
+          </RouteLink>
+        </li>;
+      })}</ul>
+      <div className="lp-ideas-footer">
+        <RouteLink className="lp-more" href={`/${locale}/showcase/`}>{home.exploreShowcase(forward)}</RouteLink>
+      </div>
     </section>
 
     <section id="start" className="lp-start" aria-labelledby="start-heading">

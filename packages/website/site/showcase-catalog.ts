@@ -11,5 +11,10 @@ export const showcase = [
   { slug: 'versus', title: 'Versus', duration: '82 sec · 30 FPS', desktop: true },
 ] as const;
 
+/** Additional repository images copied to `/showcase/<dest>` for landing page use-case cards. */
+export const showcaseExtraImages = [
+  { source: 'examples/assets/dialogue-demo/poster.jpg', dest: 'dialogue-demo.jpg' },
+] as const;
+
 /** Repository directories the showcase reads at `/showcase-assets/<directory>/<file>`; the playground build copies them. */
 export const showcaseAssetDirectories = ['examples/afterimage/assets/fonts', 'examples/versus/bench/assets/fonts', 'examples/versus/bench/assets/licenses', 'examples/assets/dialogue-demo/portraits'];
