@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 use std::process::ExitCode;
 
-use celesta_plugin_host::{Lockfile, UserSettings, probe_registry_plugin};
+use celesta_plugin_host::{Lockfile, UserSettings, cached_advisories, probe_registry_plugin};
 use celesta_registry_client::{ClientError, ResolveWarning};
 use celesta_registry_format::{Advisory, AdvisoryList, Index, SearchEntry, VersionEntry};
 use semver::Version;
@@ -171,7 +171,17 @@ fn state(index: &Index, entry: &VersionEntry, advisories: Option<&AdvisoryList>)
 /// against the advisories and its index, and tries to start installed programs.
 pub(crate) fn audit(session: &Session, root: &Path, output: Output) -> ExitCode {
     let advisories = advisories::refresh(session);
-    match audit_plugins(session, root, advisories.as_ref(), output) {
+    let official = if session.uses_registry_override() {
+        let (list, warning) = cached_advisories();
+        if let Some(warning) = warning {
+            report::warn(warning);
+        }
+        list
+    } else {
+        None
+    };
+    let lists = [official.as_ref(), advisories.as_ref()];
+    match audit_plugins(session, root, &lists, output) {
         Ok(exit) => exit,
         Err(error) => output.fail(error),
     }
@@ -181,7 +191,7 @@ pub(crate) fn audit(session: &Session, root: &Path, output: Output) -> ExitCode 
 fn audit_plugins(
     session: &Session,
     root: &Path,
-    advisories: Option<&AdvisoryList>,
+    advisories: &[Option<&AdvisoryList>],
     output: Output,
 ) -> Result<ExitCode, Error> {
     let lock = Lockfile::load(root).map_err(|error| Error::new("lockfile", error))?;
@@ -278,7 +288,7 @@ fn audit_plugins(
         });
         return Ok(output.write(
             plugins,
-            json!({ "advisoriesAvailable": advisories.is_some() }),
+            json!({ "advisoriesAvailable": advisories.iter().any(Option::is_some) }),
             error.as_ref(),
         ));
     }
@@ -388,10 +398,14 @@ fn audit_findings<'a>(
     id: &str,
     version: &Version,
     listing: &Listing,
-    advisories: Option<&'a AdvisoryList>,
+    advisories: &[Option<&'a AdvisoryList>],
 ) -> Vec<Finding<'a>> {
     let mut findings = Vec::new();
-    if let Some(advisory) = advisories.and_then(|list| list.blocking(id, version)) {
+    if let Some(advisory) = advisories
+        .iter()
+        .flatten()
+        .find_map(|list| list.blocking(id, version))
+    {
         let fixed = advisory
             .fixed
             .as_ref()
@@ -498,9 +512,8 @@ mod tests {
 
     #[test]
     fn a_version_missing_from_its_index_is_no_longer_distributed() {
-        let gone = |listing: &Listing| {
-            audit_findings("acme.charts", &Version::new(2, 0, 0), listing, None)
-        };
+        let gone =
+            |listing: &Listing| audit_findings("acme.charts", &Version::new(2, 0, 0), listing, &[]);
         let expected = [Finding {
             code: FindingCode::Withdrawn,
             text: "acme.charts 2.0.0 is no longer distributed".to_owned(),
@@ -511,7 +524,7 @@ mod tests {
         let listing = Listing::Index(Box::new(index(&["1.0.0"])));
         assert_eq!(gone(&listing), expected);
         assert_eq!(gone(&Listing::Dropped), expected);
-        assert!(audit_findings("acme.charts", &Version::new(1, 0, 0), &listing, None).is_empty());
+        assert!(audit_findings("acme.charts", &Version::new(1, 0, 0), &listing, &[]).is_empty());
         // Without an index, only the advisories are checked.
         assert!(gone(&Listing::Unknown).is_empty());
     }

@@ -101,6 +101,10 @@ impl Session {
         })
     }
 
+    pub fn uses_registry_override(&self) -> bool {
+        self.access.overridden
+    }
+
     pub fn environment(&self) -> Environment<'_> {
         Environment {
             registry: &self.registry,

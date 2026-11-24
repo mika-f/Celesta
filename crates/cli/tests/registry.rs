@@ -468,7 +468,8 @@ fn audit_reports_an_installed_plugin_that_cannot_launch() {
     let loader_error = "libc.so.6: version `GLIBC_2.38' not found (required by codec)";
     fs::write(
         &executable,
-        format!("#!/bin/sh\necho \"{loader_error}\" >&2\nexit 127\n").replace('`', "\\`"),
+        format!("#!/bin/sh\ntouch ../ran\necho \"{loader_error}\" >&2\nexit 127\n")
+            .replace('`', "\\`"),
     )
     .unwrap();
     fs::set_permissions(executable, fs::Permissions::from_mode(0o755)).unwrap();
@@ -523,6 +524,27 @@ fn audit_reports_an_installed_plugin_that_cannot_launch() {
     let findings = report["plugins"][0]["findings"].as_array().unwrap();
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0]["code"], "plugin_blocked");
+
+    let cache = home.store().with_file_name("registry-cache");
+    fs::copy(
+        registry.served_dir().join("advisories.json"),
+        cache.join("advisories.json"),
+    )
+    .unwrap();
+    let alternate = TestRegistry::file();
+    alternate.publish_with_roles("acme.codec", "1.0.0", &["any"], &["media"]);
+    alternate.advisories(json!([]));
+    let ran = directory.with_file_name("ran");
+    fs::remove_file(&ran).unwrap();
+    let output = run(&home, &alternate, &project, &["audit", "--json"]);
+    assert_exit(&output, 1);
+    let report = json_stdout(&output);
+    assert_eq!(report["plugins"][0]["status"], "blocked");
+    assert_eq!(
+        report["plugins"][0]["findings"][0]["advisory"]["id"],
+        "CELESTA-2026-0002"
+    );
+    assert!(!ran.exists());
 }
 
 #[test]
