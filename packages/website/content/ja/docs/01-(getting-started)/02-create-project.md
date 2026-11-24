@@ -49,7 +49,7 @@ PowerShell を使い、`C:\path\to\Celesta` をアプリのインストール先
 ## 初期化で生成されるもの
 
 - `film.tsx`：1920 × 1080、30 fps、5 秒のコンポジション。背景とタイトルは `<Group>` の中にあり、エディタの Add メニューはそこへ新しいレイヤーを書き込みます。
-- `fonts/`：タイトルに使う Inter フォント（`Inter-Regular.woff2`）とそのライセンス（`OFL.txt`）。`film.tsx` が `<Font>` で読み込むので、フォントが入っていない Linux サーバーも含め、どのコンピューターでもタイトルは同じ見た目になります。
+- `fonts/`：タイトルに使う Inter フォント（`Inter-Regular.woff2`）、そのライセンス（`OFL.txt`）、これを `Inter` ファミリーとして宣言する `inter.css`。`film.tsx` がこのスタイルシートを `<Font>` で読み込むので、別のバージョンの Inter がインストールされていてもこのファイルが使われ、フォントが入っていない Linux サーバーも含め、どのコンピューターでもタイトルは同じ見た目になります。
 - `package.json`：開発依存として TypeScript `^7.0.2` と 3 つのスクリプトを持つ非公開プロジェクト。`preview` はエディターを開き（`celesta-editor film.tsx`）、`export` は `output.mov` を書き出し（`celesta export --react --overwrite film.tsx output.mov`）、`typecheck` は `tsc` を実行します。
 - `tsconfig.json` と `.celesta/`：Celesta の同梱ランタイムに対応する設定と型宣言。
 - `.gitignore`：`node_modules/` と `output.mov` を除外します。生成される `.celesta/` ディレクトリは自身を除外します。

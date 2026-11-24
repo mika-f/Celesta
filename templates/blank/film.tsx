@@ -4,7 +4,7 @@ export default function Film() {
   return (
     <Composition width={1920} height={1080} fps={30} durationInFrames={150}>
       <Assets>
-        <Font src="./fonts/Inter-Regular.woff2" />
+        <Font src="./fonts/inter.css" />
       </Assets>
       <Group>
         <Rect width={1920} height={1080} fill="#18181b" />

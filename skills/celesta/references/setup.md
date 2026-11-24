@@ -155,7 +155,7 @@ The files the `blank` starter creates, without overwriting anything that exists:
 | File | Contents |
 | --- | --- |
 | `film.tsx` | A 5-second 1920×1080, 30 fps composition with a centered title inside a `<Group>`. The editor's Add menu inserts new layers into that group. Replace its body. |
-| `fonts/` | `Inter-Regular.woff2`, loaded by `film.tsx` with `<Font>` so the title renders the same everywhere without installed fonts, and its `OFL.txt` license. |
+| `fonts/` | `Inter-Regular.woff2`, its `OFL.txt` license, and `inter.css`, which declares the file as the `Inter` family. `film.tsx` loads the stylesheet with `<Font>`, so the title renders the same everywhere: without installed fonts, and where another Inter is installed (a stylesheet family hides an installed family of the same name). |
 | `package.json` | Private, with scripts `preview` (`celesta-editor film.tsx`), `export` (`celesta export --react --overwrite film.tsx output.mov`), `typecheck` (`tsc --project tsconfig.json`), and a `typescript` dev dependency. |
 | `tsconfig.json` | Extends `./.celesta/tsconfig.json`. |
 | `.gitignore` | `node_modules/` and `output.mov`. |
