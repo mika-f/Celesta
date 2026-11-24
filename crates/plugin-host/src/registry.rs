@@ -12,7 +12,7 @@ use crate::child::PluginChild;
 use crate::locations::{PluginSource, SearchPath, registry_store_dir};
 use crate::lock::Lockfile;
 use crate::manifest::{
-    CELESTA_VERSION, DiscoveryError, MANIFEST, PluginEntry, PluginRead, PluginRole,
+    CELESTA_VERSION, DiscoveryError, MANIFEST, ManifestFilter, PluginEntry, PluginRead, PluginRole,
     discover_in_with, is_valid_id, read_manifest,
 };
 use crate::settings::UserSettings;
@@ -171,8 +171,12 @@ pub fn probe_registry_plugin(
     {
         return Ok(false);
     }
-    let Some((entry, _)) =
-        read_manifest(directory, PluginSource::Registry).map_err(|error| error.to_string())?
+    let Some((entry, _)) = read_manifest(
+        directory,
+        PluginSource::Registry,
+        ManifestFilter::NativeProgram,
+    )
+    .map_err(|error| error.to_string())?
     else {
         return Ok(false);
     };
@@ -313,7 +317,7 @@ impl StoreSearch {
     /// that); `None` when nothing is.
     pub(crate) fn read(&self, search: &SearchPath) -> Option<PluginRead> {
         let directory = &search.path;
-        let (entry, skipped) = match read_manifest(directory, search.source) {
+        let (entry, skipped) = match read_manifest(directory, search.source, ManifestFilter::Any) {
             Ok(Some(read)) => read,
             Ok(None) => return None,
             Err(error) => return Some(Err(error)),
@@ -497,6 +501,27 @@ pub(crate) mod tests {
         )
         .unwrap_err();
         assert!(error.contains("works with Celesta <0.1"), "{error}");
+    }
+
+    #[test]
+    fn probe_skips_an_incompatible_module_without_a_native_program() {
+        let folder = tempfile::tempdir().unwrap();
+        let dir = folder.path();
+        let mut manifest = content("acme.module", "1.2.3");
+        manifest["celesta"] = json!("<0.1");
+        manifest["module"] = json!("index.js");
+        std::fs::write(dir.join("index.js"), "").unwrap();
+        let hash = write(dir, manifest);
+        assert!(
+            !probe_registry_plugin(
+                dir,
+                "acme.module",
+                &semver::Version::new(1, 2, 3),
+                &hash,
+                &UserSettings::default(),
+            )
+            .unwrap()
+        );
     }
 
     #[cfg(unix)]

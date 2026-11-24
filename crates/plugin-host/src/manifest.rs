@@ -166,6 +166,14 @@ pub(crate) fn display_name<'a>(name: Option<&'a str>, id: &'a str) -> &'a str {
 }
 
 impl Manifest {
+    fn platform_executable(&self) -> Option<&str> {
+        let (os, arch) = platform();
+        self.executable
+            .get(&format!("{os}-{arch}"))
+            .or_else(|| self.executable.get(os))
+            .map(String::as_str)
+    }
+
     /// Its `name`, else its `id` (see [`display_name`]).
     pub fn display_name(&self) -> &str {
         display_name(self.name.as_deref(), &self.id)
@@ -358,11 +366,8 @@ impl PluginEntry {
     /// This platform's plugin process, if the plugin has one: the entry for
     /// this OS and architecture, else for this OS.
     pub fn executable(&self) -> Option<PathBuf> {
-        let (os, arch) = platform();
-        let executables = &self.manifest.executable;
-        executables
-            .get(&format!("{os}-{arch}"))
-            .or_else(|| executables.get(os))
+        self.manifest
+            .platform_executable()
             .map(|relative| self.file(relative))
     }
 
@@ -676,7 +681,12 @@ fn unsafe_plugin(directory: &Path, source: PluginSource) -> Option<String> {
     None
 }
 
-/// The plugin in `directory`, if it has a manifest, with the components of
+pub(crate) enum ManifestFilter {
+    Any,
+    NativeProgram,
+}
+
+/// The plugin in `directory`, if it has a matching manifest, with the components of
 /// it that were skipped ([`DiscoveryError::BadComponent`]).
 #[expect(
     clippy::result_large_err,
@@ -685,6 +695,7 @@ fn unsafe_plugin(directory: &Path, source: PluginSource) -> Option<String> {
 pub(crate) fn read_manifest(
     directory: &Path,
     source: PluginSource,
+    filter: ManifestFilter,
 ) -> Result<Option<(PluginEntry, Vec<DiscoveryError>)>, DiscoveryError> {
     let path = directory.join(MANIFEST);
     let text = match std::fs::read_to_string(&path) {
@@ -697,6 +708,9 @@ pub(crate) fn read_manifest(
             path: path.clone(),
             source,
         })?;
+    if matches!(filter, ManifestFilter::NativeProgram) && manifest.platform_executable().is_none() {
+        return Ok(None);
+    }
     if let Some(reason) = invalid_reason(&manifest, directory) {
         return Err(DiscoveryError::Invalid { path, reason });
     }
@@ -884,7 +898,7 @@ pub(crate) fn discover_in_with(
             continue;
         }
         if path.join(MANIFEST).is_file() {
-            add(read_manifest(path, *source), &mut read);
+            add(read_manifest(path, *source, ManifestFilter::Any), &mut read);
             continue;
         }
         let children = match std::fs::read_dir(path) {
@@ -906,7 +920,10 @@ pub(crate) fn discover_in_with(
             .collect();
         children.sort();
         for child in children {
-            add(read_manifest(&child, *source), &mut read);
+            add(
+                read_manifest(&child, *source, ManifestFilter::Any),
+                &mut read,
+            );
         }
     }
     let bundled_media: HashSet<String> = read
