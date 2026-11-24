@@ -540,7 +540,7 @@ Warnings that scripts may want to act on also appear in `"codedWarnings"`, each 
 
 Using a source build? The [developer instructions](/en/docs/build-from-source/) include the equivalent Cargo command.
 
-Use `celesta-exporter --help` for command-line rendering options (`Celesta-export --help` in the desktop packages). The `celesta-react-render` helper evaluates React compositions for Celesta, and `celesta-mcp` serves MCP clients over standard input and output. Their `--help` and `--version` flags do not start either protocol.
+Use `celesta-exporter --help` for command-line rendering options (`Celesta-export --help` in the desktop packages). The `celesta-react-render` helper evaluates React compositions for Celesta, and `celesta-mcp` serves MCP clients over standard input and output. Their `--help` and `--version` flags do not start either protocol. For the React helper, these flags are available only through the npm package's `celesta-react-render` wrapper, not the internal `dist/cli.js` that the desktop apps launch directly.
 
 Time values accept seconds, `MM:SS.mmm`, or `HH:MM:SS.mmm`. The selected span becomes a new video starting at its own 00:00.
 
