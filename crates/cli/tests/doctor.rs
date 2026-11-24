@@ -192,7 +192,7 @@ fn doctor_reports_hints_for_the_probe() {
     let checks = report(&doctor);
     if checks["checks"]["graphics"]["code"] == "graphics_unavailable" {
         assert!(
-            std::env::var_os("CELESTA_REQUIRE_GPU").is_none(),
+            std::env::var("CELESTA_REQUIRE_GPU").as_deref() != Ok("1"),
             "{checks}"
         );
         eprintln!("skipping: no graphics adapter");
@@ -255,7 +255,7 @@ fn headless_doctor_renders_without_an_xdg_runtime_warning() {
     let checks = report(&output);
     if checks["checks"]["graphics"]["code"] == "graphics_unavailable" {
         assert!(
-            std::env::var_os("CELESTA_REQUIRE_GPU").is_none(),
+            std::env::var("CELESTA_REQUIRE_GPU").as_deref() != Ok("1"),
             "{checks}"
         );
         eprintln!("skipping: no graphics adapter");
