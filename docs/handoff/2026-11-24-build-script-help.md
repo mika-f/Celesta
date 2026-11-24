@@ -13,11 +13,10 @@ environment variables and gives a separate Unix command for each build.
 files or starting build tools. `scripts/plugins/run-cargo.mts` handles its
 standalone help switch and reports invalid wrapper arguments before spawning
 Cargo. Arguments for Cargo, including its own help flag, stay with Cargo.
-`scripts/run-cargo.mts` is an entry point for the same runner.
 
 ## Checks
 
 Run `pnpm --dir scripts/plugins test` for TypeScript checking and Vitest,
-including help and error output for both entry points, Cargo argument
+including help and error output for both helpers, Cargo argument
 forwarding, and the existing build and runner tests. The CI and release
 invocations continue to use the same commands and flags.
