@@ -1,12 +1,13 @@
 This page sets up a Linux machine with no display and no GPU as a rendering backend that another application drives through the `celesta` command. Every command below was run on a clean Ubuntu 22.04 (glibc 2.35, x86-64) container built from the main branch; the outputs shown are from that run.
 
-The calling application only needs one executable, `celesta`: `celesta init` creates a project, `celesta doctor` checks the machine and a planned render, `celesta plugin` installs codecs, and `celesta export` and `celesta info` render and inspect. Each of them can print one JSON result for the caller.
+The calling application only needs one executable, `celesta`: `celesta init` creates a project, `celesta doctor` checks the machine and a planned render, `celesta plugin` installs codecs, and `celesta export` and `celesta info` render and inspect. With `--json`, `doctor`, `plugin`, `export`, and `info` print one JSON result for the caller.
 
 ## 1. Install the system packages
 
 Celesta renders with Vulkan. Without a GPU, Mesa's software Vulkan driver (lavapipe) renders on the CPU. Text needs at least one installed font.
 
 ```sh title="System packages (Ubuntu 22.04)"
+sudo apt-get update
 sudo apt-get install -y --no-install-recommends \
   build-essential ca-certificates curl git pkg-config xz-utils libclang-dev \
   libvulkan1 mesa-vulkan-drivers fontconfig fonts-dejavu-core
@@ -19,13 +20,14 @@ Add `fonts-noto-cjk` for Japanese text.
 There is no Linux package of the `celesta` command yet, so build it from source. Use Rust 1.99.1, Node.js 26, and the pnpm version in the root `package.json` (12.17.0), as CI does:
 
 ```sh title="Build celesta"
-git clone https://github.com/mika-f/Celesta.git
-cd Celesta
+git clone https://github.com/mika-f/Celesta.git ~/celesta
+cd ~/celesta
 pnpm install --frozen-lockfile
 pnpm run build:runtime
 cargo build --release --locked -p celesta-cli
 mkdir -p ~/.local/bin
 ln -s "$PWD/target/release/celesta" ~/.local/bin/celesta
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
 A source-built `celesta` loads the React runtime from this checkout (`packages/cli/dist/cli.js`) and runs `node` from `PATH`, so keep the checkout where it is and link the executable rather than copying it elsewhere. If the checkout moves, `celesta doctor` reports `runtime_unavailable` for `checks.node`.
@@ -35,6 +37,7 @@ On a machine with no Wayland session, each `celesta` run that opens the graphics
 ## 3. Create a project
 
 ```sh title="Create a project"
+mkdir -p ~/qs && cd ~/qs
 celesta templates
 celesta init film --template blank
 cd film
@@ -80,15 +83,17 @@ celesta plugin install --global ffmpeg-x264 --json
 > **MP4 on Ubuntu 22.04 with Celesta 0.10.0**
 > The registry's `ffmpeg-x264` 0.10.0 for `linux-x86_64` needs glibc 2.38 (Ubuntu 24.04 or later). On Ubuntu 22.04 it installs and `celesta plugin audit` reports no problems, but it cannot start, and an MP4 export fails with `component_unavailable` and ``GLIBC_2.38' not found``. Releases after 0.10.0 build it for glibc 2.35. Until then, build both FFmpeg plugins from the checkout as below.
 
-Run this from the repository root. It builds FFmpeg twice and stages both plugins in `~/celesta-plugins`:
+This builds FFmpeg twice in the checkout, stages both plugins in `~/celesta-plugins`, and returns to the project:
 
 ```sh title="Build the FFmpeg plugins from source (Ubuntu 22.04)"
+cd ~/celesta
 sudo apt-get install -y --no-install-recommends nasm zlib1g-dev libx264-dev libvpx-dev libopus-dev
 FFMPEG_VARIANT=standard scripts/build-ffmpeg-linux.sh ~/ffmpeg8-standard
 FFMPEG_VARIANT=x264 scripts/build-ffmpeg-linux.sh ~/ffmpeg8-x264
 PKG_CONFIG_PATH=~/ffmpeg8-standard/lib/pkgconfig FFMPEG_X264_PKG_CONFIG_PATH=~/ffmpeg8-x264/lib/pkgconfig \
   node scripts/plugins/build.mts plugins/ffmpeg plugins/ffmpeg-x264 --out ~/celesta-plugins
 export CELESTA_PLUGIN_PATH=~/celesta-plugins
+cd ~/qs/film
 ```
 
 Celesta searches `CELESTA_PLUGIN_PATH` before the registry plugins, so these are used even with the registry's `ffmpeg-x264` installed. `--plugin-dir ~/celesta-plugins` on a single `celesta export` or `celesta doctor` works too.
@@ -138,7 +143,7 @@ On 8 CPU cores with lavapipe, the 5-second 1080p blank template rendered at abou
 Give the calling application these rules:
 
 - Add `--json` to `celesta export`, `celesta info`, `celesta doctor`, and `celesta plugin list|install|audit`. Each prints exactly one JSON object on stdout. Diagnostics, such as a plugin process's own error output, go to stderr, so read only stdout as JSON.
-- Check the exit status first: 0 is success, 1 a failed export or check, 2 rejected arguments. Then read `status` (`"ok"` or `"error"`) and, on failure, `error.code` and, when present, `error.hint`.
+- Check the exit status first: 0 is success, 1 a failed export or check, 2 rejected arguments. Then read `status` (`"ok"` or `"error"`) and, on failure, `error.code` and, when present, `error.hint`. `celesta doctor` reports per check instead: each of `checks.node`, `checks.graphics`, and `checks.output` has a `status`, a `message`, and, on failure, a `code` such as `component_unavailable`.
 - For long renders, add `--json-progress` after `--json` to get one JSON line per progress event before the final result.
 
 A successful MP4 export returns the written files, the components that wrote them, and the graphics adapter:
@@ -166,8 +171,8 @@ Failures keep the same shape, with an error code the caller can branch on and a 
 `packaging/linux/Dockerfile` builds an image with `celesta`, the standard `ffmpeg` plugin, lavapipe, and fonts, so it exports PNG, MOV, and WebM with no other setup. It has no H.264 plugin, so MP4 needs `ffmpeg-x264` mounted and passed with `--plugin-dir`. Its default entry point is `celesta-exporter`; run `celesta` subcommands with `--entrypoint /opt/celesta/celesta`:
 
 ```sh title="Export a MOV with the image"
-docker build -f packaging/linux/Dockerfile -t celesta-exporter .
-docker run --rm -u "$(id -u):$(id -g)" -v "$PWD/film:/work" -w /work \
+docker build -f packaging/linux/Dockerfile -t celesta-exporter ~/celesta
+docker run --rm -u "$(id -u):$(id -g)" -v "$HOME/qs/film:/work" -w /work \
   --entrypoint /opt/celesta/celesta celesta-exporter \
   export --react film.tsx film.mov --json
 ```
