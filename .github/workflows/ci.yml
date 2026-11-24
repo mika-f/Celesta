@@ -536,6 +536,8 @@ jobs:
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v7.0.1
+      - name: Reproduce group-writable plugin license
+        run: chmod 0664 LICENSE-APACHE
       - name: Build exporter image
         run: docker build --progress=plain -f packaging/linux/Dockerfile -t celesta-exporter:check .
       - name: Check standard distribution and export
