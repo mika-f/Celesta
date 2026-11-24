@@ -574,3 +574,33 @@ fn install_json_reports_the_lock_and_each_plugin() {
     assert_eq!(report["plugins"][0]["status"], "already_installed");
     assert_eq!(report["plugins"][1]["status"], "skipped");
 }
+
+#[test]
+fn install_json_reports_a_written_lock_even_if_download_fails() {
+    let home = Home::new();
+    let registry = registry();
+    let project = home.project(r#"{ "plugins": { "dependencies": { "acme.charts": "1" } } }"#);
+    let output = run(&home, &registry, &project, &["install", "--json"]);
+    assert_exit(&output, 1);
+    let report = json_stdout(&output);
+    assert_eq!(report["error"]["code"], "plugin_not_found");
+    assert!(report.get("lockfile").is_none());
+    assert!(!project.join("celesta.lock").exists());
+
+    registry.publish("acme.charts", "1.2.3", &["any"]);
+    fs::remove_file(
+        registry
+            .served_dir()
+            .join("archives/acme.charts/1.2.3/any.zip"),
+    )
+    .unwrap();
+    let output = run(&home, &registry, &project, &["install", "--json"]);
+    assert_exit(&output, 1);
+    let report = json_stdout(&output);
+    assert_eq!(report["error"]["code"], "install_failed");
+    assert_eq!(report["lockfile"], "written");
+    assert_eq!(
+        locked_version(&project, "acme.charts").as_deref(),
+        Some("1.2.3")
+    );
+}

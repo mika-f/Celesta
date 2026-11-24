@@ -70,7 +70,9 @@ fn wants_json_usage_error() -> bool {
             args.next();
         } else if !arg.as_encoded_bytes().starts_with(b"--project=") {
             return matches!(arg.to_str(), Some("list" | "install" | "audit"))
-                && args.take_while(|arg| arg != "--").any(|arg| arg == "--json");
+                && args
+                    .take_while(|arg| arg != "--")
+                    .any(|arg| arg == "--json");
         }
     }
     false

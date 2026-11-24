@@ -48,8 +48,12 @@ impl Output {
     }
 
     pub fn fail(self, error: Error) -> ExitCode {
+        self.fail_with_details(error, Value::Null)
+    }
+
+    pub fn fail_with_details(self, error: Error, details: Value) -> ExitCode {
         if self.json {
-            self.write(&error.plugin, Value::Null, Some(&error))
+            self.write(&error.plugin, details, Some(&error))
         } else {
             report::error(&error.message);
             error.exit()

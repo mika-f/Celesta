@@ -19,7 +19,9 @@ includes `scope` (`project` or `global`), `id`, `version`, and
 - Project install reports the host `target` and a `lockfile` outcome:
   `written`, `satisfied`, or `unchanged`. A successful row is
   `installed`, `already_installed` (the store or bundled plugins held
-  the version), or `skipped` with reason `no_build`. Global install
+  the version), or `skipped` with reason `no_build`. If the project lock
+  was written before an install failed, the failure also reports
+  `lockfile: "written"`. Global install
   reports the chosen version as `installed`. Install is fail-fast;
   a failure identifies the affected version when the operation reports it,
   not every plugin processed before the failure.
@@ -79,4 +81,4 @@ Both modes exited 0 for list and audit, and 1 for install.
 
 - `cargo fmt --all -- --check`
 - `cargo clippy --locked -p celesta-cli --all-targets -- -D warnings`
-- `cargo test --locked -p celesta-cli` (57 tests passed, including CLI subprocess tests)
+- `cargo test --locked -p celesta-cli` (59 tests passed, including CLI subprocess tests)

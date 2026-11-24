@@ -8,8 +8,9 @@ use std::process::ExitCode;
 
 use celesta_plugin_host::{LOCK_FILE, Lockfile, check_lock, project_dependencies};
 use celesta_registry_client::{
-    EditError, ResolveInput, ResolveWarning, Update, add_dependency as add_to_project, check_pin,
-    install_locked, lock_project, remove_dependency as remove_from_project, resolve,
+    EditError, ProjectError, ResolveInput, ResolveWarning, Update,
+    add_dependency as add_to_project, check_pin, install_locked, lock_project,
+    remove_dependency as remove_from_project, resolve,
 };
 use celesta_registry_format::{AdvisoryList, Index};
 use semver::{Version, VersionReq};
@@ -179,7 +180,7 @@ fn install_project(
     locked: bool,
     offline: bool,
     output: Output,
-) -> Result<ExitCode, celesta_registry_client::ProjectError> {
+) -> Result<ExitCode, ProjectError> {
     let lock = Lockfile::load(root)?;
     let checks_out = match &lock {
         Some(lock) => {
@@ -190,7 +191,22 @@ fn install_project(
     };
     let env = session.environment();
     if !(locked || offline || checks_out) {
-        let outcome = lock_project(&env, root, &Update::Keep)?;
+        let outcome = match lock_project(&env, root, &Update::Keep) {
+            Ok(outcome) => outcome,
+            // In lock_project only install_as_locked returns these errors, after saving the lock.
+            Err(
+                error @ (ProjectError::Install { .. }
+                | ProjectError::LockMismatch { .. }
+                | ProjectError::Withdrawn { .. }
+                | ProjectError::Blocked { .. }),
+            ) if output.json => {
+                return Ok(output.fail_with_details(
+                    Error::project(error, Scope::Project),
+                    json!({ "target": session.host.as_str(), "lockfile": "written" }),
+                ));
+            }
+            Err(error) => return Err(error),
+        };
         report::resolve_warnings(&outcome.warnings);
         if output.json {
             warn_record_error(outcome.record_error.as_deref());
