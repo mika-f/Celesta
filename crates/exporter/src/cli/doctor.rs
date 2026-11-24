@@ -12,13 +12,13 @@ use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser};
 use serde::Serialize;
 
 use super::{
-    AudioEncoderArg, SourceArgs, export_range, options, parse_audio_encoder, parse_component,
-    parse_option, read_preset_file, validate_audio_options,
+    AudioEncoderArg, SourceArgs, options, parse_audio_encoder, parse_component, parse_option,
+    validate_audio_options, validated_export_range,
 };
 use crate::project::folder_of;
 use crate::{
-    AudioChoice, EncoderChoice, ExportCancellation, ExportError, ExportProgress, ExportedFile,
-    FrameSelection, GpuDriver, PresetLookup, StillExport, parse_timecode, report,
+    AudioChoice, EncoderChoice, ExportCancellation, ExportError, ExportProgress, ExportRange,
+    ExportedFile, FrameSelection, GpuDriver, PresetLookup, StillExport, parse_timecode, report,
 };
 
 const SCHEMA_VERSION: u32 = 1;
@@ -165,6 +165,8 @@ pub fn run_doctor(matches: &ArgMatches) -> ExitCode {
     if let Err(error) = validate_audio_options(cli.audio_encoder.as_ref(), &cli.audio_option) {
         doctor_usage(ErrorKind::ArgumentConflict, error);
     }
+    let range = validated_export_range(cli.preset_file.as_deref(), cli.from, cli.to)
+        .unwrap_or_else(|error| doctor_usage(ErrorKind::ValueValidation, error));
     let node = if cli.source.is_none() || cli.input.react {
         check_node()
     } else {
@@ -173,7 +175,7 @@ pub fn run_doctor(matches: &ArgMatches) -> ExitCode {
     let graphics = check_graphics(cli.driver);
     let output = match (&cli.source, &cli.output) {
         (Some(source), Some(output)) if node.status != "error" && graphics.status != "error" => {
-            check_output(&cli, source, output)
+            check_output(&cli, source, output, range)
         }
         (Some(_), _) => Check::new("skipped", "a prerequisite failed"),
         _ => Check::new("skipped", "no render requested"),
@@ -264,16 +266,12 @@ fn check_graphics(driver: GpuDriver) -> Check {
     }
 }
 
-fn check_output(cli: &DoctorCli, source: &Path, output: &Path) -> Check {
-    let range = match export_range(cli.from, cli.to) {
-        Ok(range) => range,
-        Err(error) => return Check::error("invalid_range", error),
-    };
-    if let Some(path) = &cli.preset_file
-        && let Err(error) = read_preset_file(path)
-    {
-        return Check::error("invalid_presets", error);
-    }
+fn check_output(
+    cli: &DoctorCli,
+    source: &Path,
+    output: &Path,
+    range: Option<ExportRange>,
+) -> Check {
     match test_render(cli, source, output, range) {
         Ok(()) => Check::new(
             "ok",
@@ -290,7 +288,7 @@ fn test_render(
     cli: &DoctorCli,
     source: &Path,
     output: &Path,
-    range: Option<crate::ExportRange>,
+    range: Option<ExportRange>,
 ) -> Result<(), ExportError> {
     check_destination(output, cli.overwrite)?;
     let name = output.file_name().ok_or_else(|| {

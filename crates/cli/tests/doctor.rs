@@ -60,6 +60,40 @@ fn doctor_rejects_audio_options_without_an_encoder() {
 }
 
 #[test]
+fn doctor_checks_range_and_presets_before_prerequisites() {
+    let home = Home::new();
+    for (args, message) in [
+        (
+            &["--from", "1", "--to", "0"][..],
+            "--to must be after --from",
+        ),
+        (
+            &["--preset-file", "missing.json"][..],
+            "--preset-file missing.json",
+        ),
+    ] {
+        let output = home
+            .command()
+            .args([
+                "doctor", "--json", "--driver", "metal", "film.tsx", "film.gif", "--react",
+            ])
+            .args(args)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        let report = report(&output);
+        assert_eq!(report["checks"]["graphics"]["status"], "skipped");
+        assert_eq!(report["checks"]["output"]["code"], "usage");
+        assert!(
+            report["checks"]["output"]["message"]
+                .as_str()
+                .unwrap()
+                .contains(message)
+        );
+    }
+}
+
+#[test]
 fn missing_bundled_node_fails_preflight() {
     let home = tempfile::tempdir().unwrap();
     fs::create_dir(home.path().join("runtime")).unwrap();

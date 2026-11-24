@@ -592,12 +592,7 @@ pub fn run_export(matches: &ArgMatches, command: Command) -> ExitCode {
     let explicit = |id: &str| matches.value_source(id) == Some(ValueSource::CommandLine);
     let kind = output_kind(&cli, &explicit)
         .unwrap_or_else(|error| usage(ErrorKind::ArgumentConflict, &error));
-    if let Some(path) = &cli.preset_file
-        && let Err(error) = read_preset_file(path)
-    {
-        usage(ErrorKind::ValueValidation, &error);
-    }
-    let range = export_range(cli.from, cli.to)
+    let range = validated_export_range(cli.preset_file.as_deref(), cli.from, cli.to)
         .unwrap_or_else(|error| usage(ErrorKind::ValueValidation, &error));
     // A check fails when it finds anything with a stable code (a quality
     // issue, a rough scene, nondeterministic rendering); an export only
@@ -1210,6 +1205,17 @@ fn parse_plugin_id(id: &str) -> Result<String, String> {
 /// Builds an [`ExportRange`] from the `--from` / `--to` timecodes. Returns
 /// `None` when neither is given (export the whole composition). `--to` must
 /// be strictly after `--from`.
+fn validated_export_range(
+    preset_file: Option<&Path>,
+    start: Option<Time>,
+    end: Option<Time>,
+) -> Result<Option<ExportRange>, String> {
+    if let Some(path) = preset_file {
+        read_preset_file(path)?;
+    }
+    export_range(start, end)
+}
+
 fn export_range(start: Option<Time>, end: Option<Time>) -> Result<Option<ExportRange>, String> {
     if start.is_none() && end.is_none() {
         return Ok(None);
