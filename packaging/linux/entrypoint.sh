@@ -1,13 +1,5 @@
 #!/bin/sh
-if [ ! -d "${HOME:-}" ] || [ ! -w "$HOME" ]; then
-  case "${XDG_CONFIG_HOME:-}" in
-    /*) ;;
-    *)
-      case "${HOME:-}" in
-        /*) if [ -d "$HOME/.config" ]; then export XDG_CONFIG_HOME="$HOME/.config"; fi ;;
-      esac
-      ;;
-  esac
+if [ "${HOME:-/}" = / ] || [ ! -d "$HOME" ]; then
   HOME="$(mktemp -d /tmp/celesta-home.XXXXXX)" || exit 1
   export HOME
 fi

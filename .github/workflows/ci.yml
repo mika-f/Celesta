@@ -566,11 +566,13 @@ jobs:
           image_run plugin --help
           version="$(image_run --version)"
           printf '{"format":1,"celesta":"%s","plugins":{},"targets":[]}\n' "${version#celesta }" > "$work/project/celesta.lock"
-          install_status=0
-          install="$(docker run --rm --user 12345:12345 -v "$work/project/celesta.lock:/work/celesta.lock:ro" celesta-exporter:check plugin install --offline 2>&1)" || install_status=$?
-          printf '%s\n' "$install"
-          test "$install_status" -eq 0
-          test "$install" = 'celesta.lock is satisfied'
+          for uid in 1000 12345; do
+            install_status=0
+            install="$(docker run --rm --user "$uid:$uid" -v "$work/project/celesta.lock:/work/celesta.lock:ro" celesta-exporter:check plugin install --offline 2>&1)" || install_status=$?
+            printf 'UID %s: %s\n' "$uid" "$install"
+            test "$install_status" -eq 0
+            test "$install" = 'celesta.lock is satisfied'
+          done
           cat > "$work/check.tsx" <<'EOF'
           import { Composition, Text } from '@celesta.studio/react';
           export default function Check() {
