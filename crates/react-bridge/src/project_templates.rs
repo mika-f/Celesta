@@ -119,15 +119,20 @@ pub fn initialize_project(
             conflicts.insert(path);
         }
     }
-    for file in [
-        "tsconfig.json",
-        "package.json",
-        ".gitignore",
-        PROJECT_CONFIG,
-    ] {
+    for file in ["package.json", ".gitignore", PROJECT_CONFIG] {
         if let Some(path) = blocking_path(root, Path::new(file), true)? {
             conflicts.insert(path);
         }
+    }
+    let tsconfig = Path::new("tsconfig.json");
+    match fs::metadata(root.join(tsconfig)) {
+        Ok(metadata) if !metadata.is_file() => {
+            conflicts.insert(tsconfig.to_owned());
+        }
+        // Setup generates .celesta/tsconfig.json first and can write through
+        // a link to a missing file.
+        Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error.into()),
+        _ => {}
     }
     if !conflicts.is_empty() {
         return Err(TemplateError::Conflicts {
@@ -502,6 +507,24 @@ mod tests {
             "keep me"
         );
         assert_eq!(fs::read_dir(&project).unwrap().count(), 3);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn template_keeps_a_tsconfig_link_to_a_file_setup_will_create() {
+        let scratch = Scratch::new("tpl-tsconfig-link");
+        let cli = runtime(&scratch.0, "v1");
+        for target in [".celesta/tsconfig.json", "custom.json"] {
+            let project = tempfile::tempdir_in(&scratch.0).unwrap();
+            let link = project.path().join("tsconfig.json");
+            std::os::unix::fs::symlink(target, &link).unwrap();
+            assert!(!link.exists(), "{link:?} should start dangling");
+
+            initialize_project(&cli, project.path(), Some("slides")).unwrap();
+
+            assert_eq!(fs::read_link(&link).unwrap(), Path::new(target));
+            assert!(link.is_file());
+        }
     }
 
     #[test]
