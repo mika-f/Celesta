@@ -94,9 +94,16 @@ in a shell, with a larger `--timeout` if it needs one
 For a new video, initialize a folder instead of writing every file by hand:
 
 ```sh
-celesta init my-video                                               # Linux CLI
+celesta init my-video                                               # Linux CLI on PATH
 /Applications/Celesta.app/Contents/MacOS/Celesta-cli init my-video    # macOS app
 cargo run -p celesta-cli --release -- init my-video                  # source checkout with staged runtime
+```
+
+With the Linux Docker image, override its default exporter entry point:
+
+```sh
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" \
+  --entrypoint /opt/celesta/celesta celesta-exporter init my-video
 ```
 
 `init` without a folder initializes the current directory. It prints
