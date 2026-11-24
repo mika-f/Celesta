@@ -5,6 +5,28 @@ use std::process::Command;
 use celesta_registry_client::testing::TestRegistry;
 use common::Home;
 
+#[test]
+fn json_usage_errors_keep_exit_two() {
+    let home = Home::new();
+    let output = home
+        .command()
+        .args([
+            "plugin",
+            "install",
+            "--json",
+            "--locked",
+            "--global",
+            "acme.codec",
+        ])
+        .output()
+        .unwrap();
+    common::assert_exit(&output, 2);
+    assert_eq!(stderr(&output), "");
+    let report = common::json_stdout(&output);
+    assert_eq!(report["status"], "error");
+    assert_eq!(report["error"]["code"], "invalid_arguments");
+}
+
 fn stderr(output: &std::process::Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }

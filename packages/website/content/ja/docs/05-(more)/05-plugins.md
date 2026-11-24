@@ -228,6 +228,16 @@ installed acme.charts 1.2.3
 
 CI では `celesta plugin install --locked` を実行してください。コミットしたロックのとおりに入れ、ロックが `celesta.config.json` と合わないときや、動いている Celesta で読めないバージョンがあるときは失敗するので、コミットしたものと違うバージョンでビルドされることはありません。
 
+#### スクリプト向けの JSON 出力
+
+`plugin list`、`plugin install`（`--locked`、`--offline`、`--global` を含む）、`plugin audit` に `--json` を付けると、標準出力に JSON オブジェクトを 1 つ出力します。フィールドは `schemaVersion: 1`、`command`、`status`（`ok` または `error`）、`plugins` 配列です。各プラグインには `scope`（`project` または `global`）、`id`、`version`、`status` があります。警告は引き続き標準エラー出力に出ます。
+
+- **List:** `installed`（インストール済み）、`missing`（未インストール）、`no_build`（対象ビルドなし）、`blocked`（ブロック済み）のいずれかです。`yanked` と `deprecated` のフラグがあり、ブロックされたバージョンには `advisory` もあります。
+- **Install:** 成功時は `installed`、`already_installed`（インストール済み）、または `skipped`（`reason: "no_build"`）です。プロジェクトへのインストールでは `lockfile`（`written`、`satisfied`、`unchanged`）も返します。失敗時は、バージョンが分かる場合に対象のプラグインを返します。
+- **Audit:** `ok`、`warning`、`skipped`、`blocked`、`withdrawn`（配布終了）のいずれかです。各項目に `listingChecked` と `findings` があり、検出事項には固定の `code`、ブロックの場合は `advisory` も含まれます。List と Audit の `advisoriesAvailable` は、キャッシュも含めて検証済みアドバイザリー一覧を利用できたかを示します。
+
+終了コードは変わりません。**0** は成功（失敗扱いではない検出事項や未確認の項目がある場合も含む）、**1** は失敗、**2** は使い方の誤りです。失敗時は `error.message` の文面ではなく `error.code` で判定してください。例えば `plugin_missing` はオフラインでのインストールに必要なプラグインが未ダウンロード、`plugin_blocked` はアドバイザリーによるインストールの拒否、`audit_failed` は監査を失敗扱いにする検出事項があったことを示します。引数の解析に失敗した場合は `invalid_arguments` を返し、`command` はありません。
+
 ### レジストリのメディアプラグイン
 
 メディアプラグイン（デコーダー・エンコーダー・マルチプレクサー）はすべてのプロジェクトで使うものなので、`--global` で一度だけ入れます。Celesta はそれを `settings.json` に記録し、ユーザーのプラグインフォルダーのすぐ後に探します。

@@ -122,6 +122,12 @@ pub fn stdout(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
+pub fn json_stdout(output: &Output) -> serde_json::Value {
+    let stdout = stdout(output);
+    assert_eq!(stdout.lines().count(), 1, "{stdout}");
+    serde_json::from_str(&stdout).unwrap_or_else(|error| panic!("{error}: {stdout}"))
+}
+
 pub fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }

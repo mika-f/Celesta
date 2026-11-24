@@ -4,7 +4,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Output;
 
-use common::{Home, assert_exit, registry, run, stderr, stdout};
+use common::{Home, assert_exit, json_stdout, registry, run, stderr, stdout};
 use serde_json::{Value, json};
 
 fn config(project: &Path) -> Value {
@@ -302,6 +302,24 @@ fn install_offline_fails_for_a_missing_version() {
         stderr(&output)
     );
     assert!(!other.store().join("acme.charts").exists());
+
+    let output = run(
+        &other,
+        &registry,
+        &project,
+        &["install", "--offline", "--json"],
+    );
+    assert_exit(&output, 1);
+    assert_eq!(stderr(&output), "");
+    let report = json_stdout(&output);
+    assert_eq!(report["status"], "error");
+    assert_eq!(report["error"]["code"], "plugin_missing");
+    assert_eq!(
+        report["plugins"],
+        json!([
+            { "scope": "project", "id": "acme.charts", "version": "1.2.3", "status": "missing" }
+        ])
+    );
 }
 
 #[test]
@@ -508,4 +526,51 @@ fn install_without_any_plugins_does_nothing() {
         assert_eq!(stderr(&output), "");
     }
     assert!(!project.join("celesta.lock").exists());
+}
+
+#[test]
+fn install_json_reports_the_lock_and_each_plugin() {
+    let home = Home::new();
+    let registry = registry();
+    let other_target = if cfg!(windows) {
+        "linux-x86_64"
+    } else {
+        "windows-x86_64"
+    };
+    registry.publish("acme.charts", "1.2.3", &["any"]);
+    registry.publish_with_roles("acme.codec", "1.0.0", &[other_target], &["media"]);
+    let project = home.project(
+        &json!({
+            "plugins": {
+                "dependencies": { "acme.charts": "1", "acme.codec": "1" },
+                "targets": [other_target],
+            }
+        })
+        .to_string(),
+    );
+    let output = run(&home, &registry, &project, &["install", "--json"]);
+    assert_exit(&output, 0);
+    let report = json_stdout(&output);
+    assert_eq!(report["command"], "install");
+    assert_eq!(report["scope"], "project");
+    assert_eq!(report["lockfile"], "written");
+    assert_eq!(
+        report["plugins"],
+        json!([
+            { "scope": "project", "id": "acme.charts", "version": "1.2.3", "status": "installed" },
+            { "scope": "project", "id": "acme.codec", "version": "1.0.0", "status": "skipped", "reason": "no_build" }
+        ])
+    );
+
+    let output = run(
+        &home,
+        &registry,
+        &project,
+        &["install", "--locked", "--offline", "--json"],
+    );
+    assert_exit(&output, 0);
+    let report = json_stdout(&output);
+    assert_eq!(report["lockfile"], "satisfied");
+    assert_eq!(report["plugins"][0]["status"], "already_installed");
+    assert_eq!(report["plugins"][1]["status"], "skipped");
 }

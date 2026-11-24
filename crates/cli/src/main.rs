@@ -46,6 +46,13 @@ fn parse_error(error: clap::Error) -> ExitCode {
         }
         error => {
             let rendered = error.render().to_string();
+            if std::env::args_os()
+                .skip(1)
+                .take_while(|arg| arg != "--")
+                .any(|arg| arg == "--json")
+            {
+                return celesta_cli::json::usage_error(rendered.trim_end());
+            }
             match rendered.strip_prefix("error: ") {
                 Some(message) => celesta_cli::report::error(message.trim_end()),
                 // The help shown for a missing subcommand is not an error
