@@ -440,6 +440,16 @@ impl PluginChild {
         }
     }
 
+    pub(crate) fn explain_start_error(&mut self, error: &RequestError) -> String {
+        let reason = error.message();
+        if matches!(error, RequestError::Refused(_)) {
+            self.stop();
+            self.explain(&reason)
+        } else {
+            reason
+        }
+    }
+
     /// Kills the process, so the threads that wait on its pipes end.
     fn stop(&mut self) {
         self.requests = None;

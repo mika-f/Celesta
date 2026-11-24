@@ -184,7 +184,7 @@ pub fn probe_registry_plugin(
     } else {
         child.hello_content(id)
     };
-    hello.map_err(|error| error.message())?;
+    hello.map_err(|error| child.explain_start_error(&error))?;
     Ok(())
 }
 
@@ -541,6 +541,22 @@ pub(crate) mod tests {
         )
         .unwrap_err();
         assert!(error.contains("is not a media plugin"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_refused_start_includes_the_plugins_stderr() {
+        let error = probe_answer(
+            media("acme.codec", "1.2.3"),
+            json!({"type": "error", "message": "startup refused"}),
+            "echo 'a required library could not be loaded' >&2",
+        )
+        .unwrap_err();
+        assert!(error.contains("startup refused"), "{error}");
+        assert!(
+            error.contains("a required library could not be loaded"),
+            "{error}"
+        );
     }
 
     /// A test's folders: the store, and an explicit, a user, and a bundled
