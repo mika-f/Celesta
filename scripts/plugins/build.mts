@@ -53,24 +53,56 @@ import { workspaceVersion } from './version.mts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..', '..');
-const { values, positionals } = parseArgs({
-  allowPositionals: true,
-  options: {
-    out: { type: 'string' },
-    target: { type: 'string' },
-    'skip-js': { type: 'boolean', default: false },
-    distribution: { type: 'boolean', default: false },
-  },
-});
-// Cargo accepts this without --target; use it for validation and output paths too.
-values.target ??= process.env.CARGO_BUILD_TARGET;
 
-if (positionals.length === 0) {
-  console.error(
-    'usage: node scripts/plugins/build.mts <plugin directory>... [--out <dir>] [--target <triple>] [--skip-js] [--distribution]',
-  );
+const usage = `Usage: node scripts/plugins/build.mts <plugin directory>... [options]
+
+Options:
+  --out <dir>         Write plugins under this directory (default: dist/ beside each plugin).
+  --target <triple>   Build for this Rust target (default: CARGO_BUILD_TARGET or the host).
+  --skip-js           Reuse a previously built JavaScript module.
+  --distribution      Verify native FFmpeg builds meet distribution license requirements.
+  -h, --help          Show this help.
+
+FFmpeg build environment:
+  Standard: PKG_CONFIG_PATH (Unix); VCPKG_ROOT and VCPKGRS_TRIPLET (Windows).
+  x264: FFMPEG_X264_PKG_CONFIG_PATH (Unix); FFMPEG_X264_VCPKG_ROOT and
+        FFMPEG_X264_VCPKGRS_TRIPLET (Windows). Unset overrides use the standard variables.
+
+Examples (Unix):
+  PKG_CONFIG_PATH=/opt/ffmpeg-standard/lib/pkgconfig node scripts/plugins/build.mts plugins/ffmpeg
+  FFMPEG_X264_PKG_CONFIG_PATH=/opt/ffmpeg-x264/lib/pkgconfig node scripts/plugins/build.mts plugins/ffmpeg-x264`;
+
+function usageError(message: string): never {
+  console.error(`build.mts: ${message}\nRun node scripts/plugins/build.mts --help for usage.`);
   process.exit(2);
 }
+
+function parseBuildArgs() {
+  try {
+    return parseArgs({
+      allowPositionals: true,
+      options: {
+        help: { type: 'boolean', short: 'h' },
+        out: { type: 'string' },
+        target: { type: 'string' },
+        'skip-js': { type: 'boolean', default: false },
+        distribution: { type: 'boolean', default: false },
+      },
+    });
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+    usageError(error.message.split('. To specify a positional argument')[0]);
+  }
+}
+
+const { values, positionals } = parseBuildArgs();
+if (values.help) {
+  console.log(usage);
+  process.exit(0);
+}
+if (positionals.length === 0) usageError('expected at least one plugin directory');
+// Cargo accepts this without --target; use it for validation and output paths too.
+values.target ??= process.env.CARGO_BUILD_TARGET;
 
 function fail(message: string): never {
   console.error(`build.mts: ${message}`);

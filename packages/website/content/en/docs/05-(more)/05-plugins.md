@@ -228,6 +228,16 @@ installed acme.charts 1.2.3
 
 In continuous integration, run `celesta plugin install --locked`. It installs the lock you committed and fails when the lock does not match `celesta.config.json` or names versions the running Celesta cannot load, so a build never runs other versions than yours.
 
+#### JSON output for scripts
+
+Add `--json` to `plugin list`, `plugin install` (including `--locked`, `--offline`, or `--global`), or `plugin audit`. Stdout contains one JSON object with `schemaVersion: 1`, `command`, `status` (`ok` or `error`), and a `plugins` array. Each plugin has a `scope` (`project` or `global`), `id`, `version`, and `status`. Warnings still go to stderr.
+
+- **List:** `installed`, `missing`, `no_build`, or `blocked`, with `yanked` and `deprecated` flags and an `advisory` for a blocked version.
+- **Install:** `installed`, `already_installed`, or `skipped` (`reason: "no_build"`) on success. A project install also reports `lockfile` (`written`, `satisfied`, or `unchanged`). On a failed install (exit 1), `lockfile: "written"` means `celesta.lock` was already saved. A failure identifies the affected plugin when its version is known.
+- **Audit:** `ok`, `warning`, `skipped`, `blocked`, or `withdrawn`. Each entry has `listingChecked` and `findings`, with a stable `code` and an `advisory` for a block. For list and audit, `advisoriesAvailable` indicates whether a verified advisory list was available, including from cache.
+
+Exit codes are unchanged: **0** for success (including non-blocking findings or skipped checks), **1** for failure, **2** for incorrect usage. On failure, branch on `error.code` rather than parsing `error.message`: for example, `plugin_missing` means an offline install needs a download, `plugin_blocked` means an install was blocked by an advisory, and `audit_failed` means at least one audit finding is blocking. Argument parsing failures return `invalid_arguments` without a `command` field.
+
 ### Media plugins from the registry
 
 A media plugin (decoders, encoders, and muxers) serves every project, so you install it once with `--global`. Celesta records it in your `settings.json` and looks for it right after your user plugin folder:
@@ -319,6 +329,9 @@ Files are named `Celesta-plugin-ffmpeg-x264-<version>-<os>-<arch>.zip`
 release as the app. The ZIP contains one `ffmpeg-x264` folder with its
 manifest, executable, native libraries and license notices; no separate FFmpeg
 installation is needed.
+From the release after 0.10.0, the Linux x64 download needs glibc 2.35 or
+later: Ubuntu 22.04 LTS, Debian 12 or a later release. The 0.10.0 download
+needs glibc 2.38 (Ubuntu 24.04 or later).
 
 Extract it and copy the entire folder into your user plugin folder listed
 above. Keep all files together. Open Celesta, choose **Reload Plugins** and

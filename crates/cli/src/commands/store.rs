@@ -10,65 +10,127 @@ use celesta_registry_client::{
     BundledPlugins, GcInput, GcPlan, PROJECTS_FILE, holds_locked_build, install_global, plan_gc,
     run_gc,
 };
-use celesta_registry_format::{AdvisoryList, Hash};
+use celesta_registry_format::{Advisory, AdvisoryList, Hash};
 use semver::{Version, VersionReq};
+use serde::Serialize;
+use serde_json::json;
 
 use super::{Failure, finish};
 use crate::args::parse_spec;
+use crate::json::{Error, Output, Scope};
 use crate::session::Session;
-use crate::{USAGE, advisories, report};
+use crate::{advisories, report};
 
 /// Lists the plugins the project in `root` locks and those installed for
 /// every project, with their states. Works offline and without a registry
 /// key: it refreshes the advisory list within the run's budget, then uses
 /// the cached list and indexes.
-pub fn list(session: &Session, root: &Path) -> ExitCode {
+pub(crate) fn list(session: &Session, root: &Path, output: Output) -> ExitCode {
     let advisories = advisories::refresh(session);
-    finish(list_plugins(session, root, advisories.as_ref()))
+    match list_plugins(session, root, advisories.as_ref(), output) {
+        Ok(exit) => exit,
+        Err(error) => output.fail(error),
+    }
 }
 
 fn list_plugins(
     session: &Session,
     root: &Path,
     advisories: Option<&AdvisoryList>,
-) -> Result<(), Failure> {
-    let lock = Lockfile::load(root)?;
-    let settings = UserSettings::load(&session.settings_path)?;
+    output: Output,
+) -> Result<ExitCode, Error> {
+    let lock = Lockfile::load(root).map_err(|error| Error::new("lockfile", error))?;
+    let settings = UserSettings::load(&session.settings_path)
+        .map_err(|error| Error::new("settings", error))?;
     let lines = Lines::new(session, advisories);
-    let project: Vec<String> = lock
+    let project: Vec<_> = lock
         .iter()
         .flat_map(|lock| {
             lock.plugins.iter().map(|(id, locked)| {
                 let tree_hash = lock
                     .artifact(id, &session.host)
                     .map(|artifact| &artifact.tree_hash);
-                lines.line(id, &locked.version, tree_hash)
+                lines.entry(Scope::Project, id, &locked.version, tree_hash)
             })
         })
         .collect();
-    let global: Vec<String> = settings
+    let global: Vec<_> = settings
         .registry_plugins
         .iter()
-        .map(|plugin| lines.line(&plugin.id, &plugin.version, Some(&plugin.tree_hash)))
+        .map(|plugin| {
+            lines.entry(
+                Scope::Global,
+                &plugin.id,
+                &plugin.version,
+                Some(&plugin.tree_hash),
+            )
+        })
         .collect();
 
+    if output.json {
+        return Ok(output.write(
+            project.into_iter().chain(global).collect::<Vec<_>>(),
+            json!({ "target": session.host.as_str(), "advisoriesAvailable": advisories.is_some() }),
+            None,
+        ));
+    }
     if project.is_empty() && global.is_empty() {
         println!("no registry plugins");
-        return Ok(());
+        return Ok(ExitCode::SUCCESS);
     }
     for (title, lines) in [("This project", project), ("Global", global)] {
         println!("{title}");
         if lines.is_empty() {
             println!("  none");
         }
-        for line in lines {
-            println!("  {line}");
+        for entry in lines {
+            println!("  {}", entry.line(session.host.as_str()));
         }
     }
-    Ok(())
+    Ok(ExitCode::SUCCESS)
 }
 
-/// The lines `list` prints, one per plugin.
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ListStatus {
+    Installed,
+    Missing,
+    NoBuild,
+    Blocked,
+}
+
+#[derive(Serialize)]
+struct ListEntry<'a> {
+    scope: Scope,
+    id: &'a str,
+    version: &'a Version,
+    status: ListStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    advisory: Option<&'a Advisory>,
+    yanked: bool,
+    deprecated: bool,
+}
+
+impl ListEntry<'_> {
+    fn line(&self, host: &str) -> String {
+        let state = match (&self.status, self.advisory) {
+            (_, Some(advisory)) => format!("blocked ({})", advisory.id),
+            (ListStatus::NoBuild, _) => format!("no build for {host}"),
+            (ListStatus::Installed, _) => "installed".to_owned(),
+            (ListStatus::Missing, _) => "not installed".to_owned(),
+            (ListStatus::Blocked, _) => unreachable!(),
+        };
+        let mut line = format!("{} {}  {state}", self.id, self.version);
+        if self.yanked {
+            line.push_str(" yanked");
+        }
+        if self.deprecated {
+            line.push_str(" deprecated");
+        }
+        line
+    }
+}
+
 struct Lines<'a> {
     session: &'a Session,
     advisories: Option<&'a AdvisoryList>,
@@ -84,70 +146,86 @@ impl<'a> Lines<'a> {
         }
     }
 
-    /// `{id} {version}  {state}` for the host's build with `tree_hash`
-    /// (`None`: there is none), the state `blocked ({advisory})`,
-    /// `no build for {host}`, `installed`, or `not installed`, then
-    /// ` yanked` and ` deprecated` when the cached index says so.
-    fn line(&self, id: &str, version: &Version, tree_hash: Option<&Hash>) -> String {
-        let blocking = self.advisories.and_then(|list| list.blocking(id, version));
+    fn entry<'b>(
+        &'b self,
+        scope: Scope,
+        id: &'b str,
+        version: &'b Version,
+        tree_hash: Option<&Hash>,
+    ) -> ListEntry<'b> {
+        let advisory = self.advisories.and_then(|list| list.blocking(id, version));
         let session = self.session;
-        let state = match (blocking, tree_hash) {
-            (Some(advisory), _) => format!("blocked ({})", advisory.id),
-            (None, None) => format!("no build for {}", session.host.as_str()),
+        let status = match (advisory, tree_hash) {
+            (Some(_), _) => ListStatus::Blocked,
+            (None, None) => ListStatus::NoBuild,
             (None, Some(tree_hash)) => {
                 let held =
                     holds_locked_build(&session.store, &self.bundled, id, version, tree_hash);
-                if held { "installed" } else { "not installed" }.to_owned()
+                if held {
+                    ListStatus::Installed
+                } else {
+                    ListStatus::Missing
+                }
             }
         };
-        let mut line = format!("{id} {version}  {state}");
+        let mut result = ListEntry {
+            scope,
+            id,
+            version,
+            status,
+            advisory,
+            yanked: false,
+            deprecated: false,
+        };
         if let Some(index) = self.session.registry.cached_index(id)
             && let Some(entry) = index
                 .versions
                 .iter()
                 .find(|entry| entry.version == *version)
         {
-            if entry.yanked {
-                line.push_str(" yanked");
-            }
-            if index.deprecation(entry).is_some() {
-                line.push_str(" deprecated");
-            }
+            result.yanked = entry.yanked;
+            result.deprecated = index.deprecation(entry).is_some();
         }
-        line
+        result
     }
 }
 
 /// Installs `spec` (`id[@req]`, any version by default) for every project,
 /// recording it in the user settings, and warns about what resolution
 /// found, such as a deprecated version.
-pub fn install_global_plugin(session: &Session, spec: &str) -> ExitCode {
+pub(crate) fn install_global_plugin(session: &Session, spec: &str, output: Output) -> ExitCode {
     let (id, requirement) = match parse_spec(spec) {
         Ok(parsed) => parsed,
         Err(message) => {
-            report::error(message);
-            return ExitCode::from(USAGE);
+            return output.fail(Error::usage("invalid_plugin_spec", message));
         }
     };
     let requirement = requirement.unwrap_or(VersionReq::STAR);
     advisories::refresh(session);
-    finish(
-        install_global(
-            &session.environment(),
-            &session.settings_path,
-            &id,
-            &requirement,
-        )
-        .map(|outcome| {
+    match install_global(
+        &session.environment(),
+        &session.settings_path,
+        &id,
+        &requirement,
+    ) {
+        Ok(outcome) => {
             report::resolve_warnings(&outcome.warnings);
             let installed = outcome.plugin;
+            if output.json {
+                return output.write(
+                    [json!({ "scope": Scope::Global, "id": installed.id, "version": installed.version, "status": "installed" })],
+                    serde_json::Value::Null,
+                    None,
+                );
+            }
             println!(
                 "installed {} {} for every project",
                 installed.id, installed.version
             );
-        })
-        .map_err(Failure::from),
-    )
+            ExitCode::SUCCESS
+        }
+        Err(error) => output.fail(Error::project(error, Scope::Global)),
+    }
 }
 
 /// Removes the store versions that no recorded project, the project in

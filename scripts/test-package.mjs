@@ -238,8 +238,9 @@ export default function Root() {
     .trim().split(/\r?\n/).map((line) => JSON.parse(line));
   const tools = mcpReplies.find((reply) => reply.id === 2).result.tools.map((tool) => tool.name).sort();
   assert.deepEqual(tools, [
-    'contact_sheet', 'describe_component', 'export_video', 'init_project', 'inspect',
-    'list_components', 'list_templates', 'read_docs', 'render_frames',
+    'check_quality', 'contact_sheet', 'describe_component', 'export_video', 'init_project', 'inspect',
+    'list_comments', 'list_components', 'list_templates', 'read_docs', 'render_frames',
+    'reply_to_comment', 'resolve_comment',
   ]);
   const cliHelp = run(cli, ['plugin', '--help']);
   assert.ok(cliHelp.includes('plugin') && cliHelp.includes('install'), cliHelp);

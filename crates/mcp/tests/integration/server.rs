@@ -1,8 +1,40 @@
 use std::collections::BTreeSet;
+use std::process::Command;
 
 use crate::common::{call, client, is_error, structured, text};
 use celesta_codec_test::TestCodecPlugin;
 use serde_json::json;
+
+#[test]
+fn help_and_version_do_not_start_the_server() {
+    for flag in ["--help", "-h", "--version", "-V"] {
+        let result = Command::new(env!("CARGO_BIN_EXE_celesta-mcp"))
+            .arg(flag)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{flag}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(result.stderr.is_empty());
+        let stdout = String::from_utf8(result.stdout).unwrap();
+        if matches!(flag, "--help" | "-h") {
+            assert!(stdout.starts_with("celesta-mcp"));
+            assert!(stdout.contains("Model Context Protocol"));
+            assert!(stdout.contains("stdin/stdout"));
+            assert!(stdout.contains("celesta-exporter --help"));
+            assert!(stdout.contains(
+                "bundled Celesta-export (Celesta-export.exe on Windows)\nwith --help, quoting its full path"
+            ));
+        } else {
+            assert_eq!(
+                stdout,
+                concat!("celesta-mcp ", env!("CARGO_PKG_VERSION"), "\n")
+            );
+        }
+    }
+}
 
 #[tokio::test]
 async fn lists_the_thirteen_tools() {

@@ -17,6 +17,12 @@ import type { ReadyMessage } from '../src/cli.js';
 
 const cli = fileURLToPath(new URL('../bin/celesta-react-render.js', import.meta.url));
 
+test('the runtime can start without loading a composition', () => {
+  const result = spawnSync(process.execPath, [cli, '--check-runtime'], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, '');
+});
+
 test('console.log in a composition goes to stderr, leaving stdout pure protocol', () => {
   const dir = mkdtempSync(join(tmpdir(), 'celesta-console-'));
   const entry = join(dir, 'entry.tsx');

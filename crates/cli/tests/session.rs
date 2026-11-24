@@ -5,6 +5,43 @@ use std::process::Command;
 use celesta_registry_client::testing::TestRegistry;
 use common::Home;
 
+#[test]
+fn json_usage_errors_keep_exit_two() {
+    let home = Home::new();
+    for args in [
+        &[
+            "plugin",
+            "install",
+            "--json",
+            "--locked",
+            "--global",
+            "acme.codec",
+        ][..],
+        &["plugin", "--locked", "install", "--json"],
+        &["plugin", "--json", "--locked", "install"],
+    ] {
+        let output = home.command().args(args).output().unwrap();
+        common::assert_exit(&output, 2);
+        assert_eq!(stderr(&output), "", "{args:?}");
+        let report = common::json_stdout(&output);
+        assert_eq!(report["status"], "error");
+        assert_eq!(report["error"]["code"], "invalid_arguments");
+    }
+}
+
+#[test]
+fn unsupported_json_flag_reports_text_on_stderr() {
+    let home = Home::new();
+    let output = home
+        .command()
+        .args(["plugin", "--project", "audit", "search", "chart", "--json"])
+        .output()
+        .unwrap();
+    common::assert_exit(&output, 2);
+    assert_eq!(common::stdout(&output), "");
+    assert!(stderr(&output).starts_with("celesta: error: unexpected argument '--json'"));
+}
+
 fn stderr(output: &std::process::Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }

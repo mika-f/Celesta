@@ -666,8 +666,9 @@ impl Exporter {
         frame_rate: Rational,
         destination: &Destination,
         cancellation: &ExportCancellation,
+        progress: &mut impl FnMut(ExportProgress),
     ) -> Result<GpuRenderer, ExportError> {
-        let mut renderer = self.export_renderer(asset_root, frame_rate, cancellation)?;
+        let mut renderer = self.export_renderer(asset_root, frame_rate, cancellation, progress)?;
         configure_renderer(&mut renderer, destination.output.opened())?;
         Ok(renderer)
     }
@@ -743,8 +744,13 @@ impl Exporter {
         let prepared = Evaluator::new(project)
             .map_err(ExportError::Evaluation)
             .and_then(|evaluator| {
-                let renderer =
-                    self.still_renderer(asset_root, frame_rate, &destination, cancellation)?;
+                let renderer = self.still_renderer(
+                    asset_root,
+                    frame_rate,
+                    &destination,
+                    cancellation,
+                    &mut progress,
+                )?;
                 Ok((evaluator, renderer))
             });
         let (evaluator, mut renderer) = match prepared {
@@ -847,8 +853,13 @@ impl Exporter {
             &mut progress,
         )?;
         let prepared = ReactScenes::new(bridge, project).and_then(|scenes| {
-            let renderer =
-                self.still_renderer(asset_root, metadata.frame_rate, &destination, cancellation)?;
+            let renderer = self.still_renderer(
+                asset_root,
+                metadata.frame_rate,
+                &destination,
+                cancellation,
+                &mut progress,
+            )?;
             Ok((scenes, renderer))
         });
         let (mut scenes, mut renderer) = match prepared {

@@ -10,7 +10,7 @@ use semver::VersionReq;
 #[command(
     name = "celesta",
     version,
-    about = "Manages a Celesta project's plugins."
+    about = "Create, manage, and export Celesta projects."
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -19,6 +19,17 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Initialize a React project using a staged template.
+    Init {
+        /// The project directory (defaults to the current directory).
+        #[arg(value_name = "DIRECTORY", default_value = ".")]
+        directory: PathBuf,
+        /// Template to use (see celesta templates); refuses to overwrite files.
+        #[arg(long, value_name = "NAME")]
+        template: Option<String>,
+    },
+    /// List the templates available to celesta init.
+    Templates,
     /// Add, install, and inspect registry plugins.
     Plugin(PluginArgs),
 }
@@ -51,6 +62,9 @@ pub enum PluginCommand {
     Remove { id: String },
     /// Install the plugins this project's celesta.lock names.
     Install {
+        /// Print one machine-readable JSON report instead of text.
+        #[arg(long)]
+        json: bool,
         /// Install exactly what celesta.lock names, never resolving again.
         #[arg(long)]
         locked: bool,
@@ -65,9 +79,17 @@ pub enum PluginCommand {
     /// their requirements allow.
     Update { id: Option<String> },
     /// Show the registry plugins this project and every project use.
-    List,
+    List {
+        /// Print one machine-readable JSON report instead of text.
+        #[arg(long)]
+        json: bool,
+    },
     /// Check the plugins in use against the security advisories.
-    Audit,
+    Audit {
+        /// Print one machine-readable JSON report instead of text.
+        #[arg(long)]
+        json: bool,
+    },
     /// Remove downloaded versions no project uses.
     Gc {
         /// Say what would be removed without removing it.

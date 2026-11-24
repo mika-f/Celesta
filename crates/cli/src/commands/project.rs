@@ -8,14 +8,17 @@ use std::process::ExitCode;
 
 use celesta_plugin_host::{LOCK_FILE, Lockfile, check_lock, project_dependencies};
 use celesta_registry_client::{
-    EditError, ResolveInput, ResolveWarning, Update, add_dependency as add_to_project, check_pin,
-    install_locked, lock_project, remove_dependency as remove_from_project, resolve,
+    EditError, ProjectError, ResolveInput, ResolveWarning, Update,
+    add_dependency as add_to_project, check_pin, install_locked, lock_project,
+    remove_dependency as remove_from_project, resolve,
 };
 use celesta_registry_format::{AdvisoryList, Index};
 use semver::{Version, VersionReq};
+use serde_json::json;
 
 use super::{Failure, finish};
 use crate::args::parse_spec;
+use crate::json::{Error, Output, Scope};
 use crate::session::Session;
 use crate::{USAGE, advisories, report};
 
@@ -135,23 +138,39 @@ fn remove_dependency(root: &Path, id: &str) -> Result<(), Failure> {
 /// project again, keeping every entry that still holds, and installs that.
 /// Without a registry key, only what the store already holds can be used.
 /// A project with no dependencies and no lock has nothing to install.
-pub fn install(session: &Session, root: &Path, locked: bool, offline: bool) -> ExitCode {
+pub(crate) fn install(
+    session: &Session,
+    root: &Path,
+    locked: bool,
+    offline: bool,
+    output: Output,
+) -> ExitCode {
     match has_registry_plugins(root) {
         Ok(true) => {}
         Ok(false) => {
+            if output.json {
+                return output.write(
+                    [] as [(); 0],
+                    json!({ "target": session.host.as_str(), "lockfile": "unchanged" }),
+                    None,
+                );
+            }
             println!("this project has no registry plugins");
             return ExitCode::SUCCESS;
         }
-        Err(failure) => return finish(Err(failure)),
+        Err(error) => return output.fail(Error::new("project_config", error)),
     }
     if !offline {
         advisories::refresh(session);
     }
-    finish(install_project(session, root, locked, offline))
+    match install_project(session, root, locked, offline, output) {
+        Ok(exit) => exit,
+        Err(error) => output.fail(Error::project(error, Scope::Project)),
+    }
 }
 
 /// Whether the project has dependencies or a `celesta.lock`.
-fn has_registry_plugins(root: &Path) -> Result<bool, Failure> {
+fn has_registry_plugins(root: &Path) -> Result<bool, celesta_plugin_host::ProjectConfigError> {
     Ok(root.join(LOCK_FILE).exists() || !project_dependencies(root)?.dependencies.is_empty())
 }
 
@@ -160,7 +179,8 @@ fn install_project(
     root: &Path,
     locked: bool,
     offline: bool,
-) -> Result<(), Failure> {
+    output: Output,
+) -> Result<ExitCode, ProjectError> {
     let lock = Lockfile::load(root)?;
     let checks_out = match &lock {
         Some(lock) => {
@@ -171,26 +191,96 @@ fn install_project(
     };
     let env = session.environment();
     if !(locked || offline || checks_out) {
-        let outcome = lock_project(&env, root, &Update::Keep)?;
+        let outcome = match lock_project(&env, root, &Update::Keep) {
+            Ok(outcome) => outcome,
+            // In lock_project only install_as_locked returns these errors, after saving the lock.
+            Err(
+                error @ (ProjectError::Install { .. }
+                | ProjectError::LockMismatch { .. }
+                | ProjectError::Withdrawn { .. }
+                | ProjectError::Blocked { .. }),
+            ) if output.json => {
+                return Ok(output.fail_with_details(
+                    Error::project(error, Scope::Project),
+                    json!({ "target": session.host.as_str(), "lockfile": "written" }),
+                ));
+            }
+            Err(error) => return Err(error),
+        };
         report::resolve_warnings(&outcome.warnings);
+        if output.json {
+            warn_record_error(outcome.record_error.as_deref());
+            return Ok(install_report(
+                output,
+                session,
+                Some(&outcome.lock),
+                &outcome.installed,
+                "written",
+            ));
+        }
         print_installed(&outcome.installed);
         println!("wrote {LOCK_FILE}");
         warn_record_error(outcome.record_error.as_deref());
-        return Ok(());
+        return Ok(ExitCode::SUCCESS);
     }
 
     let outcome = install_locked(&env, root, offline)?;
-    print_installed(&outcome.installed);
-    for (id, version, reason) in &outcome.skipped {
-        println!("skipped {id} {version}: {reason}");
+    if !output.json {
+        print_installed(&outcome.installed);
+        for (id, version, reason) in &outcome.skipped {
+            println!("skipped {id} {version}: {reason}");
+        }
+        println!("{LOCK_FILE} is satisfied");
     }
-    println!("{LOCK_FILE} is satisfied");
     // After the installs, which fetched the indexes of what they downloaded.
     if let Some(lock) = &lock {
         warn_about_locked_states(session, lock);
     }
     warn_record_error(outcome.record_error.as_deref());
-    Ok(())
+    Ok(if output.json {
+        install_report(
+            output,
+            session,
+            lock.as_ref(),
+            &outcome.installed,
+            "satisfied",
+        )
+    } else {
+        ExitCode::SUCCESS
+    })
+}
+
+fn install_report(
+    output: Output,
+    session: &Session,
+    lock: Option<&Lockfile>,
+    installed: &[(String, Version)],
+    lockfile: &str,
+) -> ExitCode {
+    let installed: BTreeSet<_> = installed.iter().map(|(id, _)| id.as_str()).collect();
+    let plugins: Vec<_> = lock
+        .into_iter()
+        .flat_map(|lock| {
+            lock.plugins.iter().map(|(id, plugin)| {
+                let mut entry =
+                    json!({ "scope": Scope::Project, "id": id, "version": plugin.version });
+                if lock.artifact(id, &session.host).is_none() {
+                    entry["status"] = json!("skipped");
+                    entry["reason"] = json!("no_build");
+                } else if installed.contains(id.as_str()) {
+                    entry["status"] = json!("installed");
+                } else {
+                    entry["status"] = json!("already_installed");
+                }
+                entry
+            })
+        })
+        .collect();
+    output.write(
+        plugins,
+        json!({ "lockfile": lockfile, "target": session.host.as_str() }),
+        None,
+    )
 }
 
 /// Warns about each locked version that the cached index marks yanked or
@@ -236,7 +326,7 @@ pub fn update(session: &Session, root: &Path, id: Option<&str>) -> ExitCode {
                 println!("this project has no registry plugins");
                 return ExitCode::SUCCESS;
             }
-            Err(failure) => return finish(Err(failure)),
+            Err(error) => return finish(Err(error.into())),
         },
         Some(id) => match project_dependencies(root) {
             Ok(project) if project.dependencies.contains_key(id) => {

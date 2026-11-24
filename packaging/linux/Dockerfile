@@ -86,6 +86,7 @@ COPY packaging/linux/record-codec-libraries.sh /tmp/record-codec-libraries.sh
 RUN program="$(find /opt/celesta/plugins/ffmpeg/bin -type f -name celesta-codec-ffmpeg)" \
   && sh /tmp/record-codec-libraries.sh "$program" /opt/celesta/plugins/ffmpeg/licenses libopus.so libvpx.so \
   && rm /tmp/record-codec-libraries.sh \
+  && chmod -R go-w /opt/celesta/plugins \
   && "$program" --check-license \
   && "$program" --check-build
 

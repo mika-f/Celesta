@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use celesta_composition::Rational;
 use celesta_gpu_renderer::GpuRenderError;
-use celesta_media::{AudioMixError, MediaError};
+use celesta_media::{AudioMixError, ComponentKind, ComponentRef, MediaError};
 use celesta_project::LoadError;
 use celesta_react_bridge::{PropsFileChoice, ReactBridgeError};
 use serde::Serialize;
@@ -15,7 +15,7 @@ use serde::Serialize;
 use crate::quality::QualityIssue;
 use crate::{
     AudioLoudness, CompositionInfo, EncoderPlan, ExportError, ExportProgress, ExportedFile,
-    OutputPlan, StillFormat, TrackInfo, UnavailableReason,
+    GraphicsInfo, OutputPlan, StillFormat, TrackInfo, UnavailableReason,
 };
 
 /// Whose options an error's hint names: `Celesta-export`'s flags or the MCP
@@ -42,6 +42,8 @@ pub struct Report {
     props_file_auto: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     composition: Option<Composition>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    graphics: Option<GraphicsInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     composition_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -257,6 +259,7 @@ pub fn build(
 ) -> (Report, bool) {
     let mut timing = Timing::new();
     let mut composition = None;
+    let mut graphics = None;
     let mut composition_id = None;
     let mut compositions = None;
     let mut files = Vec::new();
@@ -266,6 +269,7 @@ pub fn build(
     let result = export(&mut |event| {
         match &event {
             ExportProgress::Composition(info) => composition = Some(*info),
+            ExportProgress::Graphics(info) => graphics = Some(info.clone()),
             ExportProgress::ReactCompositions {
                 selected,
                 compositions: roots,
@@ -315,6 +319,7 @@ pub fn build(
         props_file_auto: props_file.as_ref().map(|choice| choice.auto),
         props_file: props_file.map(|choice| choice.path),
         composition: composition.map(composition_report),
+        graphics,
         outputs: Some(
             files
                 .into_iter()
@@ -389,8 +394,8 @@ pub struct Events {
 }
 
 impl Events {
-    pub fn event(&mut self, event: &ExportProgress) -> Event {
-        match event {
+    pub fn event(&mut self, event: &ExportProgress) -> Option<Event> {
+        Some(match event {
             ExportProgress::Composition(info) => {
                 self.frame_rate = Some(info.frame_rate);
                 Event::Composition {
@@ -405,6 +410,7 @@ impl Events {
                 compositions: compositions.clone(),
             },
             ExportProgress::Output(plan) => output_event(plan.clone()),
+            ExportProgress::Graphics(_) => return None,
             &ExportProgress::Rendering { frame, total } => Event::Rendering { frame, total },
             ExportProgress::MixingAudio => Event::MixingAudio,
             ExportProgress::Muxing => Event::Muxing,
@@ -427,7 +433,7 @@ impl Events {
             ExportProgress::Wrote(file) => Event::Wrote {
                 output: output(file.clone(), self.frame_rate),
             },
-        }
+        })
     }
 }
 
@@ -539,6 +545,7 @@ fn error_only(error: ErrorReport) -> Report {
         props_file: None,
         props_file_auto: None,
         composition: None,
+        graphics: None,
         composition_id: None,
         compositions: None,
         outputs: None,
@@ -614,6 +621,44 @@ fn output(file: ExportedFile, frame_rate: Option<Rational>) -> Output {
     }
 }
 
+/// Adds [`source_hint`]'s `--react` hint to `report`, an export of `source`
+/// on the command line run without `--react`.
+pub fn add_react_hint(report: &mut Report, source: &Path) {
+    if let Some(error) = &mut report.error
+        && let Some(hint) = react_entry_hint(error.code, source)
+    {
+        error.hint = Some(hint);
+    }
+}
+
+/// What to change to get past `error` in a command-line export of `source`:
+/// [`hint`], or without `react` (`--react`) for a React entry that failed to
+/// parse as a JSON project, `--react`.
+pub fn source_hint(error: &ExportError, source: &Path, react: bool) -> Option<Cow<'static, str>> {
+    let (code, hint) = classify(error, HintStyle::Cli, &mut Vec::new());
+    if react {
+        return hint;
+    }
+    react_entry_hint(code, source).or(hint)
+}
+
+fn react_entry_hint(code: &str, source: &Path) -> Option<Cow<'static, str>> {
+    (code == "project_json" && is_react_entry(source)).then_some(Cow::Borrowed(
+        "this looks like a React entry: add --react to read it as one",
+    ))
+}
+
+/// Whether `path` has the extension of a React entry rather than a JSON project.
+fn is_react_entry(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            ["tsx", "jsx", "ts", "js", "mts", "mjs"]
+                .iter()
+                .any(|react| extension.eq_ignore_ascii_case(react))
+        })
+}
+
 fn error_report(error: &ExportError, hints: HintStyle) -> ErrorReport {
     let mut issues = Vec::new();
     let (frame, failed_frames) = match error {
@@ -687,17 +732,13 @@ pub(crate) fn classify(
         ),
         // A muxer whose default codec no installed encoder writes.
         ExportError::ComponentUnavailable {
-            reason: UnavailableReason::NoDefaultEncoder { .. },
-            ..
+            component,
+            reason: UnavailableReason::NoDefaultEncoder { kind, codec },
         } => (
             "component_unavailable",
-            fixed(if cli {
-                "install a media plugin with an encoder for that codec, or write another format; \
-                 --list-components shows the installed components"
-            } else {
-                "install a media plugin with an encoder for that codec, or write another format; \
-                 list_components shows the installed components"
-            }),
+            Some(Cow::Owned(no_default_encoder_hint(
+                component, *kind, codec, cli,
+            ))),
         ),
         ExportError::ComponentUnavailable { .. }
         | ExportError::Codec {
@@ -745,6 +786,15 @@ pub(crate) fn classify(
             source: MediaError::Unsupported { .. },
             ..
         } => ("unsupported_media", None),
+        #[cfg(target_os = "linux")]
+        ExportError::Render(GpuRenderError::RequestAdapter(_)) => (
+            "render",
+            fixed(if cli {
+                "On headless Linux, install Mesa's software Vulkan driver (lavapipe), e.g. `sudo apt-get install mesa-vulkan-drivers` on Debian/Ubuntu, then retry with `--driver vulkan`. If you set VK_DRIVER_FILES or VK_ICD_FILENAMES, make sure it points to an installed Vulkan ICD."
+            } else {
+                "On headless Linux, install Mesa's software Vulkan driver (lavapipe), e.g. `sudo apt-get install mesa-vulkan-drivers` on Debian/Ubuntu. If you set VK_DRIVER_FILES or VK_ICD_FILENAMES, make sure it points to an installed Vulkan ICD."
+            }),
+        ),
         ExportError::Render(_) => ("render", None),
         ExportError::Audio(_) => ("audio", None),
         ExportError::React(ReactBridgeError::InvalidProperties(invalid)) => {
@@ -822,6 +872,125 @@ pub(crate) fn classify(
     }
 }
 
+/// Where a CLI user who points at a format the standard FFmpeg plugin writes
+/// gets the plugins for it: bundled with an installed Celesta, staged from a
+/// source checkout with `scripts/plugins/build.mts`, or from the registry.
+fn standard_format_install_hint(path: &Path) -> Option<&'static str> {
+    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+    Some(match extension.as_str() {
+        "mov" | "webm" => {
+            "MOV (ProRes/PCM) and WebM (VP9/Opus) are written by the standard ffmpeg plugin, \
+             which an installed Celesta bundles; in a source checkout, stage it with \
+             `node scripts/plugins/build.mts plugins/ffmpeg --out <dir>` and pass \
+             --plugin-dir <dir>; a codec from the registry installs with \
+             `celesta plugin install --global <id>`"
+        }
+        "mp4" | "m4v" => {
+            "MP4 is written by the standard ffmpeg plugin, and on Linux its H.264 video by the \
+             optional ffmpeg-x264 plugin (a release download, \
+             Celesta-plugin-ffmpeg-x264-<version>-<os>-<arch>.zip, extracted into your plugin \
+             folder and allowed with --allow-plugin ffmpeg-x264); in a source checkout, stage both with `node scripts/plugins/build.mts \
+             plugins/ffmpeg plugins/ffmpeg-x264 --out <dir>` and pass --plugin-dir <dir>; a \
+             codec from the registry installs with `celesta plugin install --global <id>`"
+        }
+        _ => return None,
+    })
+}
+
+/// The name of codec string `codec` in a hint, as the media plugins that
+/// come with Celesta write it.
+fn codec_name(codec: &str) -> Option<&'static str> {
+    Some(match codec {
+        "avc1" | "avc3" => "H.264",
+        "ap4h" | "apch" => "ProRes",
+        "vp09" => "VP9",
+        "mp4a" => "AAC",
+        "opus" => "Opus",
+        "lpcm" => "PCM",
+        _ => return None,
+    })
+}
+
+/// The formats the media plugins that come with Celesta write by default,
+/// as `(muxer id, extension, what it holds)`.
+const STANDARD_FORMATS: [(&str, &str, &str); 3] = [
+    ("mp4", ".mp4", "H.264"),
+    ("mov", ".mov", "ProRes"),
+    ("webm", ".webm", "VP9"),
+];
+
+/// How to get an encoder for `muxer`'s default `codec`: H.264 is the
+/// optional `ffmpeg-x264` plugin, any other codec the standard FFmpeg
+/// plugin's build; a plugin comes from the registry (`celesta plugin install
+/// --global`) or from a local folder (`--plugin-dir`); or another format.
+fn no_default_encoder_hint(
+    muxer: &ComponentRef,
+    kind: ComponentKind,
+    codec: &str,
+    cli: bool,
+) -> String {
+    let named = codec_name(codec).unwrap_or(codec);
+    let kind = match kind {
+        ComponentKind::AudioEncoder => "audio",
+        _ => "video",
+    };
+    let other_formats = || {
+        let others: Vec<String> = STANDARD_FORMATS
+            .iter()
+            .filter(|(id, _, _)| *id != muxer.component)
+            .map(|(_, extension, holds)| format!("{extension} ({holds})"))
+            .collect();
+        others.join(" or ")
+    };
+    let install = if matches!(codec, "avc1" | "avc3") {
+        if cli {
+            "H.264 needs an encoder plugin; on Linux that is the optional ffmpeg-x264 plugin: \
+             extract its release download (Celesta-plugin-ffmpeg-x264-<version>-<os>-<arch>.zip) \
+             into your plugin folder and allow it with --allow-plugin ffmpeg-x264, or in a \
+             source checkout stage it with \
+             `node scripts/plugins/build.mts plugins/ffmpeg-x264 --out <dir>` and pass \
+             --plugin-dir <dir>; a codec from the registry installs with \
+             `celesta plugin install --global <id>`"
+                .to_owned()
+        } else {
+            "H.264 needs an encoder plugin; on Linux that is the optional ffmpeg-x264 plugin: \
+             extract its release download into your plugin folder and allow it in Celesta's \
+             Plugins tab"
+                .to_owned()
+        }
+    } else if cli {
+        format!(
+            "{named} {kind} needs an encoder plugin: a codec from the registry installs with \
+             `celesta plugin install --global <id>`, a local plugin folder is passed with \
+             --plugin-dir <dir>; the standard ffmpeg plugin writes it unless its FFmpeg build \
+             lacks that encoder"
+        )
+    } else {
+        format!(
+            "{named} {kind} needs an encoder plugin; the standard ffmpeg plugin writes it \
+             unless its FFmpeg build lacks that encoder"
+        )
+    };
+    let listing = if cli {
+        "--list-components --check shows what works"
+    } else {
+        "list_components shows what is installed"
+    };
+    let pinned = if cli {
+        "when --muxer or a preset names one"
+    } else {
+        "when muxer or a preset names one"
+    };
+    let others = other_formats();
+    if others.is_empty() {
+        format!("{install}; {listing}")
+    } else {
+        format!(
+            "{install}; or write {others} instead (with a muxer that writes it, {pinned}); {listing}"
+        )
+    }
+}
+
 fn fixed(hint: &'static str) -> Option<Cow<'static, str>> {
     Some(Cow::Borrowed(hint))
 }
@@ -834,6 +1003,31 @@ fn unsupported_output_hint(path: &Path, extensions: &[String], cli: bool) -> Cow
         .iter()
         .map(|extension| format!(".{extension}"))
         .collect();
+    let still = StillFormat::from_extension(path).is_some();
+    // Stills are written by built-in components, so selecting frames works
+    // whatever media plugins are installed.
+    if still {
+        return Cow::Borrowed(if cli {
+            "PNG, JPEG and WebP outputs are still images: select frames with --frame, as in \
+             --frame 0 (or --frame 0,30,60, or --every 30)"
+        } else {
+            "PNG, JPEG and WebP outputs are still images: render them with render_frames"
+        });
+    }
+    if cli && let Some(install) = standard_format_install_hint(path) {
+        let only_gif = extensions
+            .iter()
+            .all(|extension| extension.eq_ignore_ascii_case(celesta_media_image::GIF));
+        return Cow::Owned(match dotted.as_slice() {
+            [] => install.to_owned(),
+            _ if only_gif => format!("{install}; or write an animated GIF to a .gif path"),
+            [one] => format!("{install}; or write video to a {one} path"),
+            [rest @ .., last] => format!(
+                "{install}; or write video to a {} or {last} path",
+                rest.join(", ")
+            ),
+        });
+    }
     let Some((last, rest)) = dotted.split_last() else {
         return Cow::Borrowed(NO_DECODER_HINT);
     };
@@ -852,16 +1046,10 @@ fn unsupported_output_hint(path: &Path, extensions: &[String], cli: bool) -> Cow
             "write an animated GIF to a {listed} path; for other formats, {NO_DECODER_HINT}"
         ));
     }
-    let still = StillFormat::from_extension(path).is_some();
-    Cow::Owned(match (cli, still) {
-        (true, false) => format!("write video to a {listed} path"),
-        (true, true) => format!(
-            "write video to a {listed} path, or select frames with --frame or --every for PNG, JPEG or WebP stills"
-        ),
-        (false, false) => format!("write video to a {listed} path with export_video"),
-        (false, true) => format!(
-            "write video to a {listed} path with export_video, or render PNG, JPEG or WebP stills with render_frames"
-        ),
+    Cow::Owned(if cli {
+        format!("write video to a {listed} path")
+    } else {
+        format!("write video to a {listed} path with export_video")
     })
 }
 
@@ -921,6 +1109,25 @@ mod tests {
     ) -> serde_json::Value {
         serde_json::to_value(build(Path::new("/tmp/film.tsx"), None, HintStyle::Cli, export).0)
             .unwrap()
+    }
+
+    #[test]
+    fn report_names_graphics_only_when_a_renderer_was_selected() {
+        let graphics = ExportProgress::Graphics(GraphicsInfo {
+            backend: "vulkan",
+            adapter: "llvmpipe".into(),
+            software: true,
+        });
+        let value = report(|progress| {
+            progress(graphics.clone());
+            Ok(())
+        });
+        assert_eq!(
+            value["graphics"],
+            serde_json::json!({"backend": "vulkan", "adapter": "llvmpipe", "software": true})
+        );
+        assert!(report(|_| Ok(())).get("graphics").is_none());
+        assert!(Events::default().event(&graphics).is_none());
     }
 
     #[test]
@@ -1211,7 +1418,7 @@ mod tests {
             [
                 "set overwrite to replace it, or write to another path",
                 "write video to a .mov, .mp4 or .webm path with export_video",
-                "write video to a .mp4 path with export_video, or render PNG, JPEG or WebP stills with render_frames",
+                "PNG, JPEG and WebP outputs are still images: render them with render_frames",
                 "choose start/end inside the composition (composition.duration seconds)",
             ]
         );
@@ -1409,37 +1616,40 @@ mod tests {
     }
 
     #[test]
-    fn a_still_extension_keeps_the_frame_hint() {
-        let unsupported = |path: &str| ExportError::UnsupportedOutput {
+    fn a_still_extension_hints_at_selecting_frames() {
+        let unsupported = |path: &str, extensions: &[&str]| ExportError::UnsupportedOutput {
             path: PathBuf::from(path),
-            extensions: vec!["mp4".into()],
+            extensions: extensions
+                .iter()
+                .map(|&extension| extension.into())
+                .collect(),
         };
-        for path in ["out.png", "out.JPG", "out.jpeg", "out.webp"] {
-            let (code, hint) = classified(&unsupported(path), HintStyle::Cli);
-            assert_eq!(code, "unsupported_output");
-            let hint = hint.unwrap();
-            assert!(hint.contains(".mp4") && hint.contains("--frame"), "{hint}");
+        // Stills need no media plugin, so the hint is the same whatever muxers
+        // are installed.
+        for extensions in [&["mp4"][..], &["gif"], &[]] {
+            for path in ["out.png", "out.JPG", "out.jpeg", "out.webp"] {
+                let (code, hint) = classified(&unsupported(path, extensions), HintStyle::Cli);
+                assert_eq!(code, "unsupported_output");
+                let hint = hint.unwrap();
+                assert!(hint.contains("--frame 0"), "{hint}");
+                assert!(!hint.contains("media plugin"), "{hint}");
+                let mcp = classified(&unsupported(path, extensions), HintStyle::Mcp).1;
+                assert!(mcp.unwrap().contains("render_frames"));
+            }
         }
-        let (code, hint) = classified(&unsupported("out.mkv"), HintStyle::Cli);
+        let (code, hint) = classified(&unsupported("out.mkv", &["mp4"]), HintStyle::Cli);
         assert_eq!(code, "unsupported_output");
-        let hint = hint.unwrap();
-        assert!(hint.contains(".mp4") && !hint.contains("--frame"), "{hint}");
-        assert_eq!(hint, "write video to a .mp4 path");
-
-        let two = ExportError::UnsupportedOutput {
-            path: PathBuf::from("out.mkv"),
-            extensions: vec!["ivf".into(), "mp4".into()],
-        };
+        assert_eq!(hint.unwrap(), "write video to a .mp4 path");
         assert_eq!(
-            classified(&two, HintStyle::Cli).1.unwrap(),
+            classified(&unsupported("out.mkv", &["ivf", "mp4"]), HintStyle::Cli)
+                .1
+                .unwrap(),
             "write video to a .ivf or .mp4 path"
         );
         // With only the built-in GIF, the media plugin is what is missing.
-        let gif = ExportError::UnsupportedOutput {
-            path: PathBuf::from("out.mp4"),
-            extensions: vec!["gif".into()],
-        };
-        let hint = classified(&gif, HintStyle::Cli).1.unwrap();
+        let hint = classified(&unsupported("out.mkv", &["gif"]), HintStyle::Cli)
+            .1
+            .unwrap();
         assert!(
             hint.starts_with(
                 "write an animated GIF to a .gif path; for other formats, install a media plugin"
@@ -1447,14 +1657,60 @@ mod tests {
             "{hint}"
         );
         // With no muxer at all, the media plugin is what is missing.
-        let none = ExportError::UnsupportedOutput {
-            path: PathBuf::from("out.png"),
-            extensions: Vec::new(),
-        };
         assert_eq!(
-            classified(&none, HintStyle::Cli),
+            classified(&unsupported("out.mkv", &[]), HintStyle::Cli),
             ("unsupported_output", Some(NO_DECODER_HINT.to_owned()))
         );
+    }
+
+    #[test]
+    fn a_standard_format_without_its_plugin_names_where_to_get_it() {
+        let unsupported = |path: &str, extensions: &[&str]| ExportError::UnsupportedOutput {
+            path: PathBuf::from(path),
+            extensions: extensions
+                .iter()
+                .map(|&extension| extension.into())
+                .collect(),
+        };
+        for path in ["out.mov", "out.webm", "out.WEBM"] {
+            let hint = classified(&unsupported(path, &["gif"]), HintStyle::Cli)
+                .1
+                .unwrap();
+            assert!(hint.contains("standard ffmpeg plugin"), "{hint}");
+            assert!(hint.contains("build.mts plugins/ffmpeg --out"), "{hint}");
+            assert!(hint.contains("--plugin-dir"), "{hint}");
+            assert!(hint.contains("celesta plugin install --global"), "{hint}");
+            assert!(!hint.contains("x264"), "{hint}");
+            assert!(
+                hint.ends_with("or write an animated GIF to a .gif path"),
+                "{hint}"
+            );
+        }
+        for path in ["out.mp4", "out.m4v"] {
+            let hint = classified(&unsupported(path, &[]), HintStyle::Cli)
+                .1
+                .unwrap();
+            assert!(hint.contains("ffmpeg-x264"), "{hint}");
+            assert!(
+                hint.contains("build.mts plugins/ffmpeg plugins/ffmpeg-x264 --out"),
+                "{hint}"
+            );
+            assert!(hint.contains("celesta plugin install --global"), "{hint}");
+            assert!(!hint.contains(".gif"), "{hint}");
+        }
+        // Installed muxers other than GIF stay in the hint.
+        let hint = classified(&unsupported("out.mp4", &["gif", "webm"]), HintStyle::Cli)
+            .1
+            .unwrap();
+        assert!(
+            hint.ends_with("; or write video to a .gif or .webm path"),
+            "{hint}"
+        );
+        // The MCP server has no --plugin-dir; its hint stays the generic one.
+        let mcp = classified(&unsupported("out.mov", &["gif"]), HintStyle::Mcp)
+            .1
+            .unwrap();
+        assert!(!mcp.contains("--plugin-dir"), "{mcp}");
     }
 
     #[test]
@@ -1475,26 +1731,77 @@ mod tests {
 
     #[test]
     fn a_muxer_without_a_default_encoder_hints_at_installing_one() {
-        use celesta_media::ComponentKind;
-        for kind in [ComponentKind::VideoEncoder, ComponentKind::AudioEncoder] {
-            let error = ExportError::ComponentUnavailable {
-                component: "some-plugin/mp4".parse().unwrap(),
-                reason: UnavailableReason::NoDefaultEncoder {
-                    kind,
-                    codec: "avc1".to_owned(),
-                },
-            };
-            for (style, listing) in [
-                (HintStyle::Cli, "--list-components"),
-                (HintStyle::Mcp, "list_components"),
-            ] {
-                let (code, hint) = classified(&error, style);
-                assert_eq!(code, "component_unavailable");
-                let hint = hint.unwrap();
-                assert!(hint.contains("install a media plugin"), "{hint}");
-                assert!(hint.contains(listing), "{hint}");
-            }
+        let error = |muxer: &str, kind, codec: &str| ExportError::ComponentUnavailable {
+            component: muxer.parse().unwrap(),
+            reason: UnavailableReason::NoDefaultEncoder {
+                kind,
+                codec: codec.to_owned(),
+            },
+        };
+        // MP4 without an H.264 encoder: ffmpeg-x264, from its release
+        // download or a local build, or another format.
+        let mp4 = error("ffmpeg/mp4", ComponentKind::VideoEncoder, "avc1");
+        let (code, hint) = classified(&mp4, HintStyle::Cli);
+        assert_eq!(code, "component_unavailable");
+        let hint = hint.unwrap();
+        for part in [
+            "ffmpeg-x264",
+            "Celesta-plugin-ffmpeg-x264-",
+            "build.mts plugins/ffmpeg-x264 --out <dir>",
+            "--plugin-dir <dir>",
+            "celesta plugin install --global <id>",
+            "or write .mov (ProRes) or .webm (VP9) instead (with a muxer",
+            "--list-components",
+        ] {
+            assert!(hint.contains(part), "{part}: {hint}");
         }
+        let mcp = classified(&mp4, HintStyle::Mcp).1.unwrap();
+        assert!(mcp.contains("ffmpeg-x264") && mcp.contains("list_components"));
+        assert!(!mcp.contains("--plugin-dir"), "{mcp}");
+
+        // Any other codec names itself and its kind, and never x264.
+        let webm = error("ffmpeg/webm", ComponentKind::AudioEncoder, "opus");
+        let hint = classified(&webm, HintStyle::Cli).1.unwrap();
+        for part in [
+            "Opus audio needs an encoder plugin",
+            "celesta plugin install --global <id>",
+            "--plugin-dir <dir>",
+            "or write .mp4 (H.264) or .mov (ProRes) instead (with a muxer",
+        ] {
+            assert!(hint.contains(part), "{part}: {hint}");
+        }
+        assert!(!hint.contains("x264"), "{hint}");
+        let unknown = error("acme/mkv", ComponentKind::VideoEncoder, "av01");
+        let hint = classified(&unknown, HintStyle::Cli).1.unwrap();
+        assert!(
+            hint.starts_with("av01 video needs an encoder plugin"),
+            "{hint}"
+        );
+        assert!(hint.contains("or write .mp4 (H.264) or .mov (ProRes) or .webm (VP9)"));
+    }
+
+    #[test]
+    fn a_react_entry_read_as_a_project_hints_at_react() {
+        let error = ExportError::Project(LoadError::Json(
+            serde_json::from_str::<serde_json::Value>("import x").unwrap_err(),
+        ));
+        assert_eq!(classified(&error, HintStyle::Cli), ("project_json", None));
+        for source in ["film.tsx", "film.JSX", "film.ts", "film.mjs"] {
+            let hint = source_hint(&error, Path::new(source), false).unwrap();
+            assert!(hint.contains("add --react"), "{hint}");
+        }
+        assert_eq!(
+            source_hint(&error, Path::new("film.celesta.json"), false),
+            None
+        );
+        // With --react, a project_json error is its --project file's.
+        assert_eq!(source_hint(&error, Path::new("film.tsx"), true), None);
+        let (mut report, _) = build(Path::new("film.tsx"), None, HintStyle::Cli, |_| Err(error));
+        assert_eq!(report.error.as_ref().unwrap().hint, None);
+        add_react_hint(&mut report, Path::new("film.tsx"));
+        let json = serde_json::to_value(&report).unwrap();
+        assert_eq!(json["error"]["code"], "project_json");
+        assert!(json["error"]["hint"].as_str().unwrap().contains("--react"));
     }
 
     #[test]

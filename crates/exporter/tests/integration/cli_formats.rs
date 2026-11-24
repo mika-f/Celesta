@@ -50,6 +50,33 @@ fn json_reports_a_png_path_without_frame_selection_as_unsupported_output() {
     assert!(!output.exists());
 }
 
+#[test]
+fn json_hints_at_react_only_for_an_entry_read_without_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let entry = dir.path().join("film.tsx");
+    std::fs::write(&entry, "export default function Film() {}\n").unwrap();
+    let output = dir.path().join("out.mp4");
+    let report = failure(&entry, &[output.to_str().unwrap()]);
+    assert_eq!(report["error"]["code"], "project_json");
+    let hint = report["error"]["hint"].as_str().unwrap();
+    assert!(hint.contains("add --react"), "{hint}");
+
+    // With --react, a project_json error is the --project file's.
+    let project = dir.path().join("broken.celesta.json");
+    std::fs::write(&project, "{").unwrap();
+    let report = failure(
+        &entry,
+        &[
+            output.to_str().unwrap(),
+            "--react",
+            "--project",
+            project.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(report["error"]["code"], "project_json");
+    assert!(report["error"]["hint"].is_null(), "{report}");
+}
+
 /// Runs the exporter with `args` and the test codec as its only media
 /// plugin (an empty home, so no user plugin folder or settings), and
 /// returns its exit status and stdout.
@@ -294,13 +321,20 @@ fn a_plain_error_prints_its_hint() {
         "{stderr}"
     );
 
-    // With no media plugin at all, the built-in GIF, and how to install one.
+    // With no media plugin at all, where MP4's plugins come from, and the
+    // built-in GIF.
     let empty = tempfile::tempdir().unwrap();
     let stderr = plain_failure(empty.path(), &[output.to_str().unwrap()]);
     assert!(
-        stderr.contains(
-            "hint: write an animated GIF to a .gif path; for other formats, install a media plugin"
-        ),
+        stderr.contains("hint: MP4 is written by the standard ffmpeg plugin"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("build.mts plugins/ffmpeg plugins/ffmpeg-x264 --out <dir>"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("or write an animated GIF to a .gif path"),
         "{stderr}"
     );
     assert!(!output.exists());

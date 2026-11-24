@@ -27,6 +27,26 @@ stands for its path.
 
 ## Commands
 
+On Linux with `celesta` on PATH, use the unified CLI; `celesta export` accepts the same arguments as
+`celesta-exporter`, and `celesta info` is the standalone `--info` mode:
+
+```sh
+celesta info --react scene.tsx --json
+celesta export --react scene.tsx --frame 0 frame.png
+celesta export --react scene.tsx out.mov
+```
+
+With the Linux Docker image, follow the [entry point override instructions](https://github.com/mika-f/Celesta/blob/main/packaging/linux/README.md#unified-cli) to run these subcommands.
+
+For a headless preflight, run `celesta doctor --json` for Node.js, the staged
+runtime, and graphics, or pass a source and output to exercise the plugins,
+including its lock: `celesta doctor --json --react scene.tsx --frame 0 out.png`.
+Use `--from` and `--to` to limit a video probe; otherwise it renders the whole
+composition. The command never publishes the requested file and exits nonzero
+on failure. Inspect `schemaVersion`, `status`, and the individual `checks` codes.
+
+The standalone command still works:
+
 ```sh
 Celesta-export [options] project.celesta.json out.mp4
 Celesta-export [options] --react scene.tsx out.mp4
@@ -581,6 +601,7 @@ frame numbers, the warnings, and on failure an error code:
 ```json
 {"status":"ok","source":"/Users/me/my-video/scene.tsx",
  "composition":{"width":1920,"height":1080,"fps":30.0,"frames":150,"duration":5.0},
+ "graphics":{"backend":"metal","adapter":"Apple M2","software":false},
  "outputs":[{"type":"frame","path":"/tmp/celesta-check-000000.png","frame":0,"time":0.0},
             {"type":"frame","path":"/tmp/celesta-check-000090.png","frame":90,"time":3.0}],
  "warnings":["font family \"Noto Sans JP\" (weight 400) is not installed or loaded; text layer \"root.0\" uses a fallback font"],
@@ -599,6 +620,9 @@ props file, the result also has `propsFile` (its path) and `propsFileAuto`
 
 - `composition.frames` is the frame count. Frames are zero-based, so the
   last one is `frames - 1` (an empty composition has none). Times are in seconds, rounded to milliseconds.
+- `graphics` identifies the renderer actually selected: `backend`, the
+  `adapter` name, and a `software` boolean. It is absent if no renderer
+  initialized, for example with `--info`.
 - `outputs` lists the files that exist after the export, with absolute
   paths. Read these paths; do not work out file names yourself. Each entry
   has a `type`:
@@ -731,6 +755,7 @@ Without `--json`, an interactive terminal gets a full-screen dashboard.
 `--no-ui` makes the output plain text:
 
 ```text
+graphics: metal (hardware) · Apple M2
 rendering frame 300/1530  58.5 fps  elapsed 00:00:05  eta 00:00:21
 mixing audio
 muxing
@@ -769,6 +794,11 @@ and renders on the CPU, roughly 10–60 fps at 1080p on 4 cores: check a
 single PNG frame before a full export. Minimal containers often have no
 fonts; install some (`fonts-dejavu-core`, `fonts-noto-cjk` for Japanese) or
 load font files with `<Font>`.
+
+If the exporter reports “No suitable graphics adapter found,” follow its
+Mesa/lavapipe hint and retry with `--driver vulkan`. If you set
+`VK_DRIVER_FILES` or `VK_ICD_FILENAMES`, check that it points to an
+installed driver manifest.
 
 The Linux container image does all of this:
 

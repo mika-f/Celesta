@@ -1,6 +1,6 @@
 ---
 name: celesta
-description: Write, edit, check, and export Celesta videos. Covers React compositions (.tsx/.jsx files that import @celesta.studio/react or another @celesta.studio/* package), .celesta.json project timelines, starting a project (--init), animation, shapes and diagrams, text and fonts (measuring, fitting, language, Japanese line breaking), syntax-highlighted code, images/video/audio, character dialogue with subtitles, lip sync, and blinking, SRT/WebVTT subtitle files in and out (image or PSD portraits, custom subtitle bands), project properties, registered components, seamless loops for Shorts and TikTok, PNG frame and contact-sheet checks, and MP4 and animated GIF export with the Celesta command-line exporter. Use whenever a file imports @celesta.studio/*, a *.celesta.json file is involved, or the user asks to make, change, preview, debug, or render a video with Celesta, even if they only say "the video" or "the scene".
+description: Write, edit, check, and export Celesta videos. Covers React compositions (.tsx/.jsx files that import @celesta.studio/react or another @celesta.studio/* package), .celesta.json project timelines, starting a project (celesta init), animation, shapes and diagrams, text and fonts (measuring, fitting, language, Japanese line breaking), syntax-highlighted code, images/video/audio, character dialogue with subtitles, lip sync, and blinking, SRT/WebVTT subtitle files in and out (image or PSD portraits, custom subtitle bands), project properties, registered components, seamless loops for Shorts and TikTok, PNG frame and contact-sheet checks, and MP4 and animated GIF export with the Celesta command-line exporter. Use whenever a file imports @celesta.studio/*, a *.celesta.json file is involved, or the user asks to make, change, preview, debug, or render a video with Celesta, even if they only say "the video" or "the scene".
 ---
 
 # Celesta
@@ -24,7 +24,7 @@ in the app.
 
 When the user already has a file, keep working in that format. Default to
 React for new work: it is more expressive and easier to verify. For a new
-React project, run `--init` first ([setup.md](references/setup.md#create-a-react-project)).
+React project, run `celesta init` first ([setup.md](references/setup.md#create-a-react-project)).
 
 ## Minimal React composition
 
@@ -136,9 +136,10 @@ produces a video that differs between preview and export.
    file, any `.celesta.json`, the media folder, and open review comments
    in `celesta-comments/` ([review.md](references/review.md)). Note the fps and
    dimensions before computing frame numbers. For a new React project,
-   `Celesta --init <folder>` creates `film.tsx`, `package.json`, and the
+   `celesta init <folder>` creates `film.tsx`, `package.json`, and the
    TypeScript setup; for a slideshow, ranking, or dialogue video, add
-   `--template <name>` and edit its `props.json` and data file instead.
+   `--template <name>` (see `celesta templates`) and edit its `props.json`
+   and data file instead.
 2. **Rough cut first, for a film of several scenes.** Before building any
    scene, write the `defineScenes` list: each scene's `name`,
    `durationInFrames`, a one-sentence `desc`, and `status: 'rough'`, passed
@@ -274,8 +275,8 @@ Load only the one you need; each is self-contained.
 
 | Task | Read |
 | --- | --- |
-| Find `Celesta`/`Celesta-export`, start a project (`--init`), add npm packages, type-check, how the user previews | [setup.md](references/setup.md) |
-| Start from a ready-made video (`--init --template slideshow\|ranking\|dialogue`, `--list-templates`), then edit its `props.json` and data file | [setup.md](references/setup.md#create-a-react-project) |
+| Find Celesta tools, start a project (`celesta init`), add npm packages, type-check, how the user previews | [setup.md](references/setup.md) |
+| List templates (`celesta templates`) or start from a ready-made video (`celesta init <folder> --template slideshow\|ranking\|dialogue`), then edit its `props.json` and data file | [setup.md](references/setup.md#create-a-react-project) |
 | Entry file and `prepare()`, layer props (incl. effects, color filters: `brightness`, `saturation`, `tint`, `vignette`, …, stylize effects: `pixelate`, `halftone`, `wave`, `noise`, `scanlines`, `zoomBlur`, …, and `chromaKey` for green screens), `Rect`/gradients, `Path`/`Line`/`Polyline`, `Circle`/`Ellipse`/`Arrow`, `Group` clip, `PatternBackground` (dots, grid, stripes), `Panel` (cards with padding), `Badge` (labels and chips sized to their text), `Callout` (notes pointing at a target), `Counter`/`StatCard`/`BarChart`/`Ranking` (counting numbers, stat cards, bar charts), `Image`, `Video`, `MediaFrame` (framed images and videos), `Audio`, `Font`/`Assets`, layout helpers (`Center`, `SafeArea`, `Stack`, `Grid`, `Fit`), vertical video and platform UI safe areas, `preloadMedia`, audio spectrum and loudness (`loadAudioSpectrum`, `useAudioSpectrum`), audio keyframes and `frameKeyframes`, debug guides | [react-core.md](references/react-core.md) |
 | Frame hooks, `interpolate`, `interpolateColor`, `Easings`, `spring`, `progress`, `keyframes` (keyed values with per-key easing, holds, drift during holds, cuts), `Easings.whip`, `Sequence`, `Series`, `Scenes`/`useScene`, `SceneBoundary`, `<Composition chapters>`/`listChapters`, `FrameChrome`, `TransitionSeries`, `Stagger`, `Motion`, `Transition`, `useBeat`, `useCue`, `Camera`, timecodes | [animation.md](references/animation.md) |
 | `Text`, `TextStyle`, shorthand props and `Theme`, palettes (`definePalettes`), fonts and fallback, font stacks (和欧混植), text language (`lang`), emoji, line breaking, `TextReveal`, `TypewriterText`, `useTypewriter`, `useCountUp`, `useTextMetrics`/`measureText`, `TextBox`/`useFitText`/`fitText`, `TitleCard`, `LowerThird` | [text.md](references/text.md) |

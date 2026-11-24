@@ -241,7 +241,7 @@ impl Exporter {
         }
 
         let frame_rate = project.settings.frame_rate;
-        let mut renderer = self.export_renderer(asset_root, frame_rate, cancellation)?;
+        let mut renderer = self.export_renderer(asset_root, frame_rate, cancellation, progress)?;
         let file = staged.insert(stage_beside(output_path)?);
         open_video_output(
             session,

@@ -37,7 +37,28 @@ Choose **Export…** at the bottom of the page, or press Enter on the page, to p
 
 ## From the command line
 
-The app includes a command-line exporter. Open a terminal in the project folder containing `first-scene.tsx`. Select your platform:
+On headless Linux with `celesta` on PATH, open a terminal in the project folder containing `first-scene.tsx` and use:
+
+```sh title="Inspect and export a React composition"
+celesta info --react first-scene.tsx --json
+celesta export --react first-scene.tsx --frame 0 frame.png
+celesta export --react first-scene.tsx output.mov
+```
+
+With the Linux Docker image, follow the [entry point override instructions](https://github.com/mika-f/Celesta/blob/main/packaging/linux/README.md#unified-cli) to run these subcommands.
+
+`celesta info` reports size, frame rate, duration, and React compositions without rendering. `celesta export` takes the same arguments as the standalone exporter, including `--list-components --check`. `celesta-exporter` and the Docker image's default entry point still work with their original arguments.
+
+Before export, run `celesta doctor --json` to check Node.js, the staged React runtime, and the graphics adapter. To test a specific source and output, supply both:
+
+```sh title="Check whether a headless worker can render"
+celesta doctor --json --react first-scene.tsx --frame 0 frame.png
+celesta doctor --json --react first-scene.tsx --from 0 --to 1 output.mov
+```
+
+The source check runs the requested render through its actual media components and honors the project's `celesta.lock`. It discards temporary output instead of publishing or replacing the intended file. A video probe tests the whole composition by default; pass a range to limit the work. A JSON project does not require Node.js. JSON mode writes one report with `schemaVersion: 1`, a top-level `status`, and `checks.node`, `checks.graphics`, and `checks.output`. Check statuses are `ok`, `error`, and `skipped`; errors have a machine-readable `code`. The command exits nonzero on failure.
+
+The app also includes the standalone command-line exporter. Select your platform:
 
 ::::tabs[Exporter platform]{default="macOS"}
 :::tab[macOS]
@@ -538,7 +559,11 @@ For scripts and AI agents, add `--json`. The exporter then prints no progress, o
 
 Warnings that scripts may want to act on also appear in `"codedWarnings"`, each with a stable `"code"` and its `"message"` (the key is absent when there are none). `nondeterministic_render` means the composition called `Math.random()`, `Date.now()`, or another clock while rendering (see [Animation](/en/docs/animation/)). `rough_scenes` means the exported span holds scenes of a rough cut (`status: 'rough'` in `<Composition chapters>`, see [Scenes, cues & beats](/en/docs/motion-toolkit/)), which are in the video as placeholder cards. Add `--final` to refuse them instead: the export then writes nothing and fails with the error code `rough_scenes`. The MCP `export_video` tool and `@celesta.studio/exporter` take `final` and report `codedWarnings` too.
 
+When the exporter initializes a renderer, human output includes a `graphics:` line with the actual backend, adapter name, and whether it's software or hardware. The final `--json` result includes the same information as `graphics`, for example `{"backend":"vulkan","adapter":"llvmpipe","software":true}`. Commands that don't initialize a renderer, such as `--info`, omit it.
+
 Using a source build? The [developer instructions](/en/docs/build-from-source/) include the equivalent Cargo command.
+
+Use `celesta-exporter --help` for command-line rendering options (`Celesta-export --help` in the desktop packages). The `celesta-react-render` helper evaluates React compositions for Celesta, and `celesta-mcp` serves MCP clients over standard input and output. Their `--help` and `--version` flags do not start either protocol. For the React helper, these flags are available only through the npm package's `celesta-react-render` wrapper, not the internal `dist/cli.js` that the desktop apps launch directly.
 
 Time values accept seconds, `MM:SS.mmm`, or `HH:MM:SS.mmm`. The selected span becomes a new video starting at its own 00:00.
 
@@ -549,6 +574,8 @@ On Linux, use Vulkan with --driver vulkan. For machines without a GPU, such as C
 ```sh title="Install software Vulkan"
 sudo apt-get install -y mesa-vulkan-drivers
 ```
+
+If the exporter reports “No suitable graphics adapter found,” its hint points to Mesa/lavapipe. If you set `VK_DRIVER_FILES` or `VK_ICD_FILENAMES`, make sure it points to an installed Vulkan driver manifest.
 
 Software rendering is much slower than a GPU: with 4 CPU cores, 1080p compositions render at roughly 10 to 60 frames per second, depending on the scene. Check a single frame as a PNG before exporting the whole video. From the repository root:
 

@@ -36,7 +36,28 @@ MP4 を選ばなかった理由と使えるようにする方法が **Preset** �
 
 ## コマンドラインから
 
-アプリにはコマンドライン用の書き出しツールも含まれています。`first-scene.tsx` があるプロジェクトフォルダでターミナルを開き、OS に合ったコマンドを使ってください。
+ディスプレイのない Linux で `celesta` に PATH が通っている場合は、`first-scene.tsx` があるプロジェクトフォルダで次のコマンドを実行します。
+
+```sh title="React コンポジションの確認と書き出し"
+celesta info --react first-scene.tsx --json
+celesta export --react first-scene.tsx --frame 0 frame.png
+celesta export --react first-scene.tsx output.mov
+```
+
+Linux の Docker イメージを使う場合は、[エントリーポイントを切り替える手順](https://github.com/mika-f/Celesta/blob/main/packaging/linux/README.md#unified-cli)に従って、これらのサブコマンドを実行します。
+
+`celesta info` は描画せずにサイズ、フレームレート、長さ、React コンポジションを表示します。`celesta export` には `--list-components --check` を含め、従来の書き出しツールと同じ引数を渡せます。`celesta-exporter` と Docker イメージのデフォルトのエントリーポイントも、従来の引数のまま使えます。
+
+書き出す前に `celesta doctor --json` を実行すると、Node.js、配置済みの React ランタイム、グラフィックスアダプターを確認できます。特定のソースと出力を確認するには、両方を指定します。
+
+```sh title="ディスプレイのない環境で描画できるか確認"
+celesta doctor --json --react first-scene.tsx --frame 0 frame.png
+celesta doctor --json --react first-scene.tsx --from 0 --to 1 output.mov
+```
+
+ソースを指定すると、プロジェクトの `celesta.lock` に従って、実際に使用するメディアコンポーネントで描画します。一時出力は破棄され、指定した出力ファイルは作成も上書きもしません。動画ではコンポジション全体を確認するため、必要に応じて時間範囲を指定してください。JSON プロジェクトには Node.js は不要です。JSON モードでは `schemaVersion: 1`、全体の `status`、`checks.node`、`checks.graphics`、`checks.output` を含むレポートを1件出力します。各チェックの状態は `ok`、`error`、`skipped` のいずれかで、エラーには機械処理用の `code` が付きます。失敗時の終了ステータスは 0 以外です。
+
+アプリに同梱される単体の書き出しツールを使う場合は、OS に合ったコマンドを選んでください。
 
 ::::tabs[書き出しを行う OS]{default="macOS"}
 :::tab[macOS]
@@ -537,7 +558,11 @@ Celesta は[メディアプラグイン](/ja/docs/plugins/#メディアプラグ
 
 スクリプトが対応したい警告は `"codedWarnings"` にも入ります。各項目は変わらない `"code"` と `"message"` を持ちます（該当がなければキーはありません）。`nondeterministic_render` は、コンポジションが描画中に `Math.random()` や `Date.now()` などの時計を呼んだことを表します（[アニメーション](/ja/docs/animation/)を参照）。`rough_scenes` は、書き出した範囲にラフカットのシーン（`<Composition chapters>` で `status: 'rough'` のもの。[シーン・キュー・拍](/ja/docs/motion-toolkit/)を参照）があり、仮のカードのまま動画に入ったことを表します。代わりに書き出しを止めるには `--final` を付けます。このとき何も書き出さず、エラーコード `rough_scenes` で失敗します。MCP の `export_video` ツールと `@celesta.studio/exporter` も `final` を受け付け、`codedWarnings` を返します。
 
+描画を初期化すると、テキスト出力の `graphics:` 行に、実際に選ばれたバックエンドとアダプター名、ソフトウェア描画かハードウェア描画かが表示されます。最終的な `--json` の結果では、同じ情報が `graphics` に入ります（例：`{"backend":"vulkan","adapter":"llvmpipe","software":true}`）。`--info` など、描画を初期化しないコマンドでは省略されます。
+
 ソースビルドを使う場合は、[開発者向け手順](/ja/docs/build-from-source/)に対応する Cargo コマンドがあります。
+
+コマンドラインでの書き出しオプションは、`celesta-exporter --help`（デスクトップ版では `Celesta-export --help`）で確認できます。`celesta-react-render` は Celesta が React コンポジションを評価するための補助コマンドで、`celesta-mcp` は標準入出力を通じて MCP クライアントと通信するサーバーです。どちらも `--help` と `--version` ではプロトコル通信を開始しません。React の補助コマンドでこれらのオプションを使えるのは npm パッケージの `celesta-react-render` ラッパーだけです。デスクトップアプリが直接起動する内部用の `dist/cli.js` では使えません。
 
 時刻は秒数、`MM:SS.mmm`、`HH:MM:SS.mmm` を指定できます。選んだ範囲を、自身の 00:00 から始まる新しい動画にします。
 
@@ -548,6 +573,8 @@ Linux で Vulkan を使う場合は --driver vulkan を指定します。CI や�
 ```sh title="ソフトウェア Vulkan をインストール"
 sudo apt-get install -y mesa-vulkan-drivers
 ```
+
+「No suitable graphics adapter found」と表示された場合は、ヒントに Mesa/lavapipe の設定方法が表示されます。`VK_DRIVER_FILES` または `VK_ICD_FILENAMES` を設定している場合は、インストール済みの Vulkan ドライバーのマニフェストを指していることを確認してください。
 
 ソフトウェア描画は GPU より遅く、4 コアでは 1080p をシーンによって約 10〜60 fps で描画します。全体の前に PNG で 1 フレーム確認してください。リポジトリのルートで実行します。
 

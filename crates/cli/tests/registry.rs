@@ -3,7 +3,7 @@ mod common;
 use std::fs;
 
 use celesta_registry_client::testing::{TestRegistry, celesta_range};
-use common::{Home, assert_exit, registry, run, stderr, stdout};
+use common::{Home, assert_exit, json_stdout, registry, run, stderr, stdout};
 use serde_json::{Value, json};
 
 /// An advisory blocking `versions` of `plugin`, fixed in `fixed`.
@@ -183,6 +183,23 @@ fn list_shows_project_and_global() {
     let output = run(&other, &registry, other.path(), &["list"]);
     assert_exit(&output, 0);
     assert_eq!(lines(&output), ["no registry plugins"]);
+
+    let output = run(&home, &registry, &project, &["list", "--json"]);
+    assert_exit(&output, 0);
+    let report = json_stdout(&output);
+    assert_eq!(report["schemaVersion"], 1);
+    assert_eq!(report["status"], "ok");
+    assert_eq!(report["command"], "list");
+    assert_eq!(
+        report["plugins"],
+        json!([
+            { "scope": "project", "id": "acme.charts", "version": "1.2.3", "status": "installed", "yanked": true, "deprecated": false },
+            { "scope": "global", "id": "acme.codec", "version": "1.0.0", "status": "installed", "yanked": false, "deprecated": false }
+        ])
+    );
+    let output = run(&other, &registry, &project, &["list", "--json"]);
+    assert_exit(&output, 0);
+    assert_eq!(json_stdout(&output)["plugins"][0]["status"], "missing");
 }
 
 #[test]
@@ -240,6 +257,20 @@ fn audit_fails_on_a_blocked_lock_entry() {
             "acme.charts 1.2.3: blocked by CELESTA-2026-0002: Runs code from a chart title; 1.2.4 fixes it"
         ]
     );
+
+    let output = run(&home, &registry, &project, &["audit", "--json"]);
+    assert_exit(&output, 1);
+    let report = json_stdout(&output);
+    assert_eq!(report["error"]["code"], "audit_failed");
+    assert_eq!(report["advisoriesAvailable"], true);
+    let plugin = &report["plugins"][0];
+    assert_eq!(plugin["scope"], "project");
+    assert_eq!(plugin["id"], "acme.charts");
+    assert_eq!(plugin["version"], "1.2.3");
+    assert_eq!(plugin["status"], "blocked");
+    assert_eq!(plugin["findings"][0]["code"], "plugin_blocked");
+    assert_eq!(plugin["findings"][0]["advisory"]["id"], "CELESTA-2026-0002");
+    assert_eq!(plugin["findings"][0]["advisory"]["fixed"], "1.2.4");
 }
 
 #[test]
@@ -376,6 +407,18 @@ fn audit_says_when_it_could_not_check_everything() {
         "{}",
         stderr(&output)
     );
+
+    let output = Home::new()
+        .command()
+        .current_dir(&project)
+        .args(["plugin", "audit", "--json"])
+        .output()
+        .unwrap();
+    assert_exit(&output, 0);
+    let report = json_stdout(&output);
+    assert_eq!(report["advisoriesAvailable"], false);
+    assert_eq!(report["plugins"][0]["listingChecked"], false);
+    assert_eq!(report["plugins"][0]["status"], "skipped");
 }
 
 #[test]
@@ -440,6 +483,31 @@ fn install_global_records_registry_plugins() {
         &["install", "--global", "@1"],
     );
     assert_exit(&output, 2);
+
+    let output = run(
+        &home,
+        &registry,
+        home.path(),
+        &["install", "--json", "--global", "@1"],
+    );
+    assert_exit(&output, 2);
+    assert_eq!(json_stdout(&output)["error"]["code"], "invalid_plugin_spec");
+
+    let output = run(
+        &home,
+        &registry,
+        home.path(),
+        &["install", "--json", "--global", "acme.codec"],
+    );
+    assert_exit(&output, 0);
+    let report = json_stdout(&output);
+    assert_eq!(report["scope"], "global");
+    assert_eq!(
+        report["plugins"],
+        json!([
+            { "scope": "global", "id": "acme.codec", "version": "1.1.0", "status": "installed" }
+        ])
+    );
 }
 
 #[test]

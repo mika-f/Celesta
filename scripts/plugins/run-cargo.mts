@@ -1,5 +1,4 @@
 // Run one package at a time so each codec links its own native FFmpeg build.
-// Usage: run-cargo.mts <workspace> <nextest|test|clippy|build> -p <package>... [Cargo args...]
 // `nextest` runs `cargo nextest run`. Each run writes its nextest profile's
 // JUnit report (when the profile has one) to the same junit.xml, so this
 // renames it to junit-<package>.xml beside it before the next package runs.
@@ -7,18 +6,39 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, renameSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { FFMPEG_PACKAGES, FFMPEG_X264_PACKAGE, ffmpegEnvironment } from './ffmpeg.mts';
+
+const usage = `Usage: node scripts/plugins/run-cargo.mts <workspace> <command> -p <package> [-p <package> ...] [Cargo args...]
+       node scripts/plugins/run-cargo.mts -h | --help
+
+Run a Cargo command once per package. Use nextest for cargo nextest run.
+Additional arguments are forwarded to Cargo.
+
+Example:
+  node scripts/plugins/run-cargo.mts plugins test -p celesta-codec-ffmpeg --locked`;
+
+function usageError(message: string): never {
+  console.error(`run-cargo.mts: ${message}\nRun node scripts/plugins/run-cargo.mts --help for usage.`);
+  process.exit(2);
+}
+
 const [workspace, command, ...args] = process.argv.slice(2);
-if (!workspace || !command) throw new Error('expected workspace and Cargo command');
+if ((workspace === '--help' || workspace === '-h') && command === undefined) {
+  console.log(usage);
+  process.exit(0);
+}
+if (workspace?.startsWith('-')) usageError(`unexpected option ${JSON.stringify(workspace)}; expected a workspace directory`);
+if (!workspace || !command) usageError('expected a workspace directory and Cargo command');
+if (command.startsWith('-')) usageError(`unexpected option ${JSON.stringify(command)}; expected a Cargo command`);
 const packages: string[] = [];
 const rest: string[] = [];
 for (let index = 0; index < args.length; index++) {
   if (args[index] === '-p') {
     const name = args[++index];
-    if (!name) throw new Error('-p needs a package');
+    if (!name || name.startsWith('-')) usageError('-p needs a package name');
     packages.push(name);
   } else rest.push(args[index]);
 }
-if (packages.length === 0) throw new Error('expected at least one -p package');
+if (packages.length === 0) usageError('expected at least one -p <package>');
 const nextest = command === 'nextest';
 // Cross-plugin tests need independently linked sibling programs.
 packages.sort((a, b) => Number(a === FFMPEG_X264_PACKAGE) - Number(b === FFMPEG_X264_PACKAGE));
@@ -36,7 +56,7 @@ for (let index = 0; index < rest.length && rest[index] !== '--'; index++) {
   }
   if (!takesValue.includes(flag)) continue;
   const value = inline ?? rest[++index];
-  if (value === undefined) throw new Error(`${flag} needs a value`);
+  if (value === undefined) usageError(`${flag} needs a value`);
   if (nextest && (flag === '--profile' || flag === '-P')) nextestProfile = value;
   else if (flag === '--cargo-profile') buildFlags.push('--profile', value);
   else {

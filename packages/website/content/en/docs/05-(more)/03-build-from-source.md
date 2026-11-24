@@ -106,6 +106,9 @@ node scripts/plugins/build.mts plugins/ffmpeg plugins/ffmpeg-x264 plugins/avfoun
 export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"   # PowerShell: $env:CELESTA_PLUGIN_PATH = "$PWD\plugins\dist"
 ```
 
+Run `node scripts/plugins/build.mts --help` for build options and the FFmpeg
+prefix variables for standard and x264 builds.
+
 ```sh title="Launch the native app"
 cargo run -p celesta-editor --release -- packages/cli/examples/title.tsx
 ```

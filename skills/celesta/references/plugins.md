@@ -148,6 +148,15 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   when one is blocked or no longer distributed; it prints `no problems
   found in what could be checked` when it could not reach a plugin's
   listing.
+- For scripts, use `celesta plugin list --json`, `install --json`
+  (including locked, offline, or global installs), or `audit --json`.
+  Read the one stdout report's `plugins` for scope, id, version and
+  status, and branch on `error.code`, not `error.message`. On a failed
+  install (exit 1), `lockfile: "written"` means `celesta.lock` was
+  already saved. Audit entries include coded findings;
+  `listingChecked: false` means the listing could not be checked.
+  Warnings stay on stderr; exit codes are
+  0 for success, 1 for failure, and 2 for usage errors.
 
 ## Media plugins
 
@@ -171,6 +180,8 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   and copy the entire plugin folder into the user plugin folder, reload and
   allow it in the app (or CLI `--allow-plugin ffmpeg-x264`, `--plugin-dir`).
   Libraries and notices are included, so no separate FFmpeg install is needed.
+  Linux x64 ZIPs after 0.10.0 need glibc 2.35+ (Ubuntu 22.04, Debian 12 or
+  later); 0.10.0's need glibc 2.38.
   The standard package exports ProRes/MOV and WebM (VP9 with alpha, Opus)
   without addons. MP4 needs standard+x264 on Linux; bundled native H.264 is
   the default on macOS/Windows when available. Explicitly name
@@ -179,6 +190,8 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   `ffmpeg/opus` and `ffmpeg/vp9` keep their IDs.
   A source build makes both with
   `node scripts/plugins/build.mts plugins/ffmpeg plugins/ffmpeg-x264`.
+  Run `node scripts/plugins/build.mts --help` for build options and FFmpeg
+  prefix examples.
   The macOS app also bundles `avfoundation`, and the Windows app
   `mediafoundation`; both use system libraries under MIT/Apache-2.0.
   Include `plugins/avfoundation plugins/mediafoundation` in source builds;
@@ -195,6 +208,7 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   Run tests per package:
   `node scripts/plugins/run-cargo.mts plugins nextest -p celesta-codec-ffmpeg -p celesta-codec-ffmpeg-x264`
   (cargo-nextest; `test` instead runs `cargo test`).
+  Run `node scripts/plugins/run-cargo.mts --help` for usage.
   Local builds may link a system GPL FFmpeg 8.1.x, but every native build
   opens each encoder (`--check-build`), so the standard FFmpeg needs libvpx
   and libopus. `--distribution` also validates licenses (`--check-license`):
