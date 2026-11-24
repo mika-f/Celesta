@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { test } from 'vitest';
 import { fileURLToPath } from 'node:url';
-import { showcase } from '../site/showcase-catalog.ts';
+import { showcase, showcaseExtraImages } from '../site/showcase-catalog.ts';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const locales = ['en', 'ja'];
@@ -189,4 +189,5 @@ test('every showcase work has a page and metadata', () => {
 
 test('catalog posters match the poster files in examples', () => {
   for (const work of showcase) assert.equal('poster' in work, existsSync(join(root, '..', '..', 'examples', work.slug, 'poster.jpg')), `${work.slug} poster flag`);
+  for (const extra of showcaseExtraImages) assert.ok(existsSync(join(root, '..', '..', extra.source)), `${extra.source} exists`);
 });
