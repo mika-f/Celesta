@@ -960,13 +960,17 @@ fn no_default_encoder_hint(
     } else {
         "list_components shows what is installed"
     };
+    let pinned = if cli {
+        "when --muxer or a preset names one"
+    } else {
+        "when muxer or a preset names one"
+    };
     let others = other_formats();
     if others.is_empty() {
         format!("{install}; {listing}")
     } else {
         format!(
-            "{install}; or write {others} instead (with a muxer that writes it, when --muxer \
-             or a preset names one); {listing}"
+            "{install}; or write {others} instead (with a muxer that writes it, {pinned}); {listing}"
         )
     }
 }
