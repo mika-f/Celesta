@@ -8,6 +8,7 @@
 //! install: the lock's for this host, or the one in the user's settings.
 
 use crate::advisories::cached_advisories;
+use crate::child::PluginChild;
 use crate::locations::{PluginSource, SearchPath, registry_store_dir};
 use crate::lock::Lockfile;
 use crate::manifest::{
@@ -150,6 +151,36 @@ pub fn is_build(directory: &Path, id: &str, version: &semver::Version, tree_hash
     named.id == id
         && semver::Version::parse(&named.version).is_ok_and(|found| found == *version)
         && celesta_registry_format::tree_hash(directory).is_ok_and(|found| found == *tree_hash)
+}
+
+/// Checks whether a verified, enabled store plugin answers the startup handshake.
+/// The caller must exclude plugins blocked by advisories. Missing or changed
+/// builds and plugins without an executable for this platform are not launched.
+pub fn probe_registry_plugin(
+    directory: &Path,
+    id: &str,
+    version: &semver::Version,
+    tree_hash: &Hash,
+    settings: &UserSettings,
+) -> Result<(), String> {
+    if !is_valid_id(id)
+        || !directory.is_absolute()
+        || settings.is_disabled(id, directory)
+        || !is_build(directory, id, version, tree_hash)
+    {
+        return Ok(());
+    }
+    let Ok(Some((entry, _))) = read_manifest(directory, PluginSource::Registry) else {
+        return Ok(());
+    };
+    let Some(executable) = entry.executable() else {
+        return Ok(());
+    };
+    let mut child = PluginChild::start_quiet(&executable, directory)?;
+    child
+        .hello_as(entry.manifest.protocol, serde_json::Map::new())
+        .map_err(|error| error.message())?;
+    Ok(())
 }
 
 /// A version in the store, and what its folder must hold to run.

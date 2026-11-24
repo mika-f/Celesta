@@ -1,10 +1,10 @@
 //! The commands that read the registry: `search`, `info`, and `audit`.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 use std::process::ExitCode;
 
-use celesta_plugin_host::{Lockfile, UserSettings};
+use celesta_plugin_host::{Lockfile, UserSettings, probe_registry_plugin};
 use celesta_registry_client::{ClientError, ResolveWarning};
 use celesta_registry_format::{Advisory, AdvisoryList, Index, SearchEntry, VersionEntry};
 use semver::Version;
@@ -168,8 +168,7 @@ fn state(index: &Index, entry: &VersionEntry, advisories: Option<&AdvisoryList>)
 }
 
 /// Checks every plugin the project in `root` locks, and every global one,
-/// against the advisories and its index. Fails when one is blocked or no
-/// longer distributed.
+/// against the advisories and its index, and tries to start installed programs.
 pub(crate) fn audit(session: &Session, root: &Path, output: Output) -> ExitCode {
     let advisories = advisories::refresh(session);
     match audit_plugins(session, root, advisories.as_ref(), output) {
@@ -191,32 +190,66 @@ fn audit_plugins(
     let locked = lock
         .iter()
         .flat_map(|lock| &lock.plugins)
-        .map(|(id, locked)| (Scope::Project, id.as_str(), &locked.version));
-    let global = settings
-        .registry_plugins
-        .iter()
-        .map(|plugin| (Scope::Global, plugin.id.as_str(), &plugin.version));
+        .map(|(id, locked)| {
+            let artifact = lock
+                .as_ref()
+                .and_then(|lock| lock.artifact(id, &session.host));
+            (
+                Scope::Project,
+                id.as_str(),
+                &locked.version,
+                artifact.map(|artifact| &artifact.tree_hash),
+            )
+        });
+    let global = settings.registry_plugins.iter().map(|plugin| {
+        (
+            Scope::Global,
+            plugin.id.as_str(),
+            &plugin.version,
+            Some(&plugin.tree_hash),
+        )
+    });
     let mut seen = BTreeSet::new();
     let mut indexes = BTreeMap::new();
+    let mut launches = HashMap::new();
     let mut findings = Vec::new();
     let mut plugins = Vec::new();
     let mut passes = true;
-    for (scope, id, version) in locked.chain(global) {
-        if !output.json && !seen.insert((id, version)) {
-            continue;
-        }
+    for (scope, id, version, tree_hash) in locked.chain(global) {
         let listing = indexes
             .entry(id)
             .or_insert_with(|| audit_listing(session, id));
-        let found = audit_findings(id, version, listing, advisories);
+        let mut found = audit_findings(id, version, listing, advisories);
+        let blocked = found
+            .iter()
+            .any(|finding| finding.code == FindingCode::Blocked);
+        if !blocked && let Some(hash) = tree_hash {
+            let result = launches.entry((id, version, hash)).or_insert_with(|| {
+                probe_registry_plugin(
+                    &session.store.path(id, version),
+                    id,
+                    version,
+                    hash,
+                    &settings,
+                )
+            });
+            if let Err(reason) = result {
+                found.push(launch_finding(id, version, reason));
+            }
+        }
         let failed = found.iter().any(|finding| finding.fails);
         passes &= !failed;
         if output.json {
             let listing_checked = !matches!(listing, Listing::Unknown);
-            let status = if found.iter().any(|finding| finding.advisory.is_some()) {
+            let status = if blocked {
                 "blocked"
-            } else if failed {
+            } else if found
+                .iter()
+                .any(|finding| finding.code == FindingCode::Withdrawn)
+            {
                 "withdrawn"
+            } else if failed {
+                "launch_failed"
             } else if !listing_checked {
                 "skipped"
             } else if found.is_empty() {
@@ -229,14 +262,18 @@ fn audit_plugins(
                 "listingChecked": listing_checked, "findings": found,
             }));
         } else {
-            findings.extend(found);
+            findings.extend(
+                found
+                    .into_iter()
+                    .filter(|finding| seen.insert((id, version, finding.code))),
+            );
         }
     }
     if output.json {
         let error = (!passes).then(|| {
             Error::new(
                 "audit_failed",
-                "one or more plugins are blocked or no longer distributed",
+                "one or more plugins are blocked, no longer distributed, or could not launch",
             )
         });
         return Ok(output.write(
@@ -257,6 +294,9 @@ fn audit_plugins(
     }
     for finding in findings {
         println!("{}", finding.text);
+        if let Some(hint) = finding.hint {
+            println!("  hint: {hint}");
+        }
     }
     Ok(if passes {
         ExitCode::SUCCESS
@@ -297,16 +337,50 @@ fn audit_listing(session: &Session, id: &str) -> Listing {
     }
 }
 
-/// One line `audit` prints.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+enum FindingCode {
+    #[serde(rename = "plugin_blocked")]
+    Blocked,
+    #[serde(rename = "plugin_withdrawn")]
+    Withdrawn,
+    #[serde(rename = "plugin_yanked")]
+    Yanked,
+    #[serde(rename = "plugin_deprecated")]
+    Deprecated,
+    #[serde(rename = "plugin_launch_failed")]
+    LaunchFailed,
+}
+
+/// One problem `audit` reports.
 #[derive(Debug, PartialEq, Serialize)]
 struct Finding<'a> {
-    code: &'static str,
+    code: FindingCode,
     #[serde(rename = "message")]
     text: String,
     /// Whether it stops the plugin from running.
     fails: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     advisory: Option<&'a Advisory>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hint: Option<&'static str>,
+}
+
+fn launch_finding<'a>(id: &str, version: &Version, reason: &str) -> Finding<'a> {
+    let hint = if reason
+        .lines()
+        .any(|line| line.contains("GLIBC_") && line.contains("not found"))
+    {
+        "This plugin needs a newer glibc. Install a plugin build compatible with this Linux distribution, or run it on a newer distribution."
+    } else {
+        "Check the executable and its runtime dependencies, or install a plugin build for this platform."
+    };
+    Finding {
+        code: FindingCode::LaunchFailed,
+        text: format!("{id} {version}: could not launch: {reason}"),
+        fails: true,
+        advisory: None,
+        hint: Some(hint),
+    }
 }
 
 /// What is wrong with `version` of `id` by `advisories` and `listing`.
@@ -324,13 +398,14 @@ fn audit_findings<'a>(
             .map(|fixed| format!("; {fixed} fixes it"))
             .unwrap_or_default();
         findings.push(Finding {
-            code: "plugin_blocked",
+            code: FindingCode::Blocked,
             text: format!(
                 "{id} {version}: blocked by {}: {}{fixed}",
                 advisory.id, advisory.title
             ),
             fails: true,
             advisory: Some(advisory),
+            hint: None,
         });
     }
     let index = match listing {
@@ -346,19 +421,21 @@ fn audit_findings<'a>(
     });
     let Some(entry) = entry.filter(|entry| !entry.withdrawn) else {
         findings.push(Finding {
-            code: "plugin_withdrawn",
+            code: FindingCode::Withdrawn,
             text: format!("{id} {version} is no longer distributed"),
             fails: true,
             advisory: None,
+            hint: None,
         });
         return findings;
     };
     if entry.yanked {
         findings.push(Finding {
-            code: "plugin_yanked",
+            code: FindingCode::Yanked,
             text: format!("{id} {version} has been yanked"),
             fails: false,
             advisory: None,
+            hint: None,
         });
     }
     if let Some(deprecation) = index.and_then(|index| index.deprecation(entry)) {
@@ -369,10 +446,11 @@ fn audit_findings<'a>(
             replacement: deprecation.replacement.clone(),
         };
         findings.push(Finding {
-            code: "plugin_deprecated",
+            code: FindingCode::Deprecated,
             text: warning.to_string(),
             fails: false,
             advisory: None,
+            hint: None,
         });
     }
     findings
@@ -424,10 +502,11 @@ mod tests {
             audit_findings("acme.charts", &Version::new(2, 0, 0), listing, None)
         };
         let expected = [Finding {
-            code: "plugin_withdrawn",
+            code: FindingCode::Withdrawn,
             text: "acme.charts 2.0.0 is no longer distributed".to_owned(),
             fails: true,
             advisory: None,
+            hint: None,
         }];
         let listing = Listing::Index(Box::new(index(&["1.0.0"])));
         assert_eq!(gone(&listing), expected);

@@ -56,7 +56,7 @@ pub use project::{
     mark_project_root, project_dependencies, project_plugin_paths, project_root,
     project_root_of_dir,
 };
-pub use registry::{ProjectLock, RegistryContext, is_build};
+pub use registry::{ProjectLock, RegistryContext, is_build, probe_registry_plugin};
 pub use settings::{
     Allowance, AllowedPlugin, RegistryPlugin, SETTINGS_FILE, SettingsError, UserSettings,
     create_private_dir_all, user_settings_dir, user_settings_path,

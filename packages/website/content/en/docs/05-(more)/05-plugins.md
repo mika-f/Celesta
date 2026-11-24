@@ -201,7 +201,7 @@ Celesta looks for a locked version in its download folder right after the folder
 | `celesta plugin install --global <id>[@<req>]` | Installs a media plugin for every project (see [Media plugins from the registry](#media-plugins-from-the-registry)). |
 | `celesta plugin update [<id>]` | Chooses the newest versions the requirements allow, for every plugin or the one named, rewrites the lock, and prints each change, such as `acme.charts 1.2.3 -> 1.3.0`. |
 | `celesta plugin list` | Lists the plugins this project locks and those installed for every project, each `installed`, `not installed`, `no build for <target>`, or `blocked (<advisory>)`, and marked `yanked` or `deprecated` when it is. |
-| `celesta plugin audit` | Checks the locked plugins and those installed for every project against the security advisories and the registry, and prints what it finds, or `no problems found` (`no problems found in what could be checked` when it could not reach a plugin's listing, as it warns). It fails when a plugin is blocked or no longer distributed. |
+| `celesta plugin audit` | Checks the locked and globally installed plugins against security advisories and the registry. It also starts verified, enabled plugin executables in the registry store to check whether they can answer the startup handshake. It prints its findings or `no problems found` (`no problems found in what could be checked` when it could not check a listing). It fails when a plugin is blocked, no longer distributed, or cannot launch. |
 | `celesta plugin gc` | Removes the downloaded versions no project uses (see [Clean up downloads](#clean-up-downloads)). `--dry-run` says what it would remove. |
 
 ```sh
@@ -234,7 +234,7 @@ Add `--json` to `plugin list`, `plugin install` (including `--locked`, `--offlin
 
 - **List:** `installed`, `missing`, `no_build`, or `blocked`, with `yanked` and `deprecated` flags and an `advisory` for a blocked version.
 - **Install:** `installed`, `already_installed`, or `skipped` (`reason: "no_build"`) on success. A project install also reports `lockfile` (`written`, `satisfied`, or `unchanged`). On a failed install (exit 1), `lockfile: "written"` means `celesta.lock` was already saved. A failure identifies the affected plugin when its version is known.
-- **Audit:** `ok`, `warning`, `skipped`, `blocked`, or `withdrawn`. Each entry has `listingChecked` and `findings`, with a stable `code` and an `advisory` for a block. For list and audit, `advisoriesAvailable` indicates whether a verified advisory list was available, including from cache.
+- **Audit:** `ok`, `warning`, `skipped`, `blocked`, `withdrawn`, or `launch_failed`. Each entry has `listingChecked` and `findings`, with a stable `code` and an `advisory` for a block. The `plugin_launch_failed` finding includes the startup error (with plugin stderr when available) and a `hint` about how to fix it. For list and audit, `advisoriesAvailable` indicates whether a verified advisory list was available, including from cache.
 
 Exit codes are unchanged: **0** for success (including non-blocking findings or skipped checks), **1** for failure, **2** for incorrect usage. On failure, branch on `error.code` rather than parsing `error.message`: for example, `plugin_missing` means an offline install needs a download, `plugin_blocked` means an install was blocked by an advisory, and `audit_failed` means at least one audit finding is blocking. Argument parsing failures return `invalid_arguments` without a `command` field.
 

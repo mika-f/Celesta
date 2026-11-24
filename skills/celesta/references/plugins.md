@@ -145,7 +145,9 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   project that locks one fails `install` (`` <id> <version> is blocked by
   advisory <advisory>; run `celesta plugin update <id>` ``) and the export,
   even when it is downloaded. `celesta plugin audit` lists them and exits 1
-  when one is blocked or no longer distributed; it prints `no problems
+  when one is blocked, no longer distributed, or cannot launch. Audit
+  checks startup for enabled, verified registry-store executables, without
+  running plugins blocked by an advisory. It prints `no problems
   found in what could be checked` when it could not reach a plugin's
   listing.
 - For scripts, use `celesta plugin list --json`, `install --json`
@@ -155,6 +157,7 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   install (exit 1), `lockfile: "written"` means `celesta.lock` was
   already saved. Audit entries include coded findings;
   `listingChecked: false` means the listing could not be checked.
+  Relay the `hint` and startup error in any `plugin_launch_failed` finding.
   Warnings stay on stderr; exit codes are
   0 for success, 1 for failure, and 2 for usage errors.
 

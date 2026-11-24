@@ -435,6 +435,96 @@ fn audit_passes_a_clean_project() {
     assert_eq!(stderr(&output), "");
 }
 
+#[cfg(unix)]
+#[test]
+fn audit_reports_an_installed_plugin_that_cannot_launch() {
+    use std::os::unix::fs::PermissionsExt;
+
+    use celesta_plugin_host::{MANIFEST, UserSettings};
+    use celesta_registry_format::tree_hash;
+
+    let home = Home::new();
+    let registry = registry();
+    registry.publish_with_roles("acme.codec", "1.0.0", &["any"], &["media"]);
+    let project = home.project("{}\n");
+    assert_exit(
+        &run(
+            &home,
+            &registry,
+            &project,
+            &["install", "--global", "acme.codec"],
+        ),
+        0,
+    );
+
+    let directory = home.store().join("acme.codec/1.0.0");
+    let manifest_path = directory.join(MANIFEST);
+    let mut manifest: Value = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["roles"] = json!(["media"]);
+    manifest["protocol"] = json!(2);
+    manifest["executable"] = json!({ (std::env::consts::OS): "codec" });
+    fs::write(manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let executable = directory.join("codec");
+    let loader_error = "libc.so.6: version `GLIBC_2.38' not found (required by codec)";
+    fs::write(
+        &executable,
+        format!("#!/bin/sh\necho \"{loader_error}\" >&2\nexit 127\n").replace('`', "\\`"),
+    )
+    .unwrap();
+    fs::set_permissions(executable, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let output = run(&home, &registry, &project, &["audit", "--json"]);
+    assert_exit(&output, 0);
+    assert_eq!(json_stdout(&output)["plugins"][0]["findings"], json!([]));
+
+    let mut settings = UserSettings::load(&home.settings()).unwrap();
+    settings.registry_plugins[0].tree_hash = tree_hash(&directory).unwrap();
+    settings.save(&home.settings()).unwrap();
+
+    let output = run(&home, &registry, &project, &["audit"]);
+    assert_exit(&output, 1);
+    let text = stdout(&output);
+    assert!(
+        text.contains("acme.codec 1.0.0: could not launch"),
+        "{text}"
+    );
+    assert!(text.contains(loader_error), "{text}");
+    assert!(
+        text.contains("hint: This plugin needs a newer glibc"),
+        "{text}"
+    );
+
+    let output = run(&home, &registry, &project, &["audit", "--json"]);
+    assert_exit(&output, 1);
+    assert_eq!(stderr(&output), "");
+    let report = json_stdout(&output);
+    assert_eq!(report["schemaVersion"], 1);
+    assert_eq!(report["status"], "error");
+    assert_eq!(report["error"]["code"], "audit_failed");
+    let plugin = &report["plugins"][0];
+    assert_eq!(plugin["scope"], "global");
+    assert_eq!(plugin["status"], "launch_failed");
+    let finding = &plugin["findings"][0];
+    assert_eq!(finding["code"], "plugin_launch_failed");
+    assert_eq!(finding["fails"], true);
+    assert!(finding["message"].as_str().unwrap().contains(loader_error));
+    assert!(finding["hint"].as_str().unwrap().contains("newer glibc"));
+
+    registry.advisories(json!([advisory(
+        "CELESTA-2026-0002",
+        "acme.codec",
+        "=1.0.0",
+        None
+    )]));
+    let output = run(&home, &registry, &project, &["audit", "--json"]);
+    assert_exit(&output, 1);
+    let report = json_stdout(&output);
+    assert_eq!(report["plugins"][0]["status"], "blocked");
+    let findings = report["plugins"][0]["findings"].as_array().unwrap();
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0]["code"], "plugin_blocked");
+}
+
 #[test]
 fn install_global_records_registry_plugins() {
     let home = Home::new();

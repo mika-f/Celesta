@@ -121,6 +121,19 @@ impl PluginChild {
         directory: &Path,
         shared: Option<&SharedMemory>,
     ) -> Result<(Self, Option<io::Result<u64>>), String> {
+        Self::start_with_stderr(executable, directory, shared, io::stderr())
+    }
+
+    pub(crate) fn start_quiet(executable: &Path, directory: &Path) -> Result<Self, String> {
+        Self::start_with_stderr(executable, directory, None, io::sink()).map(|(child, _)| child)
+    }
+
+    fn start_with_stderr(
+        executable: &Path,
+        directory: &Path,
+        shared: Option<&SharedMemory>,
+        stderr_output: impl io::Write + Send + 'static,
+    ) -> Result<(Self, Option<io::Result<u64>>), String> {
         let name = executable.display().to_string();
         let mut command = Command::new(executable);
         command
@@ -174,7 +187,7 @@ impl PluginChild {
                 .name("celesta-plugin-stderr".into())
                 .spawn(move || {
                     let _closed = closed;
-                    pump(stderr_pipe, io::stderr(), &tail);
+                    pump(stderr_pipe, stderr_output, &tail);
                 })?;
             Ok((requests, answers, stderr, stderr_closed))
         })();

@@ -201,7 +201,7 @@ Celesta は、ロックしたバージョンを、`--plugin-dir` と `CELESTA_PL
 | `celesta plugin install --global <id>[@<req>]` | メディアプラグインを、すべてのプロジェクト用に入れます（[レジストリのメディアプラグイン](#レジストリのメディアプラグイン)を参照）。 |
 | `celesta plugin update [<id>]` | すべてのプラグイン、または指定したプラグインについて、要件が許すいちばん新しいバージョンを選んでロックを書き直し、`acme.charts 1.2.3 -> 1.3.0` のように変更を表示します。 |
 | `celesta plugin list` | このプロジェクトがロックしているプラグインと、すべてのプロジェクト用に入れたプラグインを、`installed`、`not installed`、`no build for <target>`、`blocked (<advisory>)` のどれかと、該当すれば `yanked` や `deprecated` の印を付けて一覧表示します。 |
-| `celesta plugin audit` | ロックしているプラグインとすべてのプロジェクト用のプラグインを、セキュリティアドバイザリーとレジストリに照らして確認し、見つかったことを表示します。何もなければ `no problems found` と表示します（プラグインの情報を取得できなかったときは警告し、`no problems found in what could be checked` と表示します）。ブロックされたプラグインや配布されなくなったプラグインがあれば失敗します。 |
+| `celesta plugin audit` | ロックしているプラグインとグローバルにインストールしたプラグインを、セキュリティアドバイザリーとレジストリに照らして確認します。レジストリの保存先にある検証済みで有効なプラグインの実行ファイルを起動し、起動時の応答も確認します。問題がなければ `no problems found` と表示します（レジストリの掲載情報を確認できなかったときは `no problems found in what could be checked`）。ブロックされたプラグイン、配布が終了したプラグイン、起動できないプラグインがあれば失敗します。 |
 | `celesta plugin gc` | どのプロジェクトも使っていないダウンロード済みのバージョンを削除します（[ダウンロードを片付ける](#ダウンロードを片付ける)を参照）。`--dry-run` を付けると、削除するものを表示するだけです。 |
 
 ```sh
@@ -234,7 +234,7 @@ CI では `celesta plugin install --locked` を実行してください。コミ
 
 - **List:** `installed`（インストール済み）、`missing`（未インストール）、`no_build`（対象ビルドなし）、`blocked`（ブロック済み）のいずれかです。`yanked` と `deprecated` のフラグがあり、ブロックされたバージョンには `advisory` もあります。
 - **Install:** 成功時は `installed`、`already_installed`（インストール済み）、または `skipped`（`reason: "no_build"`）です。プロジェクトへのインストールでは `lockfile`（`written`、`satisfied`、`unchanged`）も返します。インストールが失敗した場合（終了コード 1）に `lockfile: "written"` があるときは、`celesta.lock` がすでに保存されています。失敗時は、バージョンが分かる場合に対象のプラグインを返します。
-- **Audit:** `ok`、`warning`、`skipped`、`blocked`、`withdrawn`（配布終了）のいずれかです。各項目に `listingChecked` と `findings` があり、検出事項には固定の `code`、ブロックの場合は `advisory` も含まれます。List と Audit の `advisoriesAvailable` は、キャッシュも含めて検証済みアドバイザリー一覧を利用できたかを示します。
+- **Audit:** `ok`、`warning`、`skipped`、`blocked`、`withdrawn`（配布終了）、`launch_failed`（起動失敗）のいずれかです。各項目に `listingChecked` と `findings` があり、検出事項には固定の `code`、ブロックの場合は `advisory` も含まれます。`plugin_launch_failed` には起動時のエラー（取得できた場合はプラグインの標準エラー出力を含む）と、対処方法を示す `hint` が含まれます。List と Audit の `advisoriesAvailable` は、キャッシュも含めて検証済みアドバイザリー一覧を利用できたかを示します。
 
 終了コードは変わりません。**0** は成功（失敗扱いではない検出事項や未確認の項目がある場合も含む）、**1** は失敗、**2** は使い方の誤りです。失敗時は `error.message` の文面ではなく `error.code` で判定してください。例えば `plugin_missing` はオフラインでのインストールに必要なプラグインが未ダウンロード、`plugin_blocked` はアドバイザリーによるインストールの拒否、`audit_failed` は監査を失敗扱いにする検出事項があったことを示します。引数の解析に失敗した場合は `invalid_arguments` を返し、`command` はありません。
 

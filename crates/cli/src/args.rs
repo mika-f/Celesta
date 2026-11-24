@@ -84,7 +84,7 @@ pub enum PluginCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Check the plugins in use against the security advisories.
+    /// Check the plugins in use against security advisories, registry listings, and whether they start.
     Audit {
         /// Print one machine-readable JSON report instead of text.
         #[arg(long)]
