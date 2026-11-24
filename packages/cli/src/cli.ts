@@ -260,6 +260,7 @@ function isResolveRequest(request: Request): request is ResolveRequest {
 
 async function main(): Promise<void> {
   const [entry, ...args] = process.argv.slice(2);
+  if (entry === '--check-runtime' && args.length === 0) return;
   const options: string[] = [];
   let compositionId: string | undefined;
   for (let i = 0; i < args.length; i++) {

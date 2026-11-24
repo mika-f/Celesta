@@ -235,16 +235,36 @@ fn check_node() -> Check {
         );
     }
     match fs::metadata(&runtime) {
-        Ok(metadata) if metadata.is_file() => match fs::File::open(&runtime) {
-            Ok(_) => Check::new("ok", format!("Node.js {version}; {}", runtime.display())),
-            Err(error) => Check::error(
+        Ok(metadata) if metadata.is_file() => {}
+        Ok(_) => {
+            return Check::error(
+                "runtime_unavailable",
+                format!("{} is not a regular file", runtime.display()),
+            );
+        }
+        Err(error) => {
+            return Check::error(
                 "runtime_unavailable",
                 format!("{}: {error}", runtime.display()),
-            ),
-        },
-        Ok(_) => Check::error(
+            );
+        }
+    };
+    match Command::new(&node)
+        .arg(&runtime)
+        .arg("--check-runtime")
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            Check::new("ok", format!("Node.js {version}; {}", runtime.display()))
+        }
+        Ok(output) => Check::error(
             "runtime_unavailable",
-            format!("{} is not a regular file", runtime.display()),
+            format!(
+                "{} exited with {}: {}",
+                runtime.display(),
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
         ),
         Err(error) => Check::error(
             "runtime_unavailable",

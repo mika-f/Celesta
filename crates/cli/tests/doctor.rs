@@ -115,6 +115,52 @@ fn missing_bundled_node_fails_preflight() {
 }
 
 #[test]
+#[cfg(unix)]
+fn host_preflight_launches_the_runtime() {
+    use std::os::unix::fs::symlink;
+
+    let Ok(node) = Command::new("node")
+        .args(["-p", "process.execPath"])
+        .output()
+    else {
+        eprintln!("skipping runtime startup test: Node.js is not installed");
+        return;
+    };
+    assert!(node.status.success(), "{node:?}");
+    let home = tempfile::tempdir().unwrap();
+    let runtime = home.path().join("runtime/react/dist");
+    fs::create_dir_all(&runtime).unwrap();
+    fs::write(
+        runtime.join("cli.js"),
+        "require('missing-celesta-dependency');",
+    )
+    .unwrap();
+    symlink(
+        String::from_utf8(node.stdout).unwrap().trim(),
+        home.path().join("runtime/node"),
+    )
+    .unwrap();
+    let binary = home.path().join("celesta");
+    let built = env!("CARGO_BIN_EXE_celesta");
+    if fs::hard_link(built, &binary).is_err() {
+        fs::copy(built, &binary).unwrap();
+    }
+    let output = Command::new(binary)
+        .args(["doctor", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let report = report(&output);
+    assert_eq!(report["checks"]["node"]["code"], "runtime_unavailable");
+    assert!(
+        report["checks"]["node"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("missing-celesta-dependency")
+    );
+}
+
+#[test]
 #[cfg(target_os = "linux")]
 fn requested_adapter_must_work() {
     let output = Home::new()
