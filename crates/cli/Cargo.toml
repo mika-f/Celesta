@@ -13,6 +13,7 @@ name = "celesta"
 path = "src/main.rs"
 
 [dependencies]
+celesta-exporter.workspace = true
 celesta-plugin-host.workspace = true
 celesta-react-bridge.workspace = true
 celesta-registry-client.workspace = true

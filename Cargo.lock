@@ -1040,6 +1040,7 @@ dependencies = [
 name = "celesta-cli"
 version = "0.10.0"
 dependencies = [
+ "celesta-exporter",
  "celesta-plugin-host",
  "celesta-react-bridge",
  "celesta-registry-client",

@@ -27,6 +27,17 @@ stands for its path.
 
 ## Commands
 
+On Linux, use the unified CLI; `celesta export` accepts the same arguments as
+`celesta-exporter`, and `celesta info` is the standalone `--info` mode:
+
+```sh
+celesta info --react scene.tsx --json
+celesta export --react scene.tsx --frame 0 frame.png
+celesta export --react scene.tsx out.mov
+```
+
+The standalone command still works:
+
 ```sh
 Celesta-export [options] project.celesta.json out.mp4
 Celesta-export [options] --react scene.tsx out.mp4

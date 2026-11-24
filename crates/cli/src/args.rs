@@ -10,7 +10,7 @@ use semver::VersionReq;
 #[command(
     name = "celesta",
     version,
-    about = "Create and manage Celesta projects."
+    about = "Create, manage, and export Celesta projects."
 )]
 pub struct Cli {
     #[command(subcommand)]

@@ -5,8 +5,8 @@
 use std::io::{self, Write};
 use std::path::Path;
 
-use celesta_exporter::report::{self, Events, HintStyle};
-use celesta_exporter::{ExportError, ExportProgress};
+use crate::report::{self, Events, HintStyle};
+use crate::{ExportError, ExportProgress};
 use celesta_react_bridge::PropsFileChoice;
 
 /// Runs `export`, then prints its report; with `progress`, each event is

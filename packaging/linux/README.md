@@ -44,14 +44,19 @@ font files in the mounted folder and load them with `<Font>`.
 Without a terminal attached, the exporter prints text progress. Add `-t` to
 `docker run` for the interactive dashboard.
 
-## Plugin command
+## Unified CLI
 
-The image also contains `celesta`, the command that adds, removes, installs, and
-updates a project's plugins. Run it as `celesta plugin ...`:
+The image also contains `celesta` for initialization, metadata, exports, and
+plugin management. Use it as the container entry point explicitly:
 
 ```sh
+docker run --rm -v "$PWD:/work" --entrypoint /opt/celesta/celesta celesta-exporter info --react film.tsx --json
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" --entrypoint /opt/celesta/celesta celesta-exporter export --react film.tsx --frame 0 frame.png
 docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" --entrypoint /opt/celesta/celesta celesta-exporter plugin --help
 ```
+
+Invocations with no `--entrypoint` override still use the standalone
+`celesta-exporter` argument syntax.
 
 ## MCP server
 

@@ -36,7 +36,17 @@ MP4 を選ばなかった理由と使えるようにする方法が **Preset** �
 
 ## コマンドラインから
 
-アプリにはコマンドライン用の書き出しツールも含まれています。`first-scene.tsx` があるプロジェクトフォルダでターミナルを開き、OS に合ったコマンドを使ってください。
+ディスプレイのない Linux では、`first-scene.tsx` があるプロジェクトフォルダで次のコマンドを実行します。
+
+```sh title="React コンポジションの確認と書き出し"
+celesta info --react first-scene.tsx --json
+celesta export --react first-scene.tsx --frame 0 frame.png
+celesta export --react first-scene.tsx output.mov
+```
+
+`celesta info` は描画せずにサイズ、フレームレート、長さ、React コンポジションを表示します。`celesta export` には `--list-components --check` を含め、従来の書き出しツールと同じ引数を渡せます。`celesta-exporter` と Docker イメージのデフォルトのエントリーポイントも、従来の引数のまま使えます。
+
+アプリに同梱される単体の書き出しツールを使う場合は、OS に合ったコマンドを選んでください。
 
 ::::tabs[書き出しを行う OS]{default="macOS"}
 :::tab[macOS]

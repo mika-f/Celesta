@@ -19,8 +19,8 @@
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 
+use crate::ReactRuntimeOptions;
 use celesta_composition::Time;
-use celesta_exporter::ReactRuntimeOptions;
 use celesta_plugin_host::InstalledPlugins;
 use celesta_react_bridge::{ReactBridge, ReactBridgeError, SpawnOptions};
 use serde_json::{Value, json};

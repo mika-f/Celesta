@@ -1,6 +1,7 @@
 //! Frame-exact project export through the shared evaluator and renderers.
 
 mod check;
+pub mod cli;
 pub mod components;
 mod control;
 mod encode;
