@@ -18,6 +18,11 @@ pub const CHECK_LICENSE_FLAG: &str = "--check-license";
 /// The flag that has a program open every encoder it describes.
 pub const CHECK_BUILD_FLAG: &str = "--check-build";
 
+/// The flags that print what the program is, for an operator who runs it by
+/// hand; Celesta never passes them.
+const HELP_FLAGS: [&str; 2] = ["--help", "-h"];
+const VERSION_FLAGS: [&str; 2] = ["--version", "-V"];
+
 /// What a program run with an argument it does not know exits with, as
 /// command-line tools do for a usage error.
 const USAGE_EXIT: u8 = 2;
@@ -25,7 +30,8 @@ const USAGE_EXIT: u8 = 2;
 /// Serves one build's components, prints its manifest, or validates a build,
 /// and says what the program exits with. `--check-license` is an explicit
 /// distribution gate; local use may link a system FFmpeg of either license.
-/// `--check-build` actually opens encoders. Protocol mode takes no argument:
+/// `--check-build` actually opens encoders. `--help` and `--version` print
+/// to stdout and exit 0 without touching FFmpeg. Protocol mode takes no argument:
 /// any other argument, or a second one, is a usage error (the usage on
 /// stderr, exit 2), so a misspelled gate, or one an older program does not
 /// have, fails rather than serving an empty stdin and exiting 0.
@@ -50,6 +56,17 @@ pub fn run_plugin(codec: FfmpegCodec, id: &str, version: &str, manifest: &str) -
         eprintln!("{}", usage(&program));
         return ExitCode::from(USAGE_EXIT);
     };
+    match command {
+        Command::Help => {
+            println!("{}", help(&program, codec.profile, version));
+            return ExitCode::SUCCESS;
+        }
+        Command::Version => {
+            println!("{program} {version}");
+            return ExitCode::SUCCESS;
+        }
+        _ => {}
+    }
     match run(codec, command, id, version, manifest) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -67,6 +84,8 @@ enum Command {
     Manifest,
     CheckBuild,
     CheckLicense,
+    Help,
+    Version,
 }
 
 impl Command {
@@ -79,6 +98,8 @@ impl Command {
                 MANIFEST_FLAG => Some(Self::Manifest),
                 CHECK_BUILD_FLAG => Some(Self::CheckBuild),
                 CHECK_LICENSE_FLAG => Some(Self::CheckLicense),
+                flag if HELP_FLAGS.contains(&flag) => Some(Self::Help),
+                flag if VERSION_FLAGS.contains(&flag) => Some(Self::Version),
                 _ => None,
             },
             _ => None,
@@ -89,8 +110,45 @@ impl Command {
 /// How `program` is run.
 fn usage(program: &str) -> String {
     format!(
-        "usage: {program} [{MANIFEST_FLAG} | {CHECK_BUILD_FLAG} | {CHECK_LICENSE_FLAG}]\n\
-         With no argument, it serves Celesta's media plugin protocol on stdin and stdout."
+        "usage: {program} [{MANIFEST_FLAG} | {CHECK_BUILD_FLAG} | {CHECK_LICENSE_FLAG} | --help | --version]\n\
+         With no argument, it serves Celesta's media plugin protocol on stdin and stdout.\n\
+         Run {program} --help for what this program is."
+    )
+}
+
+/// What `program` is and how an operator uses Celesta instead.
+fn help(program: &str, profile: Profile, version: &str) -> String {
+    let (id, what) = match profile {
+        Profile::Standard => (
+            crate::PLUGIN_ID,
+            "Celesta's FFmpeg media plugin: it probes, decodes, encodes, and muxes media",
+        ),
+        Profile::X264 => (
+            crate::X264_PLUGIN_ID,
+            "Celesta's optional GPL H.264 encoder plugin (libx264)",
+        ),
+    };
+    format!(
+        "{program} {version}\n\
+         {what}.\n\
+         \n\
+         This is not a command to run by hand. Celesta finds it beside its own\n\
+         executable or in a plugin folder and starts it as a subprocess (plugin\n\
+         id `{id}`), talking to it over stdin and stdout.\n\
+         \n\
+         To check that this machine can export, and which media components work:\n\
+         \x20 celesta doctor\n\
+         \x20 celesta export --list-components --check\n\
+         To render a project:\n\
+         \x20 celesta export <project.celesta.json> <output.mp4>\n\
+         \n\
+         usage: {program} [{MANIFEST_FLAG} | {CHECK_BUILD_FLAG} | {CHECK_LICENSE_FLAG} | --help | --version]\n\
+         \x20 (no argument)    serve Celesta's media plugin protocol on stdin and stdout\n\
+         \x20 {MANIFEST_FLAG}       print the plugin manifest as JSON\n\
+         \x20 {CHECK_BUILD_FLAG}    open every encoder this build describes\n\
+         \x20 {CHECK_LICENSE_FLAG}  refuse a build linking an FFmpeg this plugin may not ship\n\
+         \x20 -h, --help       print this help\n\
+         \x20 -V, --version    print the version"
     )
 }
 
@@ -120,6 +178,7 @@ fn run(
             .check_build()
             .map_err(|error| format!("{id}: {error}")),
         Command::CheckLicense => unreachable!("checked first"),
+        Command::Help | Command::Version => unreachable!("answered before running"),
         Command::Serve => celesta_media::protocol::serve(&mut codec, id, version)
             .map_err(|error| format!("{id}: {error}")),
     }
@@ -190,9 +249,14 @@ mod tests {
         assert_eq!(parsed(&["--manifest"]), Some(Command::Manifest));
         assert_eq!(parsed(&["--check-build"]), Some(Command::CheckBuild));
         assert_eq!(parsed(&["--check-license"]), Some(Command::CheckLicense));
+        assert_eq!(parsed(&["--help"]), Some(Command::Help));
+        assert_eq!(parsed(&["-h"]), Some(Command::Help));
+        assert_eq!(parsed(&["--version"]), Some(Command::Version));
+        assert_eq!(parsed(&["-V"]), Some(Command::Version));
         for unknown in [
             &["--check-licence"][..],
-            &["--help"],
+            &["help"],
+            &["--help", "--version"],
             &[""],
             &["--manifest", "--check-build"],
             &["--manifest", "extra"],
