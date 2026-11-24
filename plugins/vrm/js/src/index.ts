@@ -116,7 +116,7 @@ export interface VrmProps extends CommonProps {
    * frame mixes the shapes of this many frames before it. Default 2; 0 snaps.
    */
   mouthSmoothing?: number;
-  /** Blinks, seeded as `<CharacterView>` portraits do. `false` never blinks. Default `{}`. */
+  /** Automatic blinks, seeded as `<CharacterView>` portraits do. `false` disables them. Default `{}`. */
   blink?: BlinkTiming | false;
   /**
    * Where the eyes look: the camera, a point in the avatar's space, or
@@ -128,6 +128,8 @@ export interface VrmProps extends CommonProps {
   camera?: 'full' | 'bust' | 'face' | VrmCamera;
   /** Default: the plugin's reference light. */
   lights?: VrmLights;
+  /** One `.vrma` clip, played once from local frame 0, then held. Do not combine with `motions`. */
+  motion?: AssetInput;
   /**
    * Motions in the order they start. Before the first the avatar rests;
    * each plays until the next starts. Expressions given here win over a
@@ -190,6 +192,7 @@ const DATA_PROPS = [
   'lookAt',
   'camera',
   'lights',
+  'motion',
   'motions',
   'tracks',
 ] as const;
@@ -272,13 +275,20 @@ export function vrmElementProps(props: VrmProps, frame: number, fps: number): Pl
   const rest: Record<string, unknown> = { ...props };
   for (const key of DATA_PROPS) delete rest[key];
   delete rest.src;
+  const motions = normalizeMotions(props);
   return {
     ...(rest as CommonProps),
     plugin: 'vrm',
-    assets: { model: props.src, ...motionClips(props.motions ?? []) },
+    assets: { model: props.src, ...motionClips(motions) },
     time: frame / fps,
-    data: vrmData(props, frame, fps) as unknown as JsonValue,
+    data: frameData(props, frame, fps, motions) as unknown as JsonValue,
   };
+}
+
+function normalizeMotions({ motion, motions }: VrmProps): VrmMotion[] {
+  if (motion === undefined) return motions ?? [];
+  if (motions !== undefined) throw new Error('Vrm accepts either motion or motions, not both');
+  return [{ src: motion }];
 }
 
 /** Each distinct `src` (`===`) once, as `motion<i>`, `i` the index of its first motion. */
@@ -296,6 +306,10 @@ function clipIndex(motions: VrmMotion[], index: number): number {
 
 /** What the layer sends on `frame` at `fps`: a pure function of them. */
 export function vrmData(props: VrmProps, frame: number, fps: number): VrmData {
+  return frameData(props, frame, fps, normalizeMotions(props));
+}
+
+function frameData(props: VrmProps, frame: number, fps: number, motionList: VrmMotion[]): VrmData {
   const { mouthSmoothing } = props;
   if (mouthSmoothing !== undefined && !(Number.isFinite(mouthSmoothing) && mouthSmoothing >= 0)) {
     throw new Error('Vrm mouthSmoothing is a number of frames, 0 or more');
@@ -305,7 +319,7 @@ export function vrmData(props: VrmProps, frame: number, fps: number): VrmData {
     expressions.blink = BLINK[blinkPhase(frame, fps, props.blink ?? {})];
   }
   Object.assign(expressions, mouthExpressions(props, frame, fps), props.expressions);
-  const motions = motionData(props.motions ?? [], fps);
+  const motions = motionData(motionList, fps);
   const tracks = trackData(props.tracks ?? {}, fps);
   return {
     canvas: canvas(props),

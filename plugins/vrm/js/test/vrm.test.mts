@@ -10,7 +10,7 @@ import * as React from 'react';
 
 import { blinkPhase } from '@celesta.studio/character';
 import type { LipSyncTrack, MouthShape } from '@celesta.studio/character';
-import { Composition } from '@celesta.studio/react';
+import { Composition, Sequence } from '@celesta.studio/react';
 import { mount } from '@celesta.studio/react/internal';
 import { Vrm, vrmData, vrmElementProps } from '../src/index.ts';
 import type { VrmProps } from '../src/index.ts';
@@ -275,6 +275,55 @@ test('motions_name_their_clips', () => {
   ]);
   // No motions, no key.
   assert.ok(!('motions' in vrmData({ src, motions: [] }, 0, 30)));
+});
+
+test('one motion uses the same asset and data as a one-entry timeline', () => {
+  const motion = './wave.vrma';
+  const props = { src, blink: false } as const;
+  const shorthand = { ...props, motion };
+  const timeline = { ...props, motions: [{ src: motion }] };
+  assert.deepEqual(vrmElementProps(shorthand, 15, 30), vrmElementProps(timeline, 15, 30));
+  assert.deepEqual(vrmData(shorthand, 15, 30).motions, [{ clip: 'motion0', from: 0 }]);
+});
+
+test('motion and motions cannot be combined, even with an empty timeline', () => {
+  const props = { src, motion: './wave.vrma', motions: [] };
+  const message = { message: 'Vrm accepts either motion or motions, not both' };
+  assert.throws(() => vrmElementProps(props, 0, 30), message);
+  assert.throws(() => vrmData(props, 0, 30), message);
+});
+
+test('a single motion starts at frame zero of a nested sequence', () => {
+  const h = React.createElement;
+  const motion = './wave.vrma';
+  const mounted = mount(() =>
+    h(
+      Composition,
+      { width: 1920, height: 1080, fps: 30, durationInFrames: 90 },
+      h(Sequence, { from: 10 },
+        h(Sequence, { from: 20 },
+          h(Vrm, { src, motion, blink: false }),
+          h(Vrm, { src, motions: [{ src: motion }], blink: false }),
+        ),
+      ),
+    ),
+  );
+  const [before] = mounted.renderAt({ value: 29, timescale: 30 }, null).scene.layers;
+  assert.ok(before?.content.type === 'group');
+  assert.deepEqual(before.content.layers, []);
+  for (const frame of [30, 45]) {
+    const time = { value: frame, timescale: 30 };
+    const { scene } = mounted.renderAt(time, null);
+    assert.deepEqual(mounted.renderAt(time, null, { preview: true }).scene, scene);
+    const [outer] = scene.layers;
+    assert.ok(outer?.content.type === 'group');
+    const [inner] = outer.content.layers;
+    assert.ok(inner?.content.type === 'group');
+    const [shorthand, timeline] = inner.content.layers.map((layer) => layer.content);
+    assert.ok(shorthand?.type === 'plugin');
+    assert.equal(shorthand.time, (frame - 30) / 30);
+    assert.deepEqual(shorthand, timeline);
+  }
 });
 
 test('motion_times_are_numbers_of_frames', () => {

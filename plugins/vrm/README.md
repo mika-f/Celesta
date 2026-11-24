@@ -65,9 +65,12 @@ as the exporter's `--plugin-dir`.
 
 ## VRM animation clips
 
-`<Vrm>`'s `motions` play `.vrma` files (`VRMC_vrm_animation` 1.0). None is
-in the repository, and none may be committed: keep them in
-`plugins/vrm/assets/` (ignored by Git) or next to your composition. Two
+`<Vrm src="./avatar.vrm" motion="./wave.vrma" />` plays one VRMA clip
+(`VRMC_vrm_animation` 1.0) once from frame 0 of its sequence, then holds
+the last pose. Use `motions` instead for loops and timed transitions;
+giving both props throws. No clips are in the repository, and none may
+be committed: keep them in `plugins/vrm/assets/` (ignored by Git) or next
+to your composition. Two
 sources:
 
 - `test.vrma`, from [pixiv/three-vrm](https://github.com/pixiv/three-vrm)'s
@@ -81,8 +84,10 @@ sources:
 
 ## The demo
 
-[`demo.tsx`](demo.tsx) shows Seed-san from the bust up, playing a VRM
-animation on a loop, nodding once, and mouthing the vowels. It needs two
+[`demo.tsx`](demo.tsx) shows Seed-san in full view, playing the three-second
+VRM clip once and holding its last pose for one second, with a nod and
+mouth shapes added separately. The clip moves only the right arm and
+the face expressions that Celesta reads. The demo needs two
 files in `plugins/vrm/assets/`, which Git ignores:
 
 - `Seed-san.vrm` (VRM Public License 1.0), from
@@ -90,8 +95,8 @@ files in `plugins/vrm/assets/`, which Git ignores:
   `samples/Seed-san/vrm`.
 - `test.vrma`, the VRM animation the plugin's tests use, from
   [pixiv/three-vrm](https://github.com/pixiv/three-vrm)'s
-  `packages/three-vrm-animation/examples/models`. Any other `.vrma` works
-  too; change the demo's `motions` to its name.
+  `packages/three-vrm-animation/examples/models`. To try another `.vrma`,
+  change the demo's `motion` path.
 
 Then build the plugin and the codec plugin, which writes the MP4, into
 `plugins/dist`, and export with it (the codec needs the FFmpeg development

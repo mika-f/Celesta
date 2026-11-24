@@ -488,10 +488,11 @@ export default function Root() {
 | `expressions` | Expression weights from 0 to 1, by VRM preset (`happy`, `angry`, `sad`, `relaxed`, `surprised`, `aa`, `blink`, …) or by the model's own custom names. They win over `blink` and the mouth. |
 | `mouth` | A mouth shape (`'a'`, `'i'`, `'u'`, `'e'`, `'o'`, or `'closed'`), or vowel weights such as `{ aa: 0.5, oh: 0.3 }`. It sets all five vowels (`aa`, `ih`, `ou`, `ee`, `oh`): the ones it leaves out are 0, so a motion's mouth does not show through. |
 | `lipSync`, `mouthSmoothing` | A lip-sync track (from `loadLipSync()`, or a spoken line's `lipSync`), used when `mouth` is not given, its shapes blended over `mouthSmoothing` frames (2 by default; 0 snaps). Like `mouth`, it sets all five vowels, so the mouth closes when the voice is silent. |
-| `blink` | Blink timing, seeded like a character portrait's; `false` never blinks. |
+| `blink` | Automatic blink timing, seeded like a character portrait's. Set `false` to let a clip supply blinks instead. |
 | `lookAt` | Where the eyes look: `'camera'`, a point `[x, y, z]` in the avatar's space, or `{ yaw, pitch }` in degrees (positive yaw to the avatar's right, positive pitch up). Without it, straight ahead. |
 | `camera` | `'full'` (the default: the whole avatar), `'bust'` (from the waist up, starting at the humanoid's spine bone), `'face'`, or `{ position, target, fov?, near?, far? }` in the avatar's space (`fov` in degrees, 30 by default). |
 | `lights` | `{ directional: [{ direction, color, intensity }], ambient }`, up to four lights (a fifth throws), colors as `#rgb` or `#rrggbb`. It replaces the reference light, so without `ambient` the ambient light is black. Without `lights`, the plugin's reference light: Unity's default directional light from the upper front and its default ambient color. A light's `intensity`, and its color times that intensity, must stay finite as 32-bit floats; otherwise the frame fails with an error naming `lights.directional[i].intensity`. |
+| `motion` | One `.vrma` clip, played once from frame 0 of the enclosing sequence, then held at its last pose. Do not combine with `motions`. |
 | `motions` | VRM animations (`.vrma`) on the timeline: `[{ src, from?, loop?, fadeIn? }]`. `from` is the frame of the enclosing sequence the motion starts on (0 by default), and `fadeIn` the frames over which it blends in from the motion before it (0 by default). A non-finite `from`, or a negative or non-finite `fadeIn`, throws. |
 | `tracks` | Keyframed turns of humanoid bones on top of the motions: `{ head: { yaw: [{ frame, value, easing? }, …] }, … }`, with `pitch`, `yaw`, and `roll` in degrees, and `x`, `y`, and `z` in metres for `hips` only. Eye bones cannot be tracked if the avatar's lookAt turns them. |
 
@@ -517,24 +518,39 @@ In the desktop app's Add menu, **VRM avatar** asks for a `.vrm` file and draws i
 
 ### Motion, constraints, and spring bones
 
+Use `motion` to play a single clip. It is shorthand for `motions={[{ src: './wave.vrma' }]}`.
+
+```tsx
+<Vrm src="./avatar.vrm" motion="./wave.vrma" />
+```
+
 `motions` plays VRM animation clips (`.vrma`, `VRMC_vrm_animation` 1.0), retargeted onto the avatar as UniVRM retargets them: each bone turns from its rest as it does in the clip, and the hips travel as far as the clip's do, scaled by the avatar's hips height over the clip's. Motions run in `from` order, and each plays until the next one starts. Before the first, the avatar stands at rest. A motion with `loop` repeats; without it, its last pose holds. Expression weights in a clip apply too, but the ones you set in `expressions` win, and `mouth` or `lipSync` sets every vowel: with either, the clip's mouth never shows. Without them, the clip moves the mouth.
 
-`tracks` adds keyframed turns after the motions, in the bone's own frame from rest: the angles turn as `lookAt`'s do (as in UniVRM): `yaw` turns it to the avatar's right, `pitch` lifts it to look up, and `roll` tilts its top toward the avatar's right. Negative values turn the other way: a negative `yaw` turns to the left, a negative `pitch` nods down. `x`, `y`, and `z` on `hips` move the whole avatar, in metres. A keyframe's `frame` is a frame of the enclosing sequence; a fractional one is rounded to the nearest frame. Eye tracks are rejected if the avatar's lookAt turns the eye bones, even when the `lookAt` prop is omitted. Tracks still work with expression-based lookAt. This plays a walk, fades into an idle clip over 15 frames from frame 90, then turns the head to look over the avatar's left shoulder and back:
+Use `motions` instead to loop an idle clip, fade into a wave at frame 90, then fade back to idle at frame 180. Adjust the return frame to the length of your wave.
 
 ```tsx
 <Vrm
   src="./avatar.vrm"
   motions={[
-    { src: './walk.vrma', loop: true },
-    { src: './idle.vrma', from: 90, loop: true, fadeIn: 15 },
+    { src: './idle.vrma', loop: true },
+    { src: './wave.vrma', from: 90, fadeIn: 12 },
+    { src: './idle.vrma', from: 180, loop: true, fadeIn: 12 },
   ]}
+/>
+```
+
+`tracks` adds keyframed turns after the motions, in the bone's own frame from rest: the angles turn as `lookAt`'s do (as in UniVRM): `yaw` turns it to the avatar's right, `pitch` lifts it to look up, and `roll` tilts its top toward the avatar's right. Negative values turn the other way: a negative `yaw` turns to the left, a negative `pitch` nods down. `x`, `y`, and `z` on `hips` move the whole avatar, in metres. A keyframe's `frame` is a frame of the enclosing sequence; a fractional one is rounded to the nearest frame. Eye tracks are rejected if the avatar's lookAt turns the eye bones, even when the `lookAt` prop is omitted. Tracks still work with expression-based lookAt. You can also use `tracks` on its own to make the avatar nod without a VRMA clip:
+
+```tsx
+<Vrm
+  src="./avatar.vrm"
+  camera="bust"
   tracks={{
     head: {
-      yaw: [
-        { frame: 120, value: 0 },
-        { frame: 135, value: -40, easing: 'ease-in-out' },
-        { frame: 165, value: -40 },
-        { frame: 180, value: 0, easing: 'ease-in-out' },
+      pitch: [
+        { frame: 0, value: 0 },
+        { frame: 12, value: -15, easing: 'ease-in-out' },
+        { frame: 24, value: 0, easing: 'ease-in-out' },
       ],
     },
   }}
