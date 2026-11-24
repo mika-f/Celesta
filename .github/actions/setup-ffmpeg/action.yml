@@ -118,7 +118,12 @@ runs:
       if: runner.os != 'Windows'
       shell: bash
       run: |
-        echo "FFMPEG_IMAGE_OS=${ImageOS:-$RUNNER_OS}" >> "$GITHUB_ENV"
+        # A container job sees no ImageOS; name its distribution instead.
+        image_os="${ImageOS:-}"
+        if [[ -z "$image_os" && -r /etc/os-release ]]; then
+          image_os="$(. /etc/os-release && echo "$ID$VERSION_ID")"
+        fi
+        echo "FFMPEG_IMAGE_OS=${image_os:-$RUNNER_OS}" >> "$GITHUB_ENV"
         echo "FFMPEG_IMAGE_VERSION=${ImageVersion:-unknown}" >> "$GITHUB_ENV"
         case "$RUNNER_OS" in
           macOS) dependencies="$(brew list --versions x264 libvpx opus)" ;;
