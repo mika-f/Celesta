@@ -32,6 +32,13 @@ test('staging copies every template and leaves out source/', () => {
   }
 });
 
+test('staging ships the blank font with its license', () => {
+  const staged = fileURLToPath(new URL('../../packages/cli/dist/templates/blank/fonts/', import.meta.url));
+  assert.ok(existsSync(join(staged, 'Inter-Regular.woff2')));
+  assert.match(readFileSync(join(staged, 'inter.css'), 'utf8'), /url\('Inter-Regular\.woff2'\)/);
+  assert.match(readFileSync(join(staged, 'OFL.txt'), 'utf8'), /SIL OPEN FONT LICENSE Version 1\.1/);
+});
+
 // Stray OS and editor files never ship: staging a template that holds some
 // leaves them out, and the staged tree holds none.
 test('staging leaves out OS and editor files', () => {
