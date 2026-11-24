@@ -57,9 +57,11 @@ is neither. On macOS, `licenses/homebrew.json` and `licenses/native/<formula>`
 cover each Homebrew formula whose library is bundled into `Frameworks/`, traced
 from the program's `otool -L` (x264 must be one), and packaging fails on a
 bundled library that is neither a formula's nor FFmpeg's own.
-Linux release archives are built on `ubuntu-24.04`, named rather than
-`ubuntu-latest` so the glibc they require, the bundled `libx264.so.N` and the
-recorded `distribution` change only with the workflow. The supported release targets are macOS arm64, Windows x64,
+Linux release archives are built in an `ubuntu:22.04` container, so the glibc
+they require, the bundled `libx264.so.N` and the recorded `distribution` change
+only with the workflow. They need glibc 2.35 or later on x86-64: Ubuntu 22.04
+LTS, Debian 12 and later releases of either; older distributions are not
+supported. The supported release targets are macOS arm64, Windows x64,
 and Linux x64.
 
 `package-build.yml` builds the archive separately from the app, validates
