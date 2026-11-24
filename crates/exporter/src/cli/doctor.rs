@@ -7,12 +7,13 @@ use celesta_composition::Time;
 use celesta_gpu_renderer::{GpuRenderOptions, GpuRenderer};
 use celesta_media::ComponentRef;
 use celesta_react_bridge::runtime_paths;
+use clap::error::ErrorKind;
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser};
 use serde::Serialize;
 
 use super::{
     AudioEncoderArg, SourceArgs, export_range, options, parse_audio_encoder, parse_component,
-    parse_option, read_preset_file,
+    parse_option, read_preset_file, validate_audio_options,
 };
 use crate::project::folder_of;
 use crate::{
@@ -161,6 +162,9 @@ pub fn doctor_parse_failed(error: clap::Error) -> ! {
 pub fn run_doctor(matches: &ArgMatches) -> ExitCode {
     let cli =
         DoctorCli::from_arg_matches(matches).unwrap_or_else(|error| doctor_parse_failed(error));
+    if let Err(error) = validate_audio_options(cli.audio_encoder.as_ref(), &cli.audio_option) {
+        doctor_usage(ErrorKind::ArgumentConflict, error);
+    }
     let node = if cli.source.is_none() || cli.input.react {
         check_node()
     } else {
@@ -192,6 +196,14 @@ pub fn run_doctor(matches: &ArgMatches) -> ExitCode {
     } else {
         ExitCode::SUCCESS
     }
+}
+
+fn doctor_usage(kind: ErrorKind, message: String) -> ! {
+    doctor_parse_failed(
+        doctor_command()
+            .bin_name("celesta doctor")
+            .error(kind, message),
+    )
 }
 
 fn check_node() -> Check {

@@ -32,6 +32,34 @@ fn doctor_json_usage_has_the_same_schema() {
 }
 
 #[test]
+fn doctor_rejects_audio_options_without_an_encoder() {
+    let output = Home::new()
+        .command()
+        .args([
+            "doctor",
+            "--json",
+            "film.tsx",
+            "film.gif",
+            "--react",
+            "--audio-encoder",
+            "none",
+            "--audio-option",
+            "key=value",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let report = report(&output);
+    assert_eq!(report["checks"]["output"]["code"], "usage");
+    assert!(
+        report["checks"]["output"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("--audio-option needs an audio encoder")
+    );
+}
+
+#[test]
 fn missing_bundled_node_fails_preflight() {
     let home = tempfile::tempdir().unwrap();
     fs::create_dir(home.path().join("runtime")).unwrap();

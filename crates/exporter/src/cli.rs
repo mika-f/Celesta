@@ -1095,15 +1095,23 @@ fn output_kind(cli: &Cli, explicit: &dyn Fn(&str) -> bool) -> Result<OutputKind,
             "--debug-guides applies to still output; video exports never draw debug guides".into(),
         );
     }
+    validate_audio_options(cli.audio_encoder.as_ref(), &cli.audio_option)?;
+    // The exporter picks the muxer by the output's extension, and reports
+    // one no muxer writes as `unsupported_output`.
+    Ok(OutputKind::Video(cli.output_choice()))
+}
+
+fn validate_audio_options(
+    encoder: Option<&AudioEncoderArg>,
+    options: &[(String, String)],
+) -> Result<(), String> {
     // Options for no encoder would be dropped unchecked, typos and all.
-    if matches!(cli.audio_encoder, Some(AudioEncoderArg::None)) && !cli.audio_option.is_empty() {
+    if matches!(encoder, Some(AudioEncoderArg::None)) && !options.is_empty() {
         return Err(
             "--audio-option needs an audio encoder; --audio-encoder none writes no audio".into(),
         );
     }
-    // The exporter picks the muxer by the output's extension, and reports
-    // one no muxer writes as `unsupported_output`.
-    Ok(OutputKind::Video(cli.output_choice()))
+    Ok(())
 }
 
 /// Checks a command line with no <OUTPUT>, which clap allows only with
