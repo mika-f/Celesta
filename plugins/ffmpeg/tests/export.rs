@@ -528,8 +528,11 @@ fn an_mp4_without_the_x264_plugin_hints_at_installing_an_encoder() {
             "{style:?}: {failure}"
         );
         let hint = report::hint(&error, style).unwrap_or_else(|| panic!("{error} has a hint"));
-        assert!(hint.contains("install a media plugin"), "{style:?}: {hint}");
-        assert!(hint.contains("another format"), "{style:?}: {hint}");
+        assert!(hint.contains("ffmpeg-x264"), "{style:?}: {hint}");
+        assert!(
+            hint.contains("or write .mov (ProRes) or .webm (VP9) instead"),
+            "{style:?}: {hint}"
+        );
         assert_eq!(failure["error"]["hint"], hint.as_ref(), "{style:?}");
     }
 }
