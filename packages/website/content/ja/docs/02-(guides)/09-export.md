@@ -560,6 +560,8 @@ Celesta は[メディアプラグイン](/ja/docs/plugins/#メディアプラグ
 
 ソースビルドを使う場合は、[開発者向け手順](/ja/docs/build-from-source/)に対応する Cargo コマンドがあります。
 
+コマンドラインでの書き出しオプションは、`celesta-exporter --help`（デスクトップ版では `Celesta-export --help`）で確認できます。`celesta-react-render` は Celesta が React コンポジションを評価するための補助コマンドで、`celesta-mcp` は標準入出力を通じて MCP クライアントと通信するサーバーです。どちらも `--help` と `--version` ではプロトコル通信を開始しません。React の補助コマンドでこれらのオプションを使えるのは npm パッケージの `celesta-react-render` ラッパーだけです。デスクトップアプリが直接起動する内部用の `dist/cli.js` では使えません。
+
 時刻は秒数、`MM:SS.mmm`、`HH:MM:SS.mmm` を指定できます。選んだ範囲を、自身の 00:00 から始まる新しい動画にします。
 
 ## GPU がない Linux
