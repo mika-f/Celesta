@@ -34,9 +34,14 @@ fn json_cli_exports_first_last_and_rejects_overwrite_and_invalid_frames() {
     );
     assert!(result.stdout.is_empty());
     let err = stderr(&result);
-    let graphics = err.lines().find(|line| line.starts_with("graphics: "));
+    let graphics = err
+        .lines()
+        .find_map(|line| line.strip_prefix("graphics: "))
+        .and_then(|line| line.split_once(" · "));
     assert!(
-        graphics.is_some_and(|line| line.ends_with("(hardware)") || line.ends_with("(software)")),
+        graphics.is_some_and(|(backend, _)| {
+            backend.ends_with("(hardware)") || backend.ends_with("(software)")
+        }),
         "{err}"
     );
     assert!(

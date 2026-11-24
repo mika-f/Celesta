@@ -755,7 +755,7 @@ Without `--json`, an interactive terminal gets a full-screen dashboard.
 `--no-ui` makes the output plain text:
 
 ```text
-graphics: metal · Apple M2 (hardware)
+graphics: metal (hardware) · Apple M2
 rendering frame 300/1530  58.5 fps  elapsed 00:00:05  eta 00:00:21
 mixing audio
 muxing

@@ -1181,22 +1181,23 @@ mod tests {
     #[test]
     fn dashboard_shows_the_adapter_while_rendering() {
         let mut state = State::new();
+        let adapter = "llvmpipe (LLVM 15.0.7, 256 bits)";
         state.update(ExportProgress::Graphics(crate::GraphicsInfo {
             backend: "vulkan",
-            adapter: "llvmpipe".into(),
+            adapter: adapter.into(),
             software: true,
         }));
         state.update(ExportProgress::Rendering { frame: 1, total: 2 });
-        for (width, height) in [(110, 26), (50, 15), (50, 8)] {
+        let prefix = "graphics: vulkan (software) · llvmpipe";
+        for (width, height) in [(50, 15), (50, 8)] {
             assert!(
-                screen(&state, width, height).contains("graphics: vulkan · llvmpipe (software)"),
+                screen(&state, width, height).contains(prefix),
                 "graphics missing at {width}×{height}"
             );
         }
-        assert_eq!(
-            state.take_scrollback(),
-            ["graphics: vulkan · llvmpipe (software)"]
-        );
+        let full = format!("graphics: vulkan (software) · {adapter}");
+        assert!(screen(&state, 110, 26).contains(&full));
+        assert_eq!(state.take_scrollback(), [full]);
     }
 
     #[test]

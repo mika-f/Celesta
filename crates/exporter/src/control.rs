@@ -65,7 +65,7 @@ impl std::fmt::Display for GraphicsInfo {
         } else {
             "hardware"
         };
-        write!(f, "{} · {} ({kind})", self.backend, self.adapter)
+        write!(f, "{} ({kind}) · {}", self.backend, self.adapter)
     }
 }
 
