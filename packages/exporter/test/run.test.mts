@@ -20,6 +20,7 @@ test('progress events reach the callback and the report resolves', { skip }, asy
   });
   assert.deepEqual(events, ['composition', 'rendering', 'wrote']);
   assert.equal(result.composition.frames, 30);
+  assert.equal(result.graphics, undefined);
   assert.deepEqual(result.outputs, [{ type: 'frame', path: '/work/f.png', frame: 0, time: 0 }]);
   // The report's status is not part of the result, nor its type.
   assert.equal((result as { status?: unknown }).status, undefined);
@@ -37,6 +38,7 @@ test('a video output carries its tracks', { skip }, async () => {
     ...run('video'),
     onProgress: (event) => events.push(event),
   });
+  assert.deepEqual(result.graphics, { backend: 'vulkan', adapter: 'llvmpipe', software: true });
   const output = result.outputs[0]!;
   assert.equal(output.type, 'video');
   if (output.type !== 'video') return;

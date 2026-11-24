@@ -45,7 +45,7 @@ switch (process.env.FAKE_MODE) {
       video: { component: 'ffmpeg-x264/libx264', name: 'H.264 (x264)', settings: ['CRF 20'] },
       audio: null,
     });
-    line(ok({ outputs: [video] }));
+    line(ok({ outputs: [video], graphics: { backend: 'vulkan', adapter: 'llvmpipe', software: true } }));
     break;
   case 'components':
     // The listings print their result without a status.

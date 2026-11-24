@@ -246,6 +246,13 @@ export interface QualityIssue {
   limit?: number;
 }
 
+/** The selected graphics backend and adapter. */
+export interface GraphicsInfo {
+  backend: string;
+  adapter: string;
+  software: boolean;
+}
+
 /** The exporter's `--json` result. */
 export interface ExportReport {
   status: 'ok' | 'error';
@@ -255,6 +262,8 @@ export interface ExportReport {
   propsFile?: string;
   propsFileAuto?: boolean;
   composition?: Composition;
+  /** Absent if no renderer was initialized, or from an older exporter. */
+  graphics?: GraphicsInfo;
   compositionId?: string;
   compositions?: ReactComposition[];
   outputs?: ExportOutput[];
@@ -279,6 +288,8 @@ export interface ExportResult {
   propsFile?: string;
   propsFileAuto?: boolean;
   composition: Composition;
+  /** Absent if no renderer was initialized, or from an older exporter. */
+  graphics?: GraphicsInfo;
   /** The selected React root and every root the entry declares. */
   compositionId?: string;
   compositions?: ReactComposition[];

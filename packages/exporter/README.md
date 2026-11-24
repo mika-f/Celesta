@@ -83,8 +83,9 @@ its `audio` track or `null`, `alpha`, and every file it wrote in `files`.
 `composition`, every written file in `outputs` with its absolute path and
 frame numbers (a video with sound also has its mix's `loudness`:
 `integratedLufs`, `truePeakDbtp`, and `gainDb` with a `loudness` target),
-`warnings`, and `stats`. Read the paths from `outputs` rather
-than working out file names.
+`warnings`, and `stats`. When a renderer was initialized, `graphics` reports
+its `backend`, `adapter` name, and `software` flag. Older exporters omit it.
+Read the paths from `outputs` rather than working out file names.
 
 ## Progress
 
