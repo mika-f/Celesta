@@ -30,7 +30,10 @@ ubuntu:22.04 container (transcript in
   answered in `run_plugin` before `run`. The help text picks the plugin
   description and id from the codec's `Profile`.
 - User guide (en, ja) `05-plugins.md`: the flag list and what `--help` and
-  `--version` print.
+  `--version` print, scoped to the two FFmpeg programs (the AVFoundation and
+  Media Foundation programs take no arguments).
+- Celesta Agent Skill `skills/celesta/references/plugins.md`: the same flags
+  beside the `cargo install` discovery notes.
 
 ## Checks
 
