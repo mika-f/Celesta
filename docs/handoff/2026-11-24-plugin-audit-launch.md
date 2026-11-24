@@ -15,6 +15,7 @@ remediation hint are shown in text and JSON. The JSON report keeps
 `schemaVersion: 1` and `error.code: "audit_failed"`. The new finding is
 `plugin_launch_failed`, with per-plugin status `launch_failed` unless a
 block or withdrawal takes precedence. A launch finding causes exit 1.
+The `launchChecked` flag distinguishes a checked build from a skipped one.
 
 ## Checks
 

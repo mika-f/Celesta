@@ -155,28 +155,29 @@ pub fn is_build(directory: &Path, id: &str, version: &semver::Version, tree_hash
 
 /// Checks whether a verified, enabled store plugin answers the startup handshake.
 /// The caller must exclude plugins blocked by advisories. Missing or changed
-/// builds and plugins without an executable for this platform are not launched.
+/// builds and plugins without an executable for this platform return `Ok(false)`.
+/// A successful handshake returns `Ok(true)`.
 pub fn probe_registry_plugin(
     directory: &Path,
     id: &str,
     version: &semver::Version,
     tree_hash: &Hash,
     settings: &UserSettings,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     if !is_valid_id(id)
         || !directory.is_absolute()
         || settings.is_disabled(id, directory)
         || !is_build(directory, id, version, tree_hash)
     {
-        return Ok(());
+        return Ok(false);
     }
     let Some((entry, _)) =
         read_manifest(directory, PluginSource::Registry).map_err(|error| error.to_string())?
     else {
-        return Ok(());
+        return Ok(false);
     };
     let Some(executable) = entry.executable() else {
-        return Ok(());
+        return Ok(false);
     };
     let mut child = PluginChild::start_quiet(&executable, directory)?;
     let hello = if entry.has_role(PluginRole::Media) {
@@ -185,7 +186,7 @@ pub fn probe_registry_plugin(
         child.hello_content(id)
     };
     hello.map_err(|error| child.explain_start_error(&error))?;
-    Ok(())
+    Ok(true)
 }
 
 /// A version in the store, and what its folder must hold to run.
@@ -499,7 +500,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(unix)]
-    fn probe_answer(mut manifest: Value, answer: Value, script: &str) -> Result<(), String> {
+    fn probe_answer(mut manifest: Value, answer: Value, script: &str) -> Result<bool, String> {
         use celesta_plugin::protocol::{Message, write_message};
         use std::os::unix::fs::PermissionsExt;
 

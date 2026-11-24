@@ -233,6 +233,7 @@ fn audit_plugins(
         let blocked = found
             .iter()
             .any(|finding| finding.code == FindingCode::Blocked);
+        let mut launch_checked = false;
         if !blocked && let Some(hash) = tree_hash {
             let result = launches.entry((id, version, hash)).or_insert_with(|| {
                 probe_registry_plugin(
@@ -243,6 +244,7 @@ fn audit_plugins(
                     &settings,
                 )
             });
+            launch_checked = !matches!(result, Ok(false));
             if let Err(reason) = result {
                 found.push(launch_finding(id, version, reason));
             }
@@ -269,7 +271,8 @@ fn audit_plugins(
             };
             plugins.push(json!({
                 "scope": scope, "id": id, "version": version, "status": status,
-                "listingChecked": listing_checked, "findings": found,
+                "listingChecked": listing_checked, "launchChecked": launch_checked,
+                "findings": found,
             }));
         } else {
             findings.extend(

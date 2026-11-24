@@ -157,6 +157,7 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   install (exit 1), `lockfile: "written"` means `celesta.lock` was
   already saved. Audit entries include coded findings;
   `listingChecked: false` means the listing could not be checked.
+  `launchChecked: false` means startup was not checked.
   Relay the `hint` and startup error in any `plugin_launch_failed` finding.
   Warnings stay on stderr; exit codes are
   0 for success, 1 for failure, and 2 for usage errors.

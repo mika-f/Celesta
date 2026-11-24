@@ -505,11 +505,20 @@ fn audit_reports_an_installed_plugin_that_cannot_launch() {
     let plugin = &report["plugins"][0];
     assert_eq!(plugin["scope"], "global");
     assert_eq!(plugin["status"], "launch_failed");
+    assert_eq!(plugin["launchChecked"], true);
     let finding = &plugin["findings"][0];
     assert_eq!(finding["code"], "plugin_launch_failed");
     assert_eq!(finding["fails"], true);
     assert!(finding["message"].as_str().unwrap().contains(loader_error));
     assert!(finding["hint"].as_str().unwrap().contains("newer glibc"));
+
+    settings.set_enabled("acme.codec", &directory, false);
+    settings.save(&home.settings()).unwrap();
+    let output = run(&home, &registry, &project, &["audit", "--json"]);
+    assert_exit(&output, 0);
+    assert_eq!(json_stdout(&output)["plugins"][0]["launchChecked"], false);
+    settings.set_enabled("acme.codec", &directory, true);
+    settings.save(&home.settings()).unwrap();
 
     registry.advisories(json!([advisory(
         "CELESTA-2026-0002",
@@ -521,6 +530,7 @@ fn audit_reports_an_installed_plugin_that_cannot_launch() {
     assert_exit(&output, 1);
     let report = json_stdout(&output);
     assert_eq!(report["plugins"][0]["status"], "blocked");
+    assert_eq!(report["plugins"][0]["launchChecked"], false);
     let findings = report["plugins"][0]["findings"].as_array().unwrap();
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0]["code"], "plugin_blocked");
