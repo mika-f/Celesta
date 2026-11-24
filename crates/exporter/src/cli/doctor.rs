@@ -358,6 +358,16 @@ fn test_render(
 
 fn check_destination(path: &Path, overwrite: bool) -> Result<(), ExportError> {
     let operation = "check intended output";
+    #[cfg(unix)]
+    if path.as_os_str().as_encoded_bytes().ends_with(b"/") {
+        return Err(ExportError::Io {
+            operation,
+            source: io::Error::new(
+                io::ErrorKind::NotADirectory,
+                format!("{} ends with a directory separator", path.display()),
+            ),
+        });
+    }
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.is_dir() => Err(ExportError::Io {
             operation,

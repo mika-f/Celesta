@@ -157,6 +157,18 @@ fn a_render_probe_obeys_the_output_path_and_project_lock() {
     {
         use std::os::unix::fs::symlink;
 
+        let trailing_slash = format!("{}/", destination.display());
+        let output = home
+            .command()
+            .args(["doctor", "--json", "--frame", "0"])
+            .arg(&source)
+            .arg(trailing_slash)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert_eq!(report(&output)["checks"]["output"]["code"], "io");
+        assert!(!destination.parent().unwrap().exists());
+
         let parent = destination.parent().unwrap();
         symlink(home.path().join("missing-target"), parent).unwrap();
         let output = run(&[]);
