@@ -61,6 +61,10 @@ for example `docker run --rm -v "$PWD:/work" celesta-exporter --react film.tsx f
 If an input is named like a subcommand, pass it as a path (for example, `./info`)
 or use the explicit `export` subcommand.
 
+If the container user has no writable home, Celesta uses a private temporary
+one. To keep installed registry plugins across runs, mount a writable home
+and set `HOME` to its path in the container.
+
 ## MCP server
 
 The image also contains `celesta-mcp`, the MCP server that lets coding agents
