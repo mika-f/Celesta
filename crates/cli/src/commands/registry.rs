@@ -6,10 +6,13 @@ use std::process::ExitCode;
 
 use celesta_plugin_host::{Lockfile, UserSettings};
 use celesta_registry_client::{ClientError, ResolveWarning};
-use celesta_registry_format::{AdvisoryList, Index, SearchEntry, VersionEntry};
+use celesta_registry_format::{Advisory, AdvisoryList, Index, SearchEntry, VersionEntry};
 use semver::Version;
+use serde::Serialize;
+use serde_json::json;
 
 use super::{Failure, finish};
+use crate::json::{Error, Output, Scope};
 use crate::session::Session;
 use crate::{advisories, report};
 
@@ -167,45 +170,80 @@ fn state(index: &Index, entry: &VersionEntry, advisories: Option<&AdvisoryList>)
 /// Checks every plugin the project in `root` locks, and every global one,
 /// against the advisories and its index. Fails when one is blocked or no
 /// longer distributed.
-pub fn audit(session: &Session, root: &Path) -> ExitCode {
+pub(crate) fn audit(session: &Session, root: &Path, output: Output) -> ExitCode {
     let advisories = advisories::refresh(session);
-    match audit_plugins(session, root, advisories.as_ref()) {
-        Ok(true) => ExitCode::SUCCESS,
-        Ok(false) => ExitCode::FAILURE,
-        Err(failure) => finish(Err(failure)),
+    match audit_plugins(session, root, advisories.as_ref(), output) {
+        Ok(exit) => exit,
+        Err(error) => output.fail(error),
     }
 }
 
-/// Prints the findings; returns whether none stops a plugin from running.
+/// Prints the findings and fails if any stop a plugin from running.
 fn audit_plugins(
     session: &Session,
     root: &Path,
     advisories: Option<&AdvisoryList>,
-) -> Result<bool, Failure> {
-    let lock = Lockfile::load(root)?;
-    let settings = UserSettings::load(&session.settings_path)?;
+    output: Output,
+) -> Result<ExitCode, Error> {
+    let lock = Lockfile::load(root).map_err(|error| Error::new("lockfile", error))?;
+    let settings = UserSettings::load(&session.settings_path)
+        .map_err(|error| Error::new("settings", error))?;
     let locked = lock
         .iter()
         .flat_map(|lock| &lock.plugins)
-        .map(|(id, locked)| (id.as_str(), &locked.version));
+        .map(|(id, locked)| (Scope::Project, id.as_str(), &locked.version));
     let global = settings
         .registry_plugins
         .iter()
-        .map(|plugin| (plugin.id.as_str(), &plugin.version));
+        .map(|plugin| (Scope::Global, plugin.id.as_str(), &plugin.version));
     let mut seen = BTreeSet::new();
     let mut indexes = BTreeMap::new();
     let mut findings = Vec::new();
+    let mut plugins = Vec::new();
     let mut passes = true;
-    for (id, version) in locked.chain(global) {
-        if !seen.insert((id, version)) {
+    for (scope, id, version) in locked.chain(global) {
+        if !output.json && !seen.insert((id, version)) {
             continue;
         }
         let listing = indexes
             .entry(id)
             .or_insert_with(|| audit_listing(session, id));
         let found = audit_findings(id, version, listing, advisories);
-        passes &= found.iter().all(|finding| !finding.fails);
-        findings.extend(found);
+        let failed = found.iter().any(|finding| finding.fails);
+        passes &= !failed;
+        if output.json {
+            let listing_checked = !matches!(listing, Listing::Unknown);
+            let status = if found.iter().any(|finding| finding.advisory.is_some()) {
+                "blocked"
+            } else if failed {
+                "withdrawn"
+            } else if !listing_checked {
+                "skipped"
+            } else if found.is_empty() {
+                "ok"
+            } else {
+                "warning"
+            };
+            plugins.push(json!({
+                "scope": scope, "id": id, "version": version, "status": status,
+                "listingChecked": listing_checked, "findings": found,
+            }));
+        } else {
+            findings.extend(found);
+        }
+    }
+    if output.json {
+        let error = (!passes).then(|| {
+            Error::new(
+                "audit_failed",
+                "one or more plugins are blocked or no longer distributed",
+            )
+        });
+        return Ok(output.write(
+            plugins,
+            json!({ "advisoriesAvailable": advisories.is_some() }),
+            error.as_ref(),
+        ));
     }
     if findings.is_empty() {
         let unchecked = indexes
@@ -220,7 +258,11 @@ fn audit_plugins(
     for finding in findings {
         println!("{}", finding.text);
     }
-    Ok(passes)
+    Ok(if passes {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    })
 }
 
 /// What the registry says about a plugin `audit` checks.
@@ -256,20 +298,24 @@ fn audit_listing(session: &Session, id: &str) -> Listing {
 }
 
 /// One line `audit` prints.
-#[derive(Debug, PartialEq)]
-struct Finding {
+#[derive(Debug, PartialEq, Serialize)]
+struct Finding<'a> {
+    code: &'static str,
+    #[serde(rename = "message")]
     text: String,
     /// Whether it stops the plugin from running.
     fails: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    advisory: Option<&'a Advisory>,
 }
 
 /// What is wrong with `version` of `id` by `advisories` and `listing`.
-fn audit_findings(
+fn audit_findings<'a>(
     id: &str,
     version: &Version,
     listing: &Listing,
-    advisories: Option<&AdvisoryList>,
-) -> Vec<Finding> {
+    advisories: Option<&'a AdvisoryList>,
+) -> Vec<Finding<'a>> {
     let mut findings = Vec::new();
     if let Some(advisory) = advisories.and_then(|list| list.blocking(id, version)) {
         let fixed = advisory
@@ -278,11 +324,13 @@ fn audit_findings(
             .map(|fixed| format!("; {fixed} fixes it"))
             .unwrap_or_default();
         findings.push(Finding {
+            code: "plugin_blocked",
             text: format!(
                 "{id} {version}: blocked by {}: {}{fixed}",
                 advisory.id, advisory.title
             ),
             fails: true,
+            advisory: Some(advisory),
         });
     }
     let index = match listing {
@@ -298,15 +346,19 @@ fn audit_findings(
     });
     let Some(entry) = entry.filter(|entry| !entry.withdrawn) else {
         findings.push(Finding {
+            code: "plugin_withdrawn",
             text: format!("{id} {version} is no longer distributed"),
             fails: true,
+            advisory: None,
         });
         return findings;
     };
     if entry.yanked {
         findings.push(Finding {
+            code: "plugin_yanked",
             text: format!("{id} {version} has been yanked"),
             fails: false,
+            advisory: None,
         });
     }
     if let Some(deprecation) = index.and_then(|index| index.deprecation(entry)) {
@@ -317,8 +369,10 @@ fn audit_findings(
             replacement: deprecation.replacement.clone(),
         };
         findings.push(Finding {
+            code: "plugin_deprecated",
             text: warning.to_string(),
             fails: false,
+            advisory: None,
         });
     }
     findings
@@ -370,8 +424,10 @@ mod tests {
             audit_findings("acme.charts", &Version::new(2, 0, 0), listing, None)
         };
         let expected = [Finding {
+            code: "plugin_withdrawn",
             text: "acme.charts 2.0.0 is no longer distributed".to_owned(),
             fails: true,
+            advisory: None,
         }];
         let listing = Listing::Index(Box::new(index(&["1.0.0"])));
         assert_eq!(gone(&listing), expected);

@@ -62,6 +62,9 @@ pub enum PluginCommand {
     Remove { id: String },
     /// Install the plugins this project's celesta.lock names.
     Install {
+        /// Print one machine-readable JSON report instead of text.
+        #[arg(long)]
+        json: bool,
         /// Install exactly what celesta.lock names, never resolving again.
         #[arg(long)]
         locked: bool,
@@ -76,9 +79,17 @@ pub enum PluginCommand {
     /// their requirements allow.
     Update { id: Option<String> },
     /// Show the registry plugins this project and every project use.
-    List,
+    List {
+        /// Print one machine-readable JSON report instead of text.
+        #[arg(long)]
+        json: bool,
+    },
     /// Check the plugins in use against the security advisories.
-    Audit,
+    Audit {
+        /// Print one machine-readable JSON report instead of text.
+        #[arg(long)]
+        json: bool,
+    },
     /// Remove downloaded versions no project uses.
     Gc {
         /// Say what would be removed without removing it.

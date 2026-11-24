@@ -46,6 +46,9 @@ fn parse_error(error: clap::Error) -> ExitCode {
         }
         error => {
             let rendered = error.render().to_string();
+            if wants_json_usage_error() {
+                return celesta_cli::json::usage_error(rendered.trim_end());
+            }
             match rendered.strip_prefix("error: ") {
                 Some(message) => celesta_cli::report::error(message.trim_end()),
                 // The help shown for a missing subcommand is not an error
@@ -55,6 +58,32 @@ fn parse_error(error: clap::Error) -> ExitCode {
             ExitCode::from(celesta_cli::USAGE)
         }
     }
+}
+
+fn wants_json_usage_error() -> bool {
+    let mut args = std::env::args_os().skip(1);
+    if !args.next().is_some_and(|arg| arg == "plugin") {
+        return false;
+    }
+    let mut json = false;
+    while let Some(arg) = args.next() {
+        match arg.as_encoded_bytes() {
+            b"--" => break,
+            b"--project" => {
+                args.next();
+            }
+            b"--json" => json = true,
+            b"list" | b"install" | b"audit" => {
+                return json
+                    || args
+                        .take_while(|arg| arg != "--")
+                        .any(|arg| arg == "--json");
+            }
+            option if option.starts_with(b"-") => {}
+            _ => break,
+        }
+    }
+    false
 }
 
 #[cfg(test)]

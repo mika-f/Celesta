@@ -148,6 +148,15 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   when one is blocked or no longer distributed; it prints `no problems
   found in what could be checked` when it could not reach a plugin's
   listing.
+- For scripts, use `celesta plugin list --json`, `install --json`
+  (including locked, offline, or global installs), or `audit --json`.
+  Read the one stdout report's `plugins` for scope, id, version and
+  status, and branch on `error.code`, not `error.message`. On a failed
+  install (exit 1), `lockfile: "written"` means `celesta.lock` was
+  already saved. Audit entries include coded findings;
+  `listingChecked: false` means the listing could not be checked.
+  Warnings stay on stderr; exit codes are
+  0 for success, 1 for failure, and 2 for usage errors.
 
 ## Media plugins
 
