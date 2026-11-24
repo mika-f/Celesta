@@ -325,7 +325,8 @@ import { Vrm } from '@celesta-plugin/vrm';
   `lipSync` (a `LipSyncTrack`) with `mouthSmoothing` (frames, default 2)
   when `mouth` is absent. Either sets all five vowels (the rest 0), so a
   motion's vowels never leak through a closed or silent mouth; with
-  neither, a motion's vowels play. `blink`: blink timing, `false` for none.
+  neither, a motion's vowels play. `blink`: automatic blink timing. Set
+  `false` to disable automatic blinks without overriding a clip's blinks.
 - `lookAt`: `'camera'`, `[x, y, z]` in the avatar's space (metres, +Y up,
   facing +Z, its left at +X), or `{ yaw, pitch }` in degrees (yaw
   positive to the avatar's right, pitch positive up).
