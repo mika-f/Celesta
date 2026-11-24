@@ -10,8 +10,9 @@
 use crate::project_types::{
     ProjectTypesSetup, STAMP, project_types_template, set_up_project_types_in,
 };
-use celesta_plugin_host::mark_project_root;
+use celesta_plugin_host::{PROJECT_CONFIG, mark_project_root};
 use serde::Deserialize;
+use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::fs;
 use std::io::{self, Write};
@@ -112,18 +113,27 @@ pub fn initialize_project(
     files.sort();
 
     let keep_existing = template.is_none();
-    if !keep_existing {
-        let conflicts: Vec<_> = files
-            .iter()
-            .filter(|file| root.join(file).exists())
-            .cloned()
-            .collect();
-        if !conflicts.is_empty() {
-            return Err(TemplateError::Conflicts {
-                root: std::path::absolute(root)?,
-                paths: conflicts,
-            });
+    let mut conflicts = BTreeSet::new();
+    for file in &files {
+        if let Some(path) = blocking_path(root, file, keep_existing)? {
+            conflicts.insert(path);
         }
+    }
+    for file in [
+        "tsconfig.json",
+        "package.json",
+        ".gitignore",
+        PROJECT_CONFIG,
+    ] {
+        if let Some(path) = blocking_path(root, Path::new(file), true)? {
+            conflicts.insert(path);
+        }
+    }
+    if !conflicts.is_empty() {
+        return Err(TemplateError::Conflicts {
+            root: std::path::absolute(root)?,
+            paths: conflicts.into_iter().collect(),
+        });
     }
 
     fs::create_dir_all(root)?;
@@ -161,6 +171,29 @@ pub fn initialize_project(
         types: setup,
         template: info,
     })
+}
+
+fn blocking_path(root: &Path, file: &Path, keep_existing: bool) -> io::Result<Option<PathBuf>> {
+    let mut relative = PathBuf::new();
+    let mut components = file.components().peekable();
+    while let Some(component) = components.next() {
+        relative.push(component);
+        let path = root.join(&relative);
+        match fs::symlink_metadata(&path) {
+            Ok(_) => {
+                if components.peek().is_some() && path.is_dir() {
+                    continue;
+                }
+                if components.peek().is_none() && keep_existing && path.is_file() {
+                    return Ok(None);
+                }
+                return Ok(Some(relative));
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(None)
 }
 
 /// Every file under `dir`, as paths relative to the template folder.
@@ -230,8 +263,8 @@ pub enum TemplateError {
         name: String,
         available: Vec<String>,
     },
-    /// Files the template would create that already exist, relative to
-    /// `root` (made absolute) and sorted.
+    /// Existing paths that block initialization, relative to `root`
+    /// (made absolute) and sorted.
     #[error("{root} already has files from this template: {}", template_paths(.paths))]
     Conflicts { root: PathBuf, paths: Vec<PathBuf> },
     #[error("{0}")]
@@ -258,7 +291,6 @@ mod tests {
     use super::*;
     use crate::project_types::tests::{Scratch, template, write};
     use crate::project_types::{PROJECT_TYPES_DIR, ProjectTsconfig, STAMP};
-    use celesta_plugin_host::PROJECT_CONFIG;
     use std::fs;
 
     const BLANK_FILM: &str = "export default () => <Composition />;\n";
@@ -446,6 +478,30 @@ mod tests {
             fs::read_to_string(project.join("film.tsx")).unwrap(),
             "// mine\n"
         );
+    }
+
+    #[test]
+    fn template_refuses_file_and_directory_conflicts_before_writing() {
+        let scratch = Scratch::new("tpl-directory-conflicts");
+        let cli = runtime(&scratch.0, "v1");
+        let project = scratch.0.join("video");
+        write(&project.join("assets"), "keep me");
+        fs::create_dir(project.join("package.json")).unwrap();
+        fs::create_dir(project.join("props.json")).unwrap();
+
+        let error = initialize_project(&cli, &project, Some("slides")).unwrap_err();
+        let TemplateError::Conflicts { paths, .. } = error else {
+            panic!("expected conflicts, got {error:?}");
+        };
+        assert_eq!(
+            paths,
+            ["assets", "package.json", "props.json"].map(PathBuf::from)
+        );
+        assert_eq!(
+            fs::read_to_string(project.join("assets")).unwrap(),
+            "keep me"
+        );
+        assert_eq!(fs::read_dir(&project).unwrap().count(), 3);
     }
 
     #[test]
