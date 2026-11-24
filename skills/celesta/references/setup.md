@@ -99,6 +99,13 @@ celesta init my-video                                               # Linux CLI 
 cargo run -p celesta-cli --release -- init my-video                  # source checkout with staged runtime
 ```
 
+Use PowerShell on Windows and replace `C:\path\to\Celesta` with your installed
+or extracted app folder. The installer does not add Celesta to PATH.
+
+```powershell
+& "C:\path\to\Celesta\Celesta-cli.exe" init my-video
+```
+
 With the Linux Docker image, override its default exporter entry point:
 
 ```sh
