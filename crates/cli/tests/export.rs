@@ -58,6 +58,41 @@ fn unified_and_standalone_export_write_identical_react_stills() {
 
     let cli = Path::new(env!("CARGO_BIN_EXE_celesta"));
     let exporter = cli.with_file_name(format!("celesta-exporter{}", std::env::consts::EXE_SUFFIX));
+    if !exporter.is_file() {
+        let profile_dir = cli
+            .parent()
+            .expect("Cargo put the CLI in a profile directory");
+        let profile = match profile_dir.file_name().and_then(|name| name.to_str()) {
+            Some("debug") => "dev",
+            profile => profile.expect("Cargo profile directory has a name"),
+        };
+        // Build both packages together so Cargo selects the same PNG compression backend.
+        let result = Command::new(env!("CARGO"))
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .args([
+                "build",
+                "--locked",
+                "-p",
+                "celesta-cli",
+                "-p",
+                "celesta-exporter",
+                "--profile",
+                profile,
+            ])
+            .arg("--target-dir")
+            .arg(
+                profile_dir
+                    .parent()
+                    .expect("Cargo profile is under the target directory"),
+            )
+            .output()
+            .expect("could not launch Cargo to build the standalone exporter");
+        assert!(
+            result.status.success(),
+            "could not build the standalone exporter: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
     let source = concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../packages/cli/examples/title.tsx"
