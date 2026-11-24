@@ -12,8 +12,9 @@ switch (flag) {
 Celesta launches this helper to evaluate React compositions, not to write images
 or video. It exchanges JSON messages over stdin/stdout.
 
-For command-line rendering, use celesta-exporter (Celesta-export in desktop
-packages). Run celesta-exporter --help for export options.
+For command-line rendering, run celesta-exporter --help for export options.
+On desktop, run the bundled Celesta-export (Celesta-export.exe on Windows)
+with --help, quoting its full path.
 
 Options:
   -h, --help     Print help

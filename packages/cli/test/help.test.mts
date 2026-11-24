@@ -15,6 +15,7 @@ test.each(['--help', '-h', '--version', '-V'])('%s does not start the React runt
     assert.match(result.stdout, /^celesta-react-render/);
     assert.match(result.stdout, /JSON messages over stdin\/stdout/);
     assert.match(result.stdout, /celesta-exporter --help/);
+    assert.match(result.stdout, /bundled Celesta-export \(Celesta-export\.exe on Windows\)\nwith --help, quoting its full path/);
   } else {
     assert.equal(result.stdout, `celesta-react-render ${version}\n`);
   }

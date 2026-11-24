@@ -22,8 +22,9 @@ fn main() {
                  An MCP client launches this server to inspect, render, and export Celesta\n\
                  compositions. It exchanges MCP messages over stdin/stdout.\n\
                  \n\
-                 For command-line rendering, use celesta-exporter (Celesta-export in desktop\n\
-                 packages). Run celesta-exporter --help for export options.\n\
+                 For command-line rendering, run celesta-exporter --help for export options.\n\
+                 On desktop, run the bundled Celesta-export (Celesta-export.exe on Windows)\n\
+                 with --help, quoting its full path.\n\
                  \n\
                  Options:\n  -h, --help     Print help\n  -V, --version  Print version"
             );

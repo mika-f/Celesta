@@ -24,6 +24,9 @@ fn help_and_version_do_not_start_the_server() {
             assert!(stdout.contains("Model Context Protocol"));
             assert!(stdout.contains("stdin/stdout"));
             assert!(stdout.contains("celesta-exporter --help"));
+            assert!(stdout.contains(
+                "bundled Celesta-export (Celesta-export.exe on Windows)\nwith --help, quoting its full path"
+            ));
         } else {
             assert_eq!(
                 stdout,
