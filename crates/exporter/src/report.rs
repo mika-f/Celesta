@@ -310,7 +310,7 @@ pub fn build(
         error: result
             .as_ref()
             .err()
-            .map(|error| with_source_hint(error_report(error, hints), source, hints)),
+            .map(|error| error_report(error, hints)),
         source: Some(absolute(source)),
         props_file_auto: props_file.as_ref().map(|choice| choice.auto),
         props_file: props_file.map(|choice| choice.path),
@@ -614,33 +614,31 @@ fn output(file: ExportedFile, frame_rate: Option<Rational>) -> Output {
     }
 }
 
-/// A React entry read as a JSON project fails to parse; on the command line,
-/// say that `--react` reads it instead of only reporting the JSON error.
-fn with_source_hint(mut report: ErrorReport, source: &Path, hints: HintStyle) -> ErrorReport {
-    if let Some(hint) = react_entry_hint(report.code, source, hints) {
-        report.hint = Some(hint);
+/// Adds [`source_hint`]'s `--react` hint to `report`, an export of `source`
+/// on the command line run without `--react`.
+pub fn add_react_hint(report: &mut Report, source: &Path) {
+    if let Some(error) = &mut report.error
+        && let Some(hint) = react_entry_hint(error.code, source)
+    {
+        error.hint = Some(hint);
     }
-    report
 }
 
-/// What to change to get past `error` in an export of `source`: [`hint`],
-/// or `--react` for a React entry that failed to parse as a JSON project.
-pub fn source_hint(
-    error: &ExportError,
-    source: &Path,
-    hints: HintStyle,
-) -> Option<Cow<'static, str>> {
-    let (code, hint) = classify(error, hints, &mut Vec::new());
-    react_entry_hint(code, source, hints).or(hint)
+/// What to change to get past `error` in a command-line export of `source`:
+/// [`hint`], or without `react` (`--react`) for a React entry that failed to
+/// parse as a JSON project, `--react`.
+pub fn source_hint(error: &ExportError, source: &Path, react: bool) -> Option<Cow<'static, str>> {
+    let (code, hint) = classify(error, HintStyle::Cli, &mut Vec::new());
+    if react {
+        return hint;
+    }
+    react_entry_hint(code, source).or(hint)
 }
 
-fn react_entry_hint(code: &str, source: &Path, hints: HintStyle) -> Option<Cow<'static, str>> {
-    (hints == HintStyle::Cli && code == "project_json" && is_react_entry(source)).then_some(
-        Cow::Borrowed(
-            "this looks like a React entry: add --react to export it, as in \
-             celesta-exporter --react <entry.tsx> <output>",
-        ),
-    )
+fn react_entry_hint(code: &str, source: &Path) -> Option<Cow<'static, str>> {
+    (code == "project_json" && is_react_entry(source)).then_some(Cow::Borrowed(
+        "this looks like a React entry: add --react to read it as one",
+    ))
 }
 
 /// Whether `path` has the extension of a React entry rather than a JSON project.
@@ -966,7 +964,10 @@ fn no_default_encoder_hint(
     if others.is_empty() {
         format!("{install}; {listing}")
     } else {
-        format!("{install}; or write {others} instead; {listing}")
+        format!(
+            "{install}; or write {others} instead (with a muxer that writes it, when --muxer \
+             or a preset names one); {listing}"
+        )
     }
 }
 
@@ -994,13 +995,17 @@ fn unsupported_output_hint(path: &Path, extensions: &[String], cli: bool) -> Cow
         });
     }
     if cli && let Some(install) = standard_format_install_hint(path) {
-        let gif = extensions
+        let only_gif = extensions
             .iter()
-            .any(|extension| extension.eq_ignore_ascii_case(celesta_media_image::GIF));
-        return Cow::Owned(if gif {
-            format!("{install}; or write an animated GIF to a .gif path")
-        } else {
-            install.to_owned()
+            .all(|extension| extension.eq_ignore_ascii_case(celesta_media_image::GIF));
+        return Cow::Owned(match dotted.as_slice() {
+            [] => install.to_owned(),
+            _ if only_gif => format!("{install}; or write an animated GIF to a .gif path"),
+            [one] => format!("{install}; or write video to a {one} path"),
+            [rest @ .., last] => format!(
+                "{install}; or write video to a {} or {last} path",
+                rest.join(", ")
+            ),
         });
     }
     let Some((last, rest)) = dotted.split_last() else {
@@ -1654,6 +1659,14 @@ mod tests {
             assert!(hint.contains("celesta plugin install --global"), "{hint}");
             assert!(!hint.contains(".gif"), "{hint}");
         }
+        // Installed muxers other than GIF stay in the hint.
+        let hint = classified(&unsupported("out.mp4", &["gif", "webm"]), HintStyle::Cli)
+            .1
+            .unwrap();
+        assert!(
+            hint.ends_with("; or write video to a .gif or .webm path"),
+            "{hint}"
+        );
         // The MCP server has no --plugin-dir; its hint stays the generic one.
         let mcp = classified(&unsupported("out.mov", &["gif"]), HintStyle::Mcp)
             .1
@@ -1698,7 +1711,7 @@ mod tests {
             "build.mts plugins/ffmpeg-x264 --out <dir>",
             "--plugin-dir <dir>",
             "celesta plugin install --global <id>",
-            "or write .mov (ProRes) or .webm (VP9) instead",
+            "or write .mov (ProRes) or .webm (VP9) instead (with a muxer",
             "--list-components",
         ] {
             assert!(hint.contains(part), "{part}: {hint}");
@@ -1714,7 +1727,7 @@ mod tests {
             "Opus audio needs an encoder plugin",
             "celesta plugin install --global <id>",
             "--plugin-dir <dir>",
-            "or write .mp4 (H.264) or .mov (ProRes) instead",
+            "or write .mp4 (H.264) or .mov (ProRes) instead (with a muxer",
         ] {
             assert!(hint.contains(part), "{part}: {hint}");
         }
@@ -1735,18 +1748,18 @@ mod tests {
         ));
         assert_eq!(classified(&error, HintStyle::Cli), ("project_json", None));
         for source in ["film.tsx", "film.JSX", "film.ts", "film.mjs"] {
-            let hint = source_hint(&error, Path::new(source), HintStyle::Cli).unwrap();
+            let hint = source_hint(&error, Path::new(source), false).unwrap();
             assert!(hint.contains("add --react"), "{hint}");
         }
         assert_eq!(
-            source_hint(&error, Path::new("film.celesta.json"), HintStyle::Cli),
+            source_hint(&error, Path::new("film.celesta.json"), false),
             None
         );
-        assert_eq!(
-            source_hint(&error, Path::new("film.tsx"), HintStyle::Mcp),
-            None
-        );
-        let (report, _) = build(Path::new("film.tsx"), None, HintStyle::Cli, |_| Err(error));
+        // With --react, a project_json error is its --project file's.
+        assert_eq!(source_hint(&error, Path::new("film.tsx"), true), None);
+        let (mut report, _) = build(Path::new("film.tsx"), None, HintStyle::Cli, |_| Err(error));
+        assert_eq!(report.error.as_ref().unwrap().hint, None);
+        add_react_hint(&mut report, Path::new("film.tsx"));
         let json = serde_json::to_value(&report).unwrap();
         assert_eq!(json["error"]["code"], "project_json");
         assert!(json["error"]["hint"].as_str().unwrap().contains("--react"));

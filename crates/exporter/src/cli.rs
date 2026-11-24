@@ -619,7 +619,13 @@ pub fn run_export(matches: &ArgMatches, command: Command) -> ExitCode {
         }
     };
     if cli.report.json {
-        let ok = json::run(cli.source(), props_file, cli.report.json_progress, export);
+        let ok = json::run(
+            cli.source(),
+            props_file,
+            cli.report.json_progress,
+            cli.input.react,
+            export,
+        );
         return checked(ok);
     }
     let result = match (cli.output(), &kind) {
@@ -670,7 +676,7 @@ pub fn run_export(matches: &ArgMatches, command: Command) -> ExitCode {
     match result {
         Ok(()) => checked(true),
         Err(error) => {
-            print_export_error(cli.source(), &error);
+            print_export_error(cli.source(), cli.input.react, &error);
             ExitCode::FAILURE
         }
     }
@@ -742,10 +748,10 @@ fn print_error(context: &str, error: &ExportError) {
 }
 
 /// [`print_error`] for an export of `source`, whose extension can change
-/// the hint (a React entry read without `--react`).
-fn print_export_error(source: &Path, error: &ExportError) {
+/// the hint (a React entry read without `react`, `--react`).
+fn print_export_error(source: &Path, react: bool, error: &ExportError) {
     eprintln!("Celesta export: {error}");
-    if let Some(hint) = report::source_hint(error, source, HintStyle::Cli) {
+    if let Some(hint) = report::source_hint(error, source, react) {
         eprintln!("hint: {hint}");
     }
 }
@@ -865,9 +871,13 @@ fn describe(input: &SourceArgs, output: &ReportArgs, source: &Path) -> ExitCode 
         job
     });
     if output.json {
-        let ok = json::run(source, props_file, output.json_progress, |on_progress| {
-            job?.describe(on_progress)
-        });
+        let ok = json::run(
+            source,
+            props_file,
+            output.json_progress,
+            input.react,
+            |on_progress| job?.describe(on_progress),
+        );
         return if ok {
             ExitCode::SUCCESS
         } else {
@@ -912,7 +922,7 @@ fn describe(input: &SourceArgs, output: &ReportArgs, source: &Path) -> ExitCode 
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            print_error("Celesta export", &error);
+            print_export_error(source, input.react, &error);
             ExitCode::FAILURE
         }
     }

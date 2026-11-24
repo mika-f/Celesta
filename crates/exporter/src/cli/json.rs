@@ -10,15 +10,18 @@ use crate::{ExportError, ExportProgress};
 use celesta_react_bridge::PropsFileChoice;
 
 /// Runs `export`, then prints its report; with `progress`, each event is
-/// printed as it happens (`--json-progress`). Returns whether it succeeded.
+/// printed as it happens (`--json-progress`); without `react` (`--react`),
+/// a React entry read as a project hints at `--react`. Returns whether it
+/// succeeded.
 pub fn run(
     source: &Path,
     props_file: Option<PropsFileChoice>,
     progress: bool,
+    react: bool,
     export: impl FnOnce(&mut dyn FnMut(ExportProgress)) -> Result<(), ExportError>,
 ) -> bool {
     let mut events = Events::default();
-    let (report, ok) = report::build(source, props_file, HintStyle::Cli, |on_progress| {
+    let (mut report, ok) = report::build(source, props_file, HintStyle::Cli, |on_progress| {
         export(&mut |event| {
             if progress {
                 print(&events.event(&event));
@@ -26,6 +29,9 @@ pub fn run(
             on_progress(event);
         })
     });
+    if !react {
+        report::add_react_hint(&mut report, source);
+    }
     print(&report);
     ok
 }
