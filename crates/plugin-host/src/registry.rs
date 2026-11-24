@@ -170,7 +170,9 @@ pub fn probe_registry_plugin(
     {
         return Ok(());
     }
-    let Ok(Some((entry, _))) = read_manifest(directory, PluginSource::Registry) else {
+    let Some((entry, _)) =
+        read_manifest(directory, PluginSource::Registry).map_err(|error| error.to_string())?
+    else {
         return Ok(());
     };
     let Some(executable) = entry.executable() else {
@@ -473,6 +475,24 @@ pub(crate) mod tests {
             &v("1.2.3"),
             &bare_hash
         ));
+    }
+
+    #[test]
+    fn probe_reports_a_build_incompatible_with_this_celesta() {
+        let folder = tempfile::tempdir().unwrap();
+        let dir = folder.path();
+        let mut manifest = media("acme.codec", "1.2.3");
+        manifest["celesta"] = json!("<0.1");
+        let hash = write(dir, manifest);
+        let error = probe_registry_plugin(
+            dir,
+            "acme.codec",
+            &semver::Version::new(1, 2, 3),
+            &hash,
+            &UserSettings::default(),
+        )
+        .unwrap_err();
+        assert!(error.contains("works with Celesta <0.1"), "{error}");
     }
 
     /// A test's folders: the store, and an explicit, a user, and a bundled

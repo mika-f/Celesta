@@ -382,7 +382,7 @@ fn launch_finding<'a>(id: &str, version: &Version, reason: &str) -> Finding<'a> 
     {
         "This plugin needs a newer glibc. Install a plugin build compatible with this Linux distribution, or run it on a newer distribution."
     } else {
-        "Check the executable and its runtime dependencies, or install a plugin build for this platform."
+        "Check the executable and its runtime dependencies, or install a plugin build compatible with this platform and Celesta version."
     };
     Finding {
         code: FindingCode::LaunchFailed,
