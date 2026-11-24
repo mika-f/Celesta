@@ -2,8 +2,9 @@
 
 ## Behavior
 
-- A failed `celesta doctor` render probe reports the export hint when one is
-  available: `checks.output.hint` in JSON and a `hint:` line in plain text.
+- A failed `celesta doctor` render probe reports available advice in
+  `checks.output.hint` in JSON and a `hint:` line in plain text. It shares
+  format and plugin advice with export, but stills suggest only `--frame 0`.
   Schema version 1 and exit codes are unchanged. Checks without a hint omit it.
 - Before the graphics probe on Linux, the CLI supplies a private temporary
   `XDG_RUNTIME_DIR` if missing or empty. It preserves any nonempty value and

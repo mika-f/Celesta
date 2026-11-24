@@ -26,6 +26,13 @@ pub enum HintStyle {
     Mcp,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HintTarget {
+    Export,
+    Doctor,
+    Mcp,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Report {
@@ -635,16 +642,25 @@ pub fn add_react_hint(report: &mut Report, source: &Path) {
 /// [`hint`], or without `react` (`--react`) for a React entry that failed to
 /// parse as a JSON project, `--react`.
 pub fn source_hint(error: &ExportError, source: &Path, react: bool) -> Option<Cow<'static, str>> {
-    classify_source(error, source, react).1
+    classify_source(error, source, react, HintTarget::Export).1
 }
 
-/// The CLI error code and hint, including advice specific to the source path.
-pub(crate) fn classify_source(
+/// The error code and hint for a doctor render probe.
+pub(crate) fn classify_doctor(
     error: &ExportError,
     source: &Path,
     react: bool,
 ) -> (&'static str, Option<Cow<'static, str>>) {
-    let (code, hint) = classify(error, HintStyle::Cli, &mut Vec::new());
+    classify_source(error, source, react, HintTarget::Doctor)
+}
+
+fn classify_source(
+    error: &ExportError,
+    source: &Path,
+    react: bool,
+    target: HintTarget,
+) -> (&'static str, Option<Cow<'static, str>>) {
+    let (code, hint) = classify_for(error, target, &mut Vec::new());
     let hint = if react {
         hint
     } else {
@@ -709,14 +725,26 @@ pub(crate) fn classify(
     hints: HintStyle,
     issues: &mut Vec<Issue>,
 ) -> (&'static str, Option<Cow<'static, str>>) {
-    let cli = hints == HintStyle::Cli;
+    let target = match hints {
+        HintStyle::Cli => HintTarget::Export,
+        HintStyle::Mcp => HintTarget::Mcp,
+    };
+    classify_for(error, target, issues)
+}
+
+fn classify_for(
+    error: &ExportError,
+    target: HintTarget,
+    issues: &mut Vec<Issue>,
+) -> (&'static str, Option<Cow<'static, str>>) {
+    let cli = target != HintTarget::Mcp;
     match error {
-        ExportError::Frame(failure) => classify(&failure.error, hints, issues),
+        ExportError::Frame(failure) => classify_for(&failure.error, target, issues),
         ExportError::InvalidPresets { .. } => ("invalid_presets", None),
         ExportError::UnknownPreset { .. } => ("unknown_preset", None),
         ExportError::UnsupportedOutput { path, extensions } => (
             "unsupported_output",
-            Some(unsupported_output_hint(path, extensions, cli)),
+            Some(unsupported_output_hint(path, extensions, target)),
         ),
         ExportError::IncompatibleComponents { .. } => ("incompatible_components", None),
         // A component no installed plugin offers: its plugin is missing, has
@@ -728,8 +756,13 @@ pub(crate) fn classify(
         } => (
             "component_unavailable",
             Some(Cow::Owned(if cli {
+                let listing = if target == HintTarget::Doctor {
+                    "`celesta export --list-components`"
+                } else {
+                    "--list-components"
+                };
                 format!(
-                    "--list-components shows the installed components; if the {plugin} \
+                    "{listing} shows the installed components; if the {plugin} \
                      plugin is installed but not allowed, allow it with --allow-plugin {plugin}",
                     plugin = component.plugin
                 )
@@ -748,7 +781,7 @@ pub(crate) fn classify(
         } => (
             "component_unavailable",
             Some(Cow::Owned(no_default_encoder_hint(
-                component, *kind, codec, cli,
+                component, *kind, codec, target,
             ))),
         ),
         ExportError::ComponentUnavailable { .. }
@@ -830,10 +863,12 @@ pub(crate) fn classify(
         ExportError::Codec { .. } => ("codec", None),
         ExportError::OutputExists(_) => (
             "output_exists",
-            fixed(if cli {
-                "pass --overwrite to replace it, or write to another path"
-            } else {
-                "set overwrite to replace it, or write to another path"
+            fixed(match target {
+                HintTarget::Export => "pass --overwrite to replace it, or write to another path",
+                HintTarget::Doctor => {
+                    "pass --overwrite to test without replacing it, or choose another path"
+                }
+                HintTarget::Mcp => "set overwrite to replace it, or write to another path",
             }),
         ),
         ExportError::InvalidSelection(_) => ("invalid_selection", None),
@@ -939,8 +974,9 @@ fn no_default_encoder_hint(
     muxer: &ComponentRef,
     kind: ComponentKind,
     codec: &str,
-    cli: bool,
+    target: HintTarget,
 ) -> String {
+    let cli = target != HintTarget::Mcp;
     let named = codec_name(codec).unwrap_or(codec);
     let kind = match kind {
         ComponentKind::AudioEncoder => "audio",
@@ -983,10 +1019,10 @@ fn no_default_encoder_hint(
              unless its FFmpeg build lacks that encoder"
         )
     };
-    let listing = if cli {
-        "--list-components --check shows what works"
-    } else {
-        "list_components shows what is installed"
+    let listing = match target {
+        HintTarget::Export => "--list-components --check shows what works",
+        HintTarget::Doctor => "`celesta export --list-components --check` shows what works",
+        HintTarget::Mcp => "list_components shows what is installed",
     };
     let pinned = if cli {
         "when --muxer or a preset names one"
@@ -1010,7 +1046,11 @@ fn fixed(hint: &'static str) -> Option<Cow<'static, str>> {
 /// The extensions a video may be written to, and for a still's extension
 /// how to export stills instead; with no muxer at all, how to install the
 /// media plugin.
-fn unsupported_output_hint(path: &Path, extensions: &[String], cli: bool) -> Cow<'static, str> {
+fn unsupported_output_hint(
+    path: &Path,
+    extensions: &[String],
+    target: HintTarget,
+) -> Cow<'static, str> {
     let dotted: Vec<String> = extensions
         .iter()
         .map(|extension| format!(".{extension}"))
@@ -1019,13 +1059,20 @@ fn unsupported_output_hint(path: &Path, extensions: &[String], cli: bool) -> Cow
     // Stills are written by built-in components, so selecting frames works
     // whatever media plugins are installed.
     if still {
-        return Cow::Borrowed(if cli {
-            "PNG, JPEG and WebP outputs are still images: select frames with --frame, as in \
-             --frame 0 (or --frame 0,30,60, or --every 30)"
-        } else {
-            "PNG, JPEG and WebP outputs are still images: render them with render_frames"
+        return Cow::Borrowed(match target {
+            HintTarget::Export => {
+                "PNG, JPEG and WebP outputs are still images: select frames with --frame, as in \
+                 --frame 0 (or --frame 0,30,60, or --every 30)"
+            }
+            HintTarget::Doctor => {
+                "PNG, JPEG and WebP outputs are still images: select one frame with --frame 0"
+            }
+            HintTarget::Mcp => {
+                "PNG, JPEG and WebP outputs are still images: render them with render_frames"
+            }
         });
     }
+    let cli = target != HintTarget::Mcp;
     if cli && let Some(install) = standard_format_install_hint(path) {
         let only_gif = extensions
             .iter()

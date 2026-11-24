@@ -44,8 +44,8 @@ including its lock: `celesta doctor --json --react scene.tsx --frame 0 out.png`.
 Use `--from` and `--to` to limit a video probe; otherwise it renders the whole
 composition. The command never publishes the requested file and exits nonzero
 on failure. Inspect `schemaVersion`, `status`, and the individual `checks` codes.
-When present, `checks.output.hint` gives the same render advice as export, such as
-which codec plugin to install. On Linux, `doctor` does not require you to set
+When present, `checks.output.hint` gives advice for the probe, such as which
+codec plugin to install or how to select a single frame. On Linux, `doctor` does not require you to set
 `XDG_RUNTIME_DIR` for a headless probe.
 
 The standalone command still works:

@@ -312,7 +312,7 @@ fn check_output(
             "rendered through the selected media path; output discarded",
         ),
         Err(error) => {
-            let (code, hint) = report::classify_source(&error, source, cli.input.react);
+            let (code, hint) = report::classify_doctor(&error, source, cli.input.react);
             Check {
                 hint,
                 ..Check::error(code, error.to_string())

@@ -175,20 +175,20 @@ fn requested_adapter_must_work() {
 }
 
 #[test]
-fn doctor_reports_the_same_output_hint_as_export() {
+fn doctor_reports_hints_for_the_probe() {
     let home = Home::new();
-    let run = |subcommand, extra: &[&str]| {
+    let run = |subcommand, output, extra: &[&str]| {
         home.command()
             .env_remove("CELESTA_PLUGIN_PATH")
             .arg(subcommand)
             .arg(project())
-            .arg("out.mov")
+            .arg(output)
             .args(extra)
             .output()
             .unwrap()
     };
 
-    let doctor = run("doctor", &["--json"]);
+    let doctor = run("doctor", "out.mov", &["--json"]);
     let checks = report(&doctor);
     if checks["checks"]["graphics"]["code"] == "graphics_unavailable" {
         assert!(
@@ -202,20 +202,37 @@ fn doctor_reports_the_same_output_hint_as_export() {
     let check = &checks["checks"]["output"];
     assert_eq!(check["code"], "unsupported_output", "{checks}");
 
-    let export = run("export", &["--json"]);
+    let export = run("export", "out.mov", &["--json"]);
     assert_exit(&export, 1);
     let export = json_stdout(&export);
     let hint = check["hint"].as_str().expect("doctor output has a hint");
     assert_eq!(hint, export["error"]["hint"].as_str().unwrap());
     assert!(hint.contains("plugins/ffmpeg --out"), "{hint}");
 
-    let plain = run("doctor", &[]);
+    let plain = run("doctor", "out.mov", &[]);
     assert_exit(&plain, 1);
     assert!(
         stdout(&plain).contains(&format!("hint: {hint}")),
         "{plain:?}"
     );
     assert!(!home.path().join("out.mov").exists());
+
+    let png = run("doctor", "out.png", &["--json"]);
+    assert_exit(&png, 1);
+    let checks = report(&png);
+    let check = &checks["checks"]["output"];
+    assert_eq!(check["code"], "unsupported_output", "{checks}");
+    let hint = check["hint"]
+        .as_str()
+        .expect("doctor still output has a hint");
+    assert!(hint.contains("--frame 0"), "{hint}");
+    assert!(
+        !hint.contains("--every") && !hint.contains("--frame 0,"),
+        "{hint}"
+    );
+    let png = run("doctor", "out.png", &["--json", "--frame", "0"]);
+    assert_exit(&png, 0);
+    assert_eq!(report(&png)["checks"]["output"]["status"], "ok");
 }
 
 #[cfg(target_os = "linux")]
