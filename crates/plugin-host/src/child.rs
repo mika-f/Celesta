@@ -243,10 +243,10 @@ impl PluginChild {
     pub fn hello_content(&mut self, id: &str) -> Result<Message, RequestError> {
         let hello = self.hello()?;
         if hello.header["plugin"] != id {
-            return Err(RequestError::Unavailable(format!(
-                "{} says it is plugin {}, not {id}",
-                self.name, hello.header["plugin"],
-            )));
+            let reason = format!("it says it is plugin {}, not {id}", hello.header["plugin"]);
+            return Err(RequestError::Unavailable(
+                self.finish_rejected_hello(&reason),
+            ));
         }
         Ok(hello)
     }
@@ -259,10 +259,10 @@ impl PluginChild {
             .as_array()
             .is_some_and(|roles| roles.iter().any(|role| role == "media"))
         {
-            return Err(RequestError::Unavailable(format!(
-                "{} is not a media plugin (its roles are {roles})",
-                self.name,
-            )));
+            let reason = format!("it is not a media plugin (its roles are {roles})");
+            return Err(RequestError::Unavailable(
+                self.finish_rejected_hello(&reason),
+            ));
         }
         Ok(hello)
     }
@@ -443,11 +443,15 @@ impl PluginChild {
     pub(crate) fn explain_start_error(&mut self, error: &RequestError) -> String {
         let reason = error.message();
         if matches!(error, RequestError::Refused(_)) {
-            self.stop();
-            self.explain(&reason)
+            self.finish_rejected_hello(&reason)
         } else {
             reason
         }
+    }
+
+    fn finish_rejected_hello(&mut self, reason: &str) -> String {
+        self.stop();
+        self.explain(reason)
     }
 
     /// Kills the process, so the threads that wait on its pipes end.

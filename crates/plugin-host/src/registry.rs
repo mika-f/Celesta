@@ -556,17 +556,19 @@ pub(crate) mod tests {
         let error = probe_answer(
             content("acme.codec", "1.2.3"),
             json!({"type": "hello", "protocol": 1, "plugin": "acme.other"}),
-            "",
+            "echo 'wrong plugin id' >&2",
         )
         .unwrap_err();
         assert!(error.contains("not acme.codec"), "{error}");
+        assert!(error.contains("wrong plugin id"), "{error}");
         let error = probe_answer(
             media("acme.codec", "1.2.3"),
             json!({"type": "hello", "protocol": 2, "roles": ["content"]}),
-            "",
+            "echo 'wrong role' >&2",
         )
         .unwrap_err();
         assert!(error.contains("is not a media plugin"), "{error}");
+        assert!(error.contains("wrong role"), "{error}");
     }
 
     #[cfg(unix)]
