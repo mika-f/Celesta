@@ -12,7 +12,8 @@
   to stderr; no diagnostics are filtered.
 - MP4/M4V hints name the registry plugin `ffmpeg-x264` explicitly. If no
   MP4 muxer is installed either, the hint includes the standard `ffmpeg`
-  plugin's command as well. Release download and source build options remain.
+  plugin's command as well. On Ubuntu 22.04 x86-64, the hint directs users to
+  the source build if the available archive is 0.10.0.
 
 ## Before and after
 
@@ -38,12 +39,14 @@ after  (exit 0): checks.output.status = "ok"; stderr empty
 
 $ celesta export --react film.tsx film.mp4 --json       # registry ffmpeg 0.10.0, no x264
 before (exit 1): error.code = "component_unavailable"; hint contains `celesta plugin install --global <id>`
-after  (exit 1): error.code = "component_unavailable"; hint contains `celesta plugin install --global ffmpeg-x264`
+after  (exit 1): error.code = "component_unavailable"; hint names `celesta plugin install --global ffmpeg-x264` and warns about 0.10.0 on Ubuntu 22.04
 ```
 
 The MOV hint matched `celesta export --json` byte for byte. Neither doctor
 probe published its intended output. The MP4 case reached missing-encoder
-resolution; this doesn't verify launchability of the registry's x264 binary.
+resolution. Separately, `readelf --version-info` showed that both the released
+and registry x264 0.10.0 Linux archives bundle a `libx264.so.164` requiring
+glibc 2.38; Ubuntu 22.04 provides glibc 2.35.
 
 ## Checks
 

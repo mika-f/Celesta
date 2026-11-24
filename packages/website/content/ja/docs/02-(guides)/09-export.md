@@ -419,6 +419,8 @@ Celesta-export --react badge.tsx badge.gif --video-option transparent=true
 
 Celesta は[メディアプラグイン](/ja/docs/plugins/#メディアプラグイン)でエンコードします。プラグインの FFmpeg のビルドに動画に必要なエンコーダーがない場合、または追加のエンコーダープラグインがない場合（H.264 はネイティブのエンコーダーか `ffmpeg-x264` が必要）、書き出しはエラーコード `component_unavailable` で、その理由とともに失敗します。メディアプラグインがない場合は、その拡張子を書けるマルチプレクサーがないため、プラグインの入れ方のヒント付きで `unsupported_output` で失敗します。
 
+リリースとレジストリの Linux 版 `ffmpeg-x264` 0.10.0 は、Ubuntu 22.04 x86-64 に付属するものより新しい glibc が必要です。利用できるバージョンが 0.10.0 なら、その環境で[ソースからプラグインをビルド](/ja/docs/build-from-source/)してください。
+
 ## 静止画とコンタクトシート
 
 --frame / --frames で、0 から始まるフレーム番号を指定します。複数指定すると check-000090.png のような名前で保存されます。--every N は --from/--to の範囲（省略時は全体）から N フレームごとと最後のフレームを選びます。--contact-sheet を加えると、番号付きの一覧画像を作れます。列数は --columns、各画像の幅は --tile-width で指定します。フレーム番号の直接指定は --every、--from、--to と併用できません。

@@ -420,6 +420,8 @@ Only areas nothing draws on are transparent, so a layer that fills the whole fra
 
 Celesta encodes through its [media plugins](/en/docs/plugins/#media-plugins). If the plugin's FFmpeg build lacks an encoder the video needs, or an optional encoder plugin is missing (H.264 needs a native encoder or `ffmpeg-x264`), the export fails with the error code `component_unavailable` and the reason. Without a media plugin, no muxer writes the extension, and the export fails with `unsupported_output` and a hint to install one.
 
+On Ubuntu 22.04 x86-64, the 0.10.0 Linux `ffmpeg-x264` archives from the release and the registry require a newer glibc. If 0.10.0 is the available version, [build the plugin from source](/en/docs/build-from-source/) on that system instead.
+
 ## Still frames and contact sheets
 
 --frame / --frames selects zero-based frame numbers. Multiple frames create names such as check-000090.png. --every N selects every Nth frame of the --from/--to range (or the whole composition) and its last frame. Add --contact-sheet to place them in one labelled grid; --columns and --tile-width control its layout. Explicit frame numbers cannot be combined with --every, --from, or --to.

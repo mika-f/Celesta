@@ -938,7 +938,9 @@ fn standard_format_install_hint(path: &Path) -> Option<&'static str> {
              folder and allowed with --allow-plugin ffmpeg-x264); in a source checkout, stage both with `node scripts/plugins/build.mts \
              plugins/ffmpeg plugins/ffmpeg-x264 --out <dir>` and pass --plugin-dir <dir>; from \
              the registry, install the muxer with `celesta plugin install --global ffmpeg` and, \
-             on Linux, the encoder with `celesta plugin install --global ffmpeg-x264`"
+             on Linux, the encoder with `celesta plugin install --global ffmpeg-x264`. \
+             On Ubuntu 22.04 x86-64, use the source build if the download is 0.10.0 \
+             (its Linux binaries require glibc 2.38)"
         }
         _ => return None,
     })
@@ -998,7 +1000,9 @@ fn no_default_encoder_hint(
              source checkout stage it with \
              `node scripts/plugins/build.mts plugins/ffmpeg-x264 --out <dir>` and pass \
              --plugin-dir <dir>, or install it from the registry with \
-             `celesta plugin install --global ffmpeg-x264`"
+             `celesta plugin install --global ffmpeg-x264`. \
+             On Ubuntu 22.04 x86-64, use the source build if the download is 0.10.0 \
+             (its Linux binaries require glibc 2.38)"
                 .to_owned()
         } else {
             "H.264 needs an encoder plugin; on Linux that is the optional ffmpeg-x264 plugin: \
@@ -1764,6 +1768,14 @@ mod tests {
             );
             assert!(!hint.contains("<id>"), "{hint}");
             assert!(!hint.contains(".gif"), "{hint}");
+            assert!(
+                hint.contains(". On Ubuntu 22.04 x86-64, use the source build"),
+                "{hint}"
+            );
+            assert!(
+                hint.contains("0.10.0 (its Linux binaries require glibc 2.38)"),
+                "{hint}"
+            );
         }
         // Installed muxers other than GIF stay in the hint.
         let hint = classified(&unsupported("out.mp4", &["gif", "webm"]), HintStyle::Cli)
@@ -1817,6 +1829,8 @@ mod tests {
             "build.mts plugins/ffmpeg-x264 --out <dir>",
             "--plugin-dir <dir>",
             "`celesta plugin install --global ffmpeg-x264`",
+            ". On Ubuntu 22.04 x86-64, use the source build",
+            "0.10.0 (its Linux binaries require glibc 2.38)",
             "or write .mov (ProRes) or .webm (VP9) instead (with a muxer",
             "--list-components",
         ] {

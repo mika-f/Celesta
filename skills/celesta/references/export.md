@@ -45,8 +45,11 @@ Use `--from` and `--to` to limit a video probe; otherwise it renders the whole
 composition. The command never publishes the requested file and exits nonzero
 on failure. Inspect `schemaVersion`, `status`, and the individual `checks` codes.
 When present, `checks.output.hint` gives advice for the probe, such as which
-codec plugin to install or how to select a single frame. On Linux, `doctor` does not require you to set
-`XDG_RUNTIME_DIR` for a headless probe.
+codec plugin to install or how to select a single frame. Linux headless probes
+do not require you to set `XDG_RUNTIME_DIR`.
+
+On Ubuntu 22.04 x86-64, build `ffmpeg-x264` from source if the available
+download is 0.10.0; that Linux archive needs glibc 2.38.
 
 The standalone command still works:
 
