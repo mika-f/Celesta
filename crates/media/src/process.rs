@@ -1,7 +1,7 @@
 //! A media plugin's process, behind the [`MediaProvider`] interface.
 
 use crate::error::MediaError;
-use crate::protocol::{self, FrameLocation, ROLES, SharedSegment, decode_error};
+use crate::protocol::{self, FrameLocation, SharedSegment, decode_error};
 use crate::provider::{
     Answered, AudioEncoder, AudioEncoderOpened, AudioEncoderRequest, ComponentDescription, Decoder,
     Encoded, MediaProvider, Muxer, MuxerRequest, PIPE_WINDOW, Pipeline, ProviderFactory,
@@ -10,7 +10,6 @@ use crate::provider::{
 };
 use crate::ring::pipe_depth;
 use crate::types::{AudioBuffer, MediaProbe, VideoFrame};
-use celesta_plugin::MEDIA_PROTOCOL_VERSION;
 use celesta_plugin::protocol::Message;
 use celesta_plugin::shared::{RingLayout, SharedMemory};
 use celesta_plugin_host::{DeadlineFrom, PluginChild, PluginKillSwitch, RequestError};
@@ -292,17 +291,7 @@ impl MediaProcess {
             (Some(memory), Some(handle)) => protocol::shared_frames_offer(handle, memory),
             _ => Map::new(),
         };
-        let hello = child
-            .hello_as(MEDIA_PROTOCOL_VERSION, offer)
-            .map_err(media_error)?;
-        let roles = hello.header["roles"].as_array();
-        if !roles.is_some_and(|roles| roles.iter().any(|role| role == ROLES[0])) {
-            return Err(MediaError::CodecUnavailable(format!(
-                "{} is not a media plugin (its roles are {})",
-                executable.display(),
-                hello.header["roles"]
-            )));
-        }
+        let hello = child.hello_media(offer).map_err(media_error)?;
         let accepted =
             memory.filter(|_| handle.is_some() && protocol::accepted_shared_frames(&hello));
         let (frames, ring) = match (accepted, ring) {

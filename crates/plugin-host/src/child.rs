@@ -20,6 +20,7 @@
 use crate::console::without_console_window;
 use crate::kill::{PluginKillHandle, SharedChild, lock, register_everywhere};
 use crate::stderr::{StderrTail, pump};
+use celesta_plugin::MEDIA_PROTOCOL_VERSION;
 use celesta_plugin::protocol::{
     Message, PROTOCOL_VERSION, error_message, read_message, write_message,
 };
@@ -236,6 +237,34 @@ impl PluginChild {
     /// protocol 1 (see [`Self::hello_as`]).
     pub fn hello_with(&mut self, offer: Map<String, Value>) -> Result<Message, RequestError> {
         self.hello_as(PROTOCOL_VERSION, offer)
+    }
+
+    /// Checks that a content plugin names the expected plugin id.
+    pub fn hello_content(&mut self, id: &str) -> Result<Message, RequestError> {
+        let hello = self.hello()?;
+        if hello.header["plugin"] != id {
+            return Err(RequestError::Unavailable(format!(
+                "{} says it is plugin {}, not {id}",
+                self.name, hello.header["plugin"],
+            )));
+        }
+        Ok(hello)
+    }
+
+    /// Checks that a protocol 2 plugin declares the media role.
+    pub fn hello_media(&mut self, offer: Map<String, Value>) -> Result<Message, RequestError> {
+        let hello = self.hello_as(MEDIA_PROTOCOL_VERSION, offer)?;
+        let roles = &hello.header["roles"];
+        if !roles
+            .as_array()
+            .is_some_and(|roles| roles.iter().any(|role| role == "media"))
+        {
+            return Err(RequestError::Unavailable(format!(
+                "{} is not a media plugin (its roles are {roles})",
+                self.name,
+            )));
+        }
+        Ok(hello)
     }
 
     /// [`Self::hello_with`] in `protocol`, which the answer must speak too:

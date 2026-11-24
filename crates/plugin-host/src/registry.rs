@@ -12,8 +12,8 @@ use crate::child::PluginChild;
 use crate::locations::{PluginSource, SearchPath, registry_store_dir};
 use crate::lock::Lockfile;
 use crate::manifest::{
-    CELESTA_VERSION, DiscoveryError, MANIFEST, PluginEntry, PluginRead, discover_in_with,
-    is_valid_id, read_manifest,
+    CELESTA_VERSION, DiscoveryError, MANIFEST, PluginEntry, PluginRead, PluginRole,
+    discover_in_with, is_valid_id, read_manifest,
 };
 use crate::settings::UserSettings;
 use celesta_registry_format::{AdvisoryList, Hash, Target, tree_hash};
@@ -179,9 +179,12 @@ pub fn probe_registry_plugin(
         return Ok(());
     };
     let mut child = PluginChild::start_quiet(&executable, directory)?;
-    child
-        .hello_as(entry.manifest.protocol, serde_json::Map::new())
-        .map_err(|error| error.message())?;
+    let hello = if entry.has_role(PluginRole::Media) {
+        child.hello_media(serde_json::Map::new())
+    } else {
+        child.hello_content(id)
+    };
+    hello.map_err(|error| error.message())?;
     Ok(())
 }
 
@@ -493,6 +496,51 @@ pub(crate) mod tests {
         )
         .unwrap_err();
         assert!(error.contains("works with Celesta <0.1"), "{error}");
+    }
+
+    #[cfg(unix)]
+    fn probe_answer(mut manifest: Value, answer: Value, script: &str) -> Result<(), String> {
+        use celesta_plugin::protocol::{Message, write_message};
+        use std::os::unix::fs::PermissionsExt;
+
+        let folder = tempfile::tempdir().unwrap();
+        let dir = folder.path();
+        let program = dir.join("plugin.sh");
+        std::fs::write(&program, format!("#!/bin/sh\n{script}\ncat answer.bin\n")).unwrap();
+        std::fs::set_permissions(program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        write_message(
+            &mut std::fs::File::create(dir.join("answer.bin")).unwrap(),
+            &Message::new(answer),
+        )
+        .unwrap();
+        manifest["executable"] = json!({ (platform().0): "plugin.sh" });
+        let hash = write(dir, manifest);
+        probe_registry_plugin(
+            dir,
+            "acme.codec",
+            &semver::Version::new(1, 2, 3),
+            &hash,
+            &UserSettings::default(),
+        )
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn probe_rejects_the_same_hello_answers_as_the_runtime() {
+        let error = probe_answer(
+            content("acme.codec", "1.2.3"),
+            json!({"type": "hello", "protocol": 1, "plugin": "acme.other"}),
+            "",
+        )
+        .unwrap_err();
+        assert!(error.contains("not acme.codec"), "{error}");
+        let error = probe_answer(
+            media("acme.codec", "1.2.3"),
+            json!({"type": "hello", "protocol": 2, "roles": ["content"]}),
+            "",
+        )
+        .unwrap_err();
+        assert!(error.contains("is not a media plugin"), "{error}");
     }
 
     /// A test's folders: the store, and an explicit, a user, and a bundled
