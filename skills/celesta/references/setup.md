@@ -46,6 +46,11 @@ tools are available to you, prefer them over the shell commands in this
 skill: they return rendered frames as images, need no tool discovery, and
 report progress for long exports.
 
+Run `Celesta-mcp --help` or `Celesta-mcp --version` to inspect the executable
+without starting the stdio protocol. For direct command-line rendering, use
+`Celesta-export --help` (`celesta-exporter --help` in source builds and on Linux),
+not the internal `celesta-react-render` React evaluator.
+
 | Install | Command to register |
 | --- | --- |
 | macOS app | `/Applications/Celesta.app/Contents/MacOS/Celesta-mcp` |
