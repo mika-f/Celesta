@@ -171,6 +171,8 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   and copy the entire plugin folder into the user plugin folder, reload and
   allow it in the app (or CLI `--allow-plugin ffmpeg-x264`, `--plugin-dir`).
   Libraries and notices are included, so no separate FFmpeg install is needed.
+  Linux x64 ZIPs after 0.10.0 need glibc 2.35+ (Ubuntu 22.04, Debian 12 or
+  later); 0.10.0's need glibc 2.38.
   The standard package exports ProRes/MOV and WebM (VP9 with alpha, Opus)
   without addons. MP4 needs standard+x264 on Linux; bundled native H.264 is
   the default on macOS/Windows when available. Explicitly name
