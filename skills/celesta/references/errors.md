@@ -55,7 +55,7 @@ or `ERROR:` per frame (`UNSUPPORTED inspection:` for text it cannot measure). Di
 
 | Message | Cause and fix |
 | --- | --- |
-| `invalid project JSON: …` | JSON syntax (no comments, no trailing commas) or a wrong field type/name (field names are camelCase). |
+| `invalid project JSON: …` | A `.tsx`/`.jsx` entry passed without `--react` (the CLI hint says to add it). Otherwise JSON syntax (no comments, no trailing commas) or a wrong field type/name (field names are camelCase). |
 | `invalid project: tracks[0].items[1].content.asset: references missing asset "x"` | Validation errors, each with a path. See [project-json.md](project-json.md#validation-rules). |
 | `unsupported project version N` | Use `"version": 0`. |
 
@@ -66,7 +66,7 @@ or `ERROR:` per frame (`UNSUPPORTED inspection:` for text it cannot measure). Di
 | `video export requires non-zero even dimensions, got 1921x1080` | Make width and height even. |
 | `output already exists: …` | Choose another path, or add `--overwrite` if replacing it is intended. |
 | `still output requires --frame, --frames or --every` | `--contact-sheet` needs a frame selection: add `--every`, `--frame`, or `--frames`, or drop `--contact-sheet`. |
-| `no muxer writes .<ext> files` (`--json` code `unsupported_output`) | Name a video output `.mp4`, `.mov`, or `.webm` (the hint lists the extensions installed muxers write), or add a frame selection for a still. See [export.md](export.md#encoders-and-settings). |
+| `no muxer writes .<ext> files` (`--json` code `unsupported_output`) | Name a video output `.mp4`, `.mov`, or `.webm` (the hint lists the extensions installed muxers write), or add a frame selection for a still (`--frame 0`; the hint says so for `.png`, `.jpg`, and `.webp`). With no muxer for `.mov`/`.webm`, the CLI hint names the standard `ffmpeg` plugin, and for `.mp4` also `ffmpeg-x264`, with how to stage a local build (`scripts/plugins/build.mts` and `--plugin-dir`). See [export.md](export.md#encoders-and-settings). |
 | `unknown preset \`<name>\`` (`unknown_preset`) | No presets file (`--preset-file`, the project's `export-presets.json`, the user's) has that name; names are case-sensitive. It has no hint. For x264's preset, use `--video-encoder ffmpeg-x264/libx264 --video-option preset=<name>` (the optional `ffmpeg-x264` plugin). See [export.md](export.md#export-presets). |
 | `the default preset \`<name>\` of <file> is in no presets file` (`unknown_preset`) | The project file's `default` names a missing preset: fix the name or remove `default`, or name the components yourself. |
 | `<file>: cannot be read: …`, `is not valid JSON: …`, `unsupported version N; …`, or `is not an export presets file: …` (`invalid_presets`) | Fix that `export-presets.json` (`"version": 1`, a `presets` list). It fails only an export that has to look for a name in that file; a broken user file under a project preset is a warning (below). With `--preset-file`, the same message is a `usage` error. |

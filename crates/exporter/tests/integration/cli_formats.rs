@@ -294,13 +294,20 @@ fn a_plain_error_prints_its_hint() {
         "{stderr}"
     );
 
-    // With no media plugin at all, the built-in GIF, and how to install one.
+    // With no media plugin at all, where MP4's plugins come from, and the
+    // built-in GIF.
     let empty = tempfile::tempdir().unwrap();
     let stderr = plain_failure(empty.path(), &[output.to_str().unwrap()]);
     assert!(
-        stderr.contains(
-            "hint: write an animated GIF to a .gif path; for other formats, install a media plugin"
-        ),
+        stderr.contains("hint: MP4 is written by the standard ffmpeg plugin"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("build.mts plugins/ffmpeg plugins/ffmpeg-x264 --out <dir>"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("or write an animated GIF to a .gif path"),
         "{stderr}"
     );
     assert!(!output.exists());
