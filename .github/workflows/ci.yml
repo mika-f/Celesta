@@ -575,7 +575,10 @@ jobs:
             return <Composition width={64} height={64} fps={1} durationInFrames={1}><Text>Celesta</Text></Composition>;
           }
           EOF
-          image_run doctor --react check.tsx doctor.mp4 --json
+          mkdir -p "$work/home/.config/celesta"
+          printf '%s\n' '{"version":1,"presets":[{"name":"mounted-home"}]}' > "$work/home/.config/celesta/export-presets.json"
+          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/mounted-home -v "$work/home:/mounted-home:ro" -v "$work:/work" \
+            celesta-exporter:check doctor --react check.tsx doctor.mp4 --preset mounted-home --json
           test ! -e "$work/doctor.mp4"
           image_run export --react check.tsx --frame 0 check.png
           test -s "$work/check.png"

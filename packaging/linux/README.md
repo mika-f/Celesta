@@ -62,8 +62,9 @@ If an input is named like a subcommand, pass it as a path (for example, `./info`
 or use the explicit `export` subcommand.
 
 If the container user has no writable home, Celesta uses a private temporary
-one. To keep installed registry plugins across runs, mount a writable home
-and set `HOME` to its path in the container.
+one but still reads settings and presets from an existing home configuration.
+To keep installed registry plugins across runs, mount a writable home and
+set `HOME` to its path in the container.
 
 ## MCP server
 
