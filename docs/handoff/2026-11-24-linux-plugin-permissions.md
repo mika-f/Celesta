@@ -11,10 +11,10 @@ recursively from `/opt/celesta/plugins` after the native-library license
 files are added. This keeps owner permissions and the codec executable's
 execute bits as staged. Plugin host checks and other packages are unchanged.
 
-The existing Linux exporter image job's MOV smoke test exercises bundled
-plugin discovery. To check the permission-dependent case, build from a
-checkout with `LICENSE-APACHE` at mode 0664, then export the job's one-frame
-React fixture using the image's entrypoint and no explicit plugin path.
+The manually dispatched Linux exporter image job sets `LICENSE-APACHE`
+to 0664 before building so its MOV smoke test exercises this case even
+on a checkout with mode 0644. The test exports a one-frame React fixture
+using the image's entrypoint and no explicit plugin path.
 Check the completed image's plugin tree for bits matching `022`, and use
 `ffprobe` to confirm the output is a one-frame ProRes MOV.
 
