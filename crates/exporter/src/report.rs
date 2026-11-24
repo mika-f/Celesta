@@ -1072,7 +1072,8 @@ fn unsupported_output_hint(
                  --frame 0 (or --frame 0,30,60, or --every 30)"
             }
             HintTarget::Doctor => {
-                "PNG, JPEG and WebP outputs are still images: select one frame with --frame 0"
+                "PNG, JPEG and WebP outputs are still images: select one frame with --frame 0 \
+                 and omit --from, --to, --preset, --preset-file, --audio-encoder and --audio-option"
             }
             HintTarget::Mcp => {
                 "PNG, JPEG and WebP outputs are still images: render them with render_frames"

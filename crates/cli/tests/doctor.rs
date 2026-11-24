@@ -217,7 +217,7 @@ fn doctor_reports_hints_for_the_probe() {
     );
     assert!(!home.path().join("out.mov").exists());
 
-    let png = run("doctor", "out.png", &["--json"]);
+    let png = run("doctor", "out.png", &["--json", "--from", "0", "--to", "1"]);
     assert_exit(&png, 1);
     let checks = report(&png);
     let check = &checks["checks"]["output"];
@@ -226,6 +226,7 @@ fn doctor_reports_hints_for_the_probe() {
         .as_str()
         .expect("doctor still output has a hint");
     assert!(hint.contains("--frame 0"), "{hint}");
+    assert!(hint.contains("omit --from, --to"), "{hint}");
     assert!(
         !hint.contains("--every") && !hint.contains("--frame 0,"),
         "{hint}"
