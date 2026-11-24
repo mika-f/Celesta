@@ -800,8 +800,9 @@ Mesa/lavapipe hint and retry with `--driver vulkan`. If you set
 `VK_DRIVER_FILES` or `VK_ICD_FILENAMES`, check that it points to an
 installed driver manifest.
 
-The Linux container image does all of this:
+The Linux container image does all of this and bundles the x264 plugin for
+MP4. Use the unified `export` subcommand (older invocations without it still work):
 
 ```sh
-docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" celesta-exporter --react film.tsx film.mov
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" celesta-exporter export --react film.tsx film.mp4
 ```

@@ -4,9 +4,9 @@ Celesta's own source code is licensed under MIT OR Apache-2.0 (see
 `LICENSE-MIT` and `LICENSE-APACHE`, at the repository's root and beside this
 file in a package) and is always available at <https://github.com/mika-f/celesta>.
 
-Celesta's own executables link no FFmpeg. The standard app packages and Linux
-image include only the LGPL `ffmpeg` plugin. The separately downloadable
-`ffmpeg-x264` archive contains `celesta-codec-ffmpeg-x264`, a separate program
+Celesta's own executables link no FFmpeg. The standard app packages include
+only the LGPL `ffmpeg` plugin. The separately downloadable `ffmpeg-x264`
+archive and the Linux image contain `celesta-codec-ffmpeg-x264`, a separate program
 in its own plugin folder (`ffmpeg-x264`), that
 links an FFmpeg build compiled with the `x264` encoder enabled. `x264` is
 licensed under the GNU General Public License version 2 or later
@@ -24,7 +24,7 @@ link the GPL FFmpeg build.
 ## The offer
 
 For any Celesta `ffmpeg-x264` plugin release you received in object/executable
-form on Windows, macOS or Linux, we will provide, for a charge no more than our cost of physically
+form on Windows, macOS or Linux (including in the Linux Docker image), we will provide, for a charge no more than our cost of physically
 performing source distribution, a complete machine-readable copy of the
 corresponding source code for the GPL-licensed components in that specific
 build (FFmpeg and `x264`, built with the same version and configuration used
@@ -38,7 +38,8 @@ release, for anyone who possesses that release in object/executable form.
 To request source under this offer, open an issue at
 <https://github.com/mika-f/celesta/issues> naming the release version (from
 the plugin ZIP filename or its `celesta-plugin.json`) and the
-platform (Windows, macOS or Linux).
+platform (Windows, macOS or Linux). For a Docker image, also include its tag
+and digest if available, and the recorded native source-package version.
 
 ## Locating the exact build
 
@@ -57,7 +58,9 @@ in `.github/workflows/ffmpeg-windows.yml`, published as the
 `.github/actions/setup-ffmpeg/action.yml` (Windows). That package carries
 this offer beside vcpkg's tree. Each ZIP includes native
 notices: vcpkg's share tree in `licenses/native` on Windows,
-`licenses/homebrew.json` on macOS, and `licenses/native/debian-packages.json` on Linux. The
+`licenses/homebrew.json` on macOS, and `licenses/native/debian-packages.json` on Linux.
+The Linux image uses the same Ubuntu 22.04 x264 packager and preserves these
+notices under `/opt/celesta/plugins/ffmpeg-x264/licenses`. The
 Linux inventory records the binary package version and exact source-package
 name/version, including the distribution revision. Its corresponding source
 includes that distribution's patches, not only the upstream x264 tarball.

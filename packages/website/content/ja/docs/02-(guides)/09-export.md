@@ -591,14 +591,16 @@ docker build -f packaging/linux/Dockerfile -t celesta-exporter .
 ```
 
 ```sh title="コンテナで書き出し"
-docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" celesta-exporter --react first-scene.tsx output.mov
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" celesta-exporter export --react first-scene.tsx output.mov
 ```
 
-イメージに入っているのは標準の `ffmpeg` プラグインだけなので、書き出せるのは ProRes／MOV と WebM です。libopus と libvpx はイメージの Ubuntu パッケージ `libopus0` と `libvpx12` のものを使います。MP4 を書き出すには、Linux 用の `ffmpeg-x264` の ZIP（[追加コーデックのダウンロード](/ja/docs/plugins/#追加コーデックのダウンロード)）を `codecs` などのフォルダに展開してマウントし、`--plugin-dir` で指定します。
+イメージには ProRes／MOV と WebM 用の標準 `ffmpeg` プラグインと、H.264／MP4 用の独立した GPL の `ffmpeg-x264` プラグインが入っています。コーデックのダウンロードやマウントは不要です。
 
 ```sh title="コンテナで MP4 を書き出し"
-docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" -v "$PWD/codecs:/plugins:ro" celesta-exporter --plugin-dir /plugins --react first-scene.tsx output.mp4
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" celesta-exporter export --react first-scene.tsx output.mp4
 ```
+
+イメージ名の後に `doctor`、`init`、`plugin` を指定すれば、エントリーポイントを上書きせずにそのコマンドを実行できます。`export` を省略した従来の書き出しコマンドも引き続き使えます。
 
 > [!NOTE]
 > **書き出しの前に**

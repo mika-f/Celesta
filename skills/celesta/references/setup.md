@@ -21,7 +21,7 @@ how the user previews your work.
 | Windows installer | `%LOCALAPPDATA%\Programs\Celesta\Celesta.exe` | `…\Celesta-export.exe` | `…\runtime\node.exe` | `…\runtime\react\dist\cli.js` |
 | Windows portable ZIP | `<extracted folder>\Celesta.exe` | `…\Celesta-export.exe` | `…\runtime\node.exe` | `…\runtime\react\dist\cli.js` |
 | Source checkout (video and audio need [the media plugin](plugins.md#media-plugins)) | `cargo run -p celesta-editor --release --` | `cargo run -p celesta-exporter --release --` | `node` on PATH | `packages/cli/dist/cli.js` |
-| Linux container image | — | `docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" celesta-exporter …` | inside the image | inside the image |
+| Linux container image | — | `docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" celesta-exporter export …` | inside the image | inside the image |
 
 - The packaged apps name the executables `Celesta` and `Celesta-export`;
   source builds, docs, and generated `package.json` scripts call them
@@ -111,11 +111,11 @@ or extracted app folder. The installer does not add Celesta to PATH.
 & "C:\path\to\Celesta\Celesta-cli.exe" init my-video
 ```
 
-With the Linux Docker image, override its default exporter entry point:
+With the Linux Docker image, pass `init` directly after the image name:
 
 ```sh
 docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" \
-  --entrypoint /opt/celesta/celesta celesta-exporter init my-video
+  celesta-exporter init my-video
 ```
 
 `init` without a folder initializes the current directory. It prints

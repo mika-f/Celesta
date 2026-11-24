@@ -221,8 +221,7 @@ jobs:
     # The ZIP's glibc requirement, its bundled libx264.so.N and the
     # `distribution` in its debian-packages.json all come from this image, so
     # it builds in ubuntu:22.04: the ZIP loads on Ubuntu 22.04 (glibc 2.35)
-    # and later, as packaging/plugins/README.md states, and ci.yml's docker
-    # job loads it on ubuntu:26.04. A container rather than the ubuntu-22.04
+    # and later, as packaging/plugins/README.md states. A container rather than the ubuntu-22.04
     # runner keeps that baseline when the runner image is retired;
     # plugin-release.yml builds the registry's Linux archives the same way.
     runs-on: ubuntu-24.04
@@ -266,8 +265,6 @@ jobs:
           optional=()
           if [[ "$RELEASE" == "true" ]]; then optional=(--version "$VERSION"); fi
           python3 scripts/package-media-plugins.py "${optional[@]}"
-      # A manual CI run also uploads it: ci.yml's docker job exports MP4 with
-      # it in the image, as the export guide's container example does.
       - if: inputs.release || github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v7.0.2
         with:
