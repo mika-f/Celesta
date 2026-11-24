@@ -112,7 +112,14 @@ pub fn quality_exporter(args: &[&str]) -> Option<(Option<i32>, serde_json::Value
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    if !output.status.success() && stdout.contains("adapter") {
+    let report: serde_json::Value =
+        serde_json::from_str(stdout.trim()).unwrap_or_else(|_| panic!("{stdout}"));
+    if !output.status.success()
+        && report["error"]["code"] == "render"
+        && report["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("No suitable graphics adapter found"))
+    {
         assert!(
             std::env::var("CELESTA_REQUIRE_GPU").as_deref() != Ok("1"),
             "GPU tests require an adapter: {stdout}"
@@ -120,6 +127,5 @@ pub fn quality_exporter(args: &[&str]) -> Option<(Option<i32>, serde_json::Value
         eprintln!("skipping quality check test: no GPU adapter is available");
         return None;
     }
-    let report = serde_json::from_str(stdout.trim()).unwrap_or_else(|_| panic!("{stdout}"));
     Some((output.status.code(), report))
 }

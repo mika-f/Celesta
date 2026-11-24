@@ -1,4 +1,4 @@
-use crate::control::{ExportCancellation, ExportProgress};
+use crate::control::{ExportCancellation, ExportProgress, GraphicsInfo};
 use crate::encode::{ExportSession, readback_for};
 use crate::error::ExportError;
 use crate::exporter::Exporter;
@@ -272,6 +272,7 @@ impl Exporter {
         asset_root: &Path,
         frame_rate: Rational,
         cancellation: &ExportCancellation,
+        progress: &mut impl FnMut(ExportProgress),
     ) -> Result<GpuRenderer, ExportError> {
         let driver = self.options.driver;
         let renderer = GpuRenderer::new(GpuRenderOptions {
@@ -297,6 +298,12 @@ impl Exporter {
                 .host()
                 .with_kill_switch(cancellation.plugins()),
         );
+        let info = renderer.adapter_info();
+        progress(ExportProgress::Graphics(GraphicsInfo {
+            backend: info.backend.to_str(),
+            adapter: info.name.clone(),
+            software: renderer.is_software(),
+        }));
         Ok(renderer)
     }
 }

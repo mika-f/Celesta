@@ -17,6 +17,8 @@ pub enum ExportProgress {
     /// reported once they are chosen and before any frame renders. A still
     /// export has no audio encoder.
     Output(OutputPlan),
+    /// The graphics adapter selected for rendering, before any frame renders.
+    Graphics(GraphicsInfo),
     /// All roots and the selected ID of a React entry.
     ReactCompositions {
         selected: String,
@@ -47,6 +49,24 @@ pub enum ExportProgress {
     Quality(crate::quality::QualityIssue),
     /// A finished output file, reported once it is in place.
     Wrote(ExportedFile),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct GraphicsInfo {
+    pub backend: &'static str,
+    pub adapter: String,
+    pub software: bool,
+}
+
+impl std::fmt::Display for GraphicsInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let kind = if self.software {
+            "software"
+        } else {
+            "hardware"
+        };
+        write!(f, "{} ({kind}) · {}", self.backend, self.adapter)
+    }
 }
 
 /// A warning and its stable code; see [`ExportProgress::CodedWarning`].

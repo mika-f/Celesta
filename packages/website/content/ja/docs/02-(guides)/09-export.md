@@ -558,6 +558,8 @@ Celesta は[メディアプラグイン](/ja/docs/plugins/#メディアプラグ
 
 スクリプトが対応したい警告は `"codedWarnings"` にも入ります。各項目は変わらない `"code"` と `"message"` を持ちます（該当がなければキーはありません）。`nondeterministic_render` は、コンポジションが描画中に `Math.random()` や `Date.now()` などの時計を呼んだことを表します（[アニメーション](/ja/docs/animation/)を参照）。`rough_scenes` は、書き出した範囲にラフカットのシーン（`<Composition chapters>` で `status: 'rough'` のもの。[シーン・キュー・拍](/ja/docs/motion-toolkit/)を参照）があり、仮のカードのまま動画に入ったことを表します。代わりに書き出しを止めるには `--final` を付けます。このとき何も書き出さず、エラーコード `rough_scenes` で失敗します。MCP の `export_video` ツールと `@celesta.studio/exporter` も `final` を受け付け、`codedWarnings` を返します。
 
+描画を初期化すると、テキスト出力の `graphics:` 行に、実際に選ばれたバックエンドとアダプター名、ソフトウェア描画かハードウェア描画かが表示されます。最終的な `--json` の結果では、同じ情報が `graphics` に入ります（例：`{"backend":"vulkan","adapter":"llvmpipe","software":true}`）。`--info` など、描画を初期化しないコマンドでは省略されます。
+
 ソースビルドを使う場合は、[開発者向け手順](/ja/docs/build-from-source/)に対応する Cargo コマンドがあります。
 
 コマンドラインでの書き出しオプションは、`celesta-exporter --help`（デスクトップ版では `Celesta-export --help`）で確認できます。`celesta-react-render` は Celesta が React コンポジションを評価するための補助コマンドで、`celesta-mcp` は標準入出力を通じて MCP クライアントと通信するサーバーです。どちらも `--help` と `--version` ではプロトコル通信を開始しません。React の補助コマンドでこれらのオプションを使えるのは npm パッケージの `celesta-react-render` ラッパーだけです。デスクトップアプリが直接起動する内部用の `dist/cli.js` では使えません。
@@ -571,6 +573,8 @@ Linux で Vulkan を使う場合は --driver vulkan を指定します。CI や�
 ```sh title="ソフトウェア Vulkan をインストール"
 sudo apt-get install -y mesa-vulkan-drivers
 ```
+
+「No suitable graphics adapter found」と表示された場合は、ヒントに Mesa/lavapipe の設定方法が表示されます。`VK_DRIVER_FILES` または `VK_ICD_FILENAMES` を設定している場合は、インストール済みの Vulkan ドライバーのマニフェストを指していることを確認してください。
 
 ソフトウェア描画は GPU より遅く、4 コアでは 1080p をシーンによって約 10〜60 fps で描画します。全体の前に PNG で 1 フレーム確認してください。リポジトリのルートで実行します。
 

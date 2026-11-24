@@ -113,6 +113,7 @@ pub(crate) struct State {
     /// The components a video or stills are written with, once they are
     /// chosen.
     output: Option<OutputPlan>,
+    graphics: Option<String>,
 }
 
 impl State {
@@ -137,6 +138,7 @@ impl State {
             printed: 0,
             error: None,
             output: None,
+            graphics: None,
         }
     }
 
@@ -160,6 +162,11 @@ impl State {
                 self.diagnostics.push(Diagnostic::Warning(warning.message));
             }
             ExportProgress::Note(note) => self.diagnostics.push(Diagnostic::Note(note)),
+            ExportProgress::Graphics(info) => {
+                let line = format!("graphics: {info}");
+                self.diagnostics.push(Diagnostic::Note(line.clone()));
+                self.graphics = Some(line);
+            }
             ExportProgress::Quality(issue) => {
                 self.diagnostics
                     .push(Diagnostic::Warning(issue.to_string()));
@@ -409,6 +416,7 @@ pub fn run(
                     ExportProgress::Warning(_)
                         | ExportProgress::CodedWarning(_)
                         | ExportProgress::Note(_)
+                        | ExportProgress::Graphics(_)
                         | ExportProgress::Quality(_)
                 );
                 let mut state = state
@@ -454,7 +462,8 @@ fn render(frame: &mut Frame, settings: &Settings<'_>, state: &State) {
     let area = frame.area();
     // The details row grows by a line when a props file is named.
     let details_height = 6 + u16::from(settings.props.is_some());
-    if area.width < 82 || area.height < 17 + details_height {
+    let header_height = 2 + u16::from(state.graphics.is_some());
+    if area.width < 82 || area.height < 15 + header_height + details_height {
         render_compact(frame, settings, state);
         return;
     }
@@ -464,7 +473,7 @@ fn render(frame: &mut Frame, settings: &Settings<'_>, state: &State) {
         area,
     );
     let rows = Layout::vertical([
-        Constraint::Length(2),
+        Constraint::Length(header_height),
         Constraint::Length(7),
         Constraint::Length(3),
         Constraint::Length(details_height),
@@ -477,29 +486,33 @@ fn render(frame: &mut Frame, settings: &Settings<'_>, state: &State) {
         Stage::Failed => Color::Red,
         _ => ACCENT,
     };
-    frame.render_widget(
-        Paragraph::new(vec![
-            Line::from(vec![
-                Span::styled("  C E L E S T A", Style::new().fg(ACCENT).bold()),
-                Span::styled("   /   EXPORT STUDIO", Style::new().fg(MUTED)),
-            ]),
-            Line::from(vec![
-                Span::styled(
-                    format!("  {}  ", state.stage.label()),
-                    Style::new().fg(status_color),
-                ),
-                Span::styled(
-                    if settings.still {
-                        state.still_line()
-                    } else {
-                        state.format_line()
-                    },
-                    Style::new().fg(MUTED),
-                ),
-            ]),
+    let mut header = vec![
+        Line::from(vec![
+            Span::styled("  C E L E S T A", Style::new().fg(ACCENT).bold()),
+            Span::styled("   /   EXPORT STUDIO", Style::new().fg(MUTED)),
         ]),
-        rows[0],
-    );
+        Line::from(vec![
+            Span::styled(
+                format!("  {}  ", state.stage.label()),
+                Style::new().fg(status_color),
+            ),
+            Span::styled(
+                if settings.still {
+                    state.still_line()
+                } else {
+                    state.format_line()
+                },
+                Style::new().fg(MUTED),
+            ),
+        ]),
+    ];
+    if let Some(graphics) = &state.graphics {
+        header.push(Line::styled(
+            format!("  {graphics}"),
+            Style::new().fg(MUTED),
+        ));
+    }
+    frame.render_widget(Paragraph::new(header), rows[0]);
     let body = Layout::horizontal([Constraint::Length(29), Constraint::Min(1)]).split(rows[1]);
     render_pipeline(frame, body[0], settings, state);
     let right = Layout::vertical([Constraint::Length(3), Constraint::Min(4)]).split(body[1]);
@@ -698,17 +711,15 @@ fn render_compact(frame: &mut Frame, settings: &Settings<'_>, state: &State) {
         _ => ACCENT,
     };
     if area.height < 10 || area.width < 36 {
-        frame.render_widget(
-            Paragraph::new(format!(
-                "CELESTA  {}\n{} / {} frames\nelapsed {}",
-                state.stage.label(),
-                state.done(),
-                state.total,
-                clock(state.elapsed())
-            ))
-            .style(Style::new().fg(color)),
-            area,
-        );
+        let mut status = vec![
+            Line::from(format!("CELESTA  {}", state.stage.label())),
+            Line::from(format!("{} / {} frames", state.done(), state.total)),
+            Line::from(format!("elapsed {}", clock(state.elapsed()))),
+        ];
+        if let Some(graphics) = &state.graphics {
+            status.insert(1, Line::from(graphics.as_str()));
+        }
+        frame.render_widget(Paragraph::new(status).style(Style::new().fg(color)), area);
         return;
     }
     let block = Block::bordered()
@@ -721,7 +732,7 @@ fn render_compact(frame: &mut Frame, settings: &Settings<'_>, state: &State) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let rows = Layout::vertical([
-        Constraint::Length(1),
+        Constraint::Length(1 + u16::from(state.graphics.is_some())),
         Constraint::Length(3),
         Constraint::Length(2),
         Constraint::Length(4),
@@ -734,11 +745,14 @@ fn render_compact(frame: &mut Frame, settings: &Settings<'_>, state: &State) {
         Stage::Failed => "!",
         _ => spinner[(state.elapsed().as_millis() / 100 % spinner.len() as u128) as usize],
     };
-    frame.render_widget(
-        Paragraph::new(format!(" {icon}  {}", state.stage.label()))
-            .style(Style::new().fg(color).bold()),
-        rows[0],
-    );
+    let mut header = vec![Line::styled(
+        format!(" {icon}  {}", state.stage.label()),
+        Style::new().fg(color).bold(),
+    )];
+    if let Some(graphics) = &state.graphics {
+        header.push(Line::from(format!(" {graphics}")));
+    }
+    frame.render_widget(Paragraph::new(header), rows[0]);
     let ratio = if state.total == 0 {
         0.0
     } else {
@@ -891,6 +905,7 @@ impl PlainProgress {
                 self.print_diagnostic(&Diagnostic::Warning(warning.message.clone()).line());
             }
             ExportProgress::Note(note) => self.print_diagnostic(note),
+            ExportProgress::Graphics(info) => self.print_diagnostic(&format!("graphics: {info}")),
             ExportProgress::Quality(issue) => {
                 self.print_diagnostic(&Diagnostic::Warning(issue.to_string()).line());
             }
@@ -1161,6 +1176,28 @@ mod tests {
         state.update(ExportProgress::Note("note: terms of use".into()));
         assert_eq!(state.take_scrollback(), ["note: terms of use"]);
         assert_eq!(state.warnings().count(), 1);
+    }
+
+    #[test]
+    fn dashboard_shows_the_adapter_while_rendering() {
+        let mut state = State::new();
+        let adapter = "llvmpipe (LLVM 15.0.7, 256 bits)";
+        state.update(ExportProgress::Graphics(crate::GraphicsInfo {
+            backend: "vulkan",
+            adapter: adapter.into(),
+            software: true,
+        }));
+        state.update(ExportProgress::Rendering { frame: 1, total: 2 });
+        let prefix = "graphics: vulkan (software) · llvmpipe";
+        for (width, height) in [(50, 15), (50, 8)] {
+            assert!(
+                screen(&state, width, height).contains(prefix),
+                "graphics missing at {width}×{height}"
+            );
+        }
+        let full = format!("graphics: vulkan (software) · {adapter}");
+        assert!(screen(&state, 110, 26).contains(&full));
+        assert_eq!(state.take_scrollback(), [full]);
     }
 
     #[test]

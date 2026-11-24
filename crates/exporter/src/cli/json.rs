@@ -20,8 +20,8 @@ pub fn run(
     let mut events = Events::default();
     let (report, ok) = report::build(source, props_file, HintStyle::Cli, |on_progress| {
         export(&mut |event| {
-            if progress {
-                print(&events.event(&event));
+            if progress && let Some(line) = events.event(&event) {
+                print(&line);
             }
             on_progress(event);
         })
