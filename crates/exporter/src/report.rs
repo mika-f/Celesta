@@ -635,11 +635,22 @@ pub fn add_react_hint(report: &mut Report, source: &Path) {
 /// [`hint`], or without `react` (`--react`) for a React entry that failed to
 /// parse as a JSON project, `--react`.
 pub fn source_hint(error: &ExportError, source: &Path, react: bool) -> Option<Cow<'static, str>> {
+    classify_source(error, source, react).1
+}
+
+/// The CLI error code and hint, including advice specific to the source path.
+pub(crate) fn classify_source(
+    error: &ExportError,
+    source: &Path,
+    react: bool,
+) -> (&'static str, Option<Cow<'static, str>>) {
     let (code, hint) = classify(error, HintStyle::Cli, &mut Vec::new());
-    if react {
-        return hint;
-    }
-    react_entry_hint(code, source).or(hint)
+    let hint = if react {
+        hint
+    } else {
+        react_entry_hint(code, source).or(hint)
+    };
+    (code, hint)
 }
 
 fn react_entry_hint(code: &str, source: &Path) -> Option<Cow<'static, str>> {
@@ -890,8 +901,9 @@ fn standard_format_install_hint(path: &Path) -> Option<&'static str> {
              optional ffmpeg-x264 plugin (a release download, \
              Celesta-plugin-ffmpeg-x264-<version>-<os>-<arch>.zip, extracted into your plugin \
              folder and allowed with --allow-plugin ffmpeg-x264); in a source checkout, stage both with `node scripts/plugins/build.mts \
-             plugins/ffmpeg plugins/ffmpeg-x264 --out <dir>` and pass --plugin-dir <dir>; a \
-             codec from the registry installs with `celesta plugin install --global <id>`"
+             plugins/ffmpeg plugins/ffmpeg-x264 --out <dir>` and pass --plugin-dir <dir>; from \
+             the registry, install the muxer with `celesta plugin install --global ffmpeg` and, \
+             on Linux, the encoder with `celesta plugin install --global ffmpeg-x264`"
         }
         _ => return None,
     })
@@ -949,8 +961,8 @@ fn no_default_encoder_hint(
              into your plugin folder and allow it with --allow-plugin ffmpeg-x264, or in a \
              source checkout stage it with \
              `node scripts/plugins/build.mts plugins/ffmpeg-x264 --out <dir>` and pass \
-             --plugin-dir <dir>; a codec from the registry installs with \
-             `celesta plugin install --global <id>`"
+             --plugin-dir <dir>, or install it from the registry with \
+             `celesta plugin install --global ffmpeg-x264`"
                 .to_owned()
         } else {
             "H.264 needs an encoder plugin; on Linux that is the optional ffmpeg-x264 plugin: \
@@ -1695,7 +1707,15 @@ mod tests {
                 hint.contains("build.mts plugins/ffmpeg plugins/ffmpeg-x264 --out"),
                 "{hint}"
             );
-            assert!(hint.contains("celesta plugin install --global"), "{hint}");
+            assert!(
+                hint.contains("`celesta plugin install --global ffmpeg`"),
+                "{hint}"
+            );
+            assert!(
+                hint.contains("`celesta plugin install --global ffmpeg-x264`"),
+                "{hint}"
+            );
+            assert!(!hint.contains("<id>"), "{hint}");
             assert!(!hint.contains(".gif"), "{hint}");
         }
         // Installed muxers other than GIF stay in the hint.
@@ -1749,12 +1769,13 @@ mod tests {
             "Celesta-plugin-ffmpeg-x264-",
             "build.mts plugins/ffmpeg-x264 --out <dir>",
             "--plugin-dir <dir>",
-            "celesta plugin install --global <id>",
+            "`celesta plugin install --global ffmpeg-x264`",
             "or write .mov (ProRes) or .webm (VP9) instead (with a muxer",
             "--list-components",
         ] {
             assert!(hint.contains(part), "{part}: {hint}");
         }
+        assert!(!hint.contains("<id>"), "{hint}");
         let mcp = classified(&mp4, HintStyle::Mcp).1.unwrap();
         assert!(mcp.contains("ffmpeg-x264") && mcp.contains("list_components"));
         assert!(!mcp.contains("--plugin-dir"), "{mcp}");

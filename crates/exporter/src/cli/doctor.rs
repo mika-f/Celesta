@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -103,6 +104,8 @@ struct Check {
     #[serde(skip_serializing_if = "Option::is_none")]
     code: Option<&'static str>,
     message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hint: Option<Cow<'static, str>>,
 }
 
 impl Check {
@@ -111,6 +114,7 @@ impl Check {
             status,
             code: None,
             message: message.into(),
+            hint: None,
         }
     }
 
@@ -136,13 +140,16 @@ impl Report {
                 ("Output", &self.checks.output),
             ] {
                 println!("{name}: {} — {}", check.status, check.message);
+                if let Some(hint) = &check.hint {
+                    println!("  hint: {hint}");
+                }
             }
         }
     }
 }
 
 /// Report invalid invocations in the doctor schema when requested.
-pub fn doctor_parse_failed(error: clap::Error) -> ! {
+pub fn doctor_parse_failed(error: clap::Error) -> ExitCode {
     if error.use_stderr() && std::env::args_os().any(|arg| arg == "--json") {
         Report {
             schema_version: SCHEMA_VERSION,
@@ -154,20 +161,29 @@ pub fn doctor_parse_failed(error: clap::Error) -> ! {
             },
         }
         .print(true);
-        std::process::exit(error.exit_code());
+    } else {
+        let _ = error.print();
     }
-    error.exit()
+    if error.use_stderr() {
+        ExitCode::from(2)
+    } else {
+        ExitCode::SUCCESS
+    }
 }
 
 /// Run the host checks and any requested end-to-end render test.
 pub fn run_doctor(matches: &ArgMatches) -> ExitCode {
-    let cli =
-        DoctorCli::from_arg_matches(matches).unwrap_or_else(|error| doctor_parse_failed(error));
+    let cli = match DoctorCli::from_arg_matches(matches) {
+        Ok(cli) => cli,
+        Err(error) => return doctor_parse_failed(error),
+    };
     if let Err(error) = validate_audio_options(cli.audio_encoder.as_ref(), &cli.audio_option) {
-        doctor_usage(ErrorKind::ArgumentConflict, error);
+        return doctor_usage(ErrorKind::ArgumentConflict, error);
     }
-    let range = validated_export_range(cli.preset_file.as_deref(), cli.from, cli.to)
-        .unwrap_or_else(|error| doctor_usage(ErrorKind::ValueValidation, error));
+    let range = match validated_export_range(cli.preset_file.as_deref(), cli.from, cli.to) {
+        Ok(range) => range,
+        Err(error) => return doctor_usage(ErrorKind::ValueValidation, error),
+    };
     let node = if cli.source.is_none() || cli.input.react {
         check_node()
     } else {
@@ -201,7 +217,7 @@ pub fn run_doctor(matches: &ArgMatches) -> ExitCode {
     }
 }
 
-fn doctor_usage(kind: ErrorKind, message: String) -> ! {
+fn doctor_usage(kind: ErrorKind, message: String) -> ExitCode {
     doctor_parse_failed(
         doctor_command()
             .bin_name("celesta doctor")
@@ -296,8 +312,11 @@ fn check_output(
             "rendered through the selected media path; output discarded",
         ),
         Err(error) => {
-            let (code, _) = report::classify(&error, report::HintStyle::Cli, &mut Vec::new());
-            Check::error(code, error.to_string())
+            let (code, hint) = report::classify_source(&error, source, cli.input.react);
+            Check {
+                hint,
+                ..Check::error(code, error.to_string())
+            }
         }
     }
 }
