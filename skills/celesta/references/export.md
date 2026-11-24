@@ -36,7 +36,7 @@ celesta export --react scene.tsx --frame 0 frame.png
 celesta export --react scene.tsx out.mov
 ```
 
-With the Linux Docker image, follow the [entry point override instructions](https://github.com/mika-f/Celesta/blob/main/packaging/linux/README.md#unified-cli) to run these subcommands.
+With the Linux Docker image, pass these subcommands directly after the image name. See [using the unified CLI in Docker](https://github.com/mika-f/Celesta/blob/main/packaging/linux/README.md#unified-cli).
 
 For a headless preflight, run `celesta doctor --json` for Node.js, the staged
 runtime, and graphics, or pass a source and output to exercise the plugins,

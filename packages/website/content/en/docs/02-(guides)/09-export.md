@@ -45,7 +45,7 @@ celesta export --react first-scene.tsx --frame 0 frame.png
 celesta export --react first-scene.tsx output.mov
 ```
 
-With the Linux Docker image, follow the [entry point override instructions](https://github.com/mika-f/Celesta/blob/main/packaging/linux/README.md#unified-cli) to run these subcommands.
+With the Linux Docker image, pass these subcommands directly after the image name. See [using the unified CLI in Docker](https://github.com/mika-f/Celesta/blob/main/packaging/linux/README.md#unified-cli).
 
 `celesta info` reports size, frame rate, duration, and React compositions without rendering. `celesta export` takes the same arguments as the standalone exporter, including `--list-components --check`. `celesta-exporter` and the Docker image's default entry point still work with their original arguments.
 

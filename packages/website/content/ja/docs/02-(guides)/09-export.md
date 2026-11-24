@@ -44,7 +44,7 @@ celesta export --react first-scene.tsx --frame 0 frame.png
 celesta export --react first-scene.tsx output.mov
 ```
 
-Linux の Docker イメージを使う場合は、[エントリーポイントを切り替える手順](https://github.com/mika-f/Celesta/blob/main/packaging/linux/README.md#unified-cli)に従って、これらのサブコマンドを実行します。
+Linux の Docker イメージでは、これらのサブコマンドをイメージ名の直後に指定します。[Docker で統合 CLI を使う手順](https://github.com/mika-f/Celesta/blob/main/packaging/linux/README.md#unified-cli)も参照してください。
 
 `celesta info` は描画せずにサイズ、フレームレート、長さ、React コンポジションを表示します。`celesta export` には `--list-components --check` を含め、従来の書き出しツールと同じ引数を渡せます。`celesta-exporter` と Docker イメージのデフォルトのエントリーポイントも、従来の引数のまま使えます。
 

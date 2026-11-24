@@ -297,9 +297,10 @@ When a remembered project's lock cannot be read, `gc` removes nothing and names 
 ## Media plugins
 
 Celesta's executables link no FFmpeg. Of the two FFmpeg builds, app packages
-and the Linux image bundle only standard `ffmpeg` (LGPL): decoding, ProRes,
+bundle only standard `ffmpeg` (LGPL): decoding, ProRes,
 VP9, AAC, Opus, PCM and MP4/MOV/WebM muxing. An optional download adds
-`ffmpeg-x264/libx264` (GPL H.264). The base package can decode H.264 and
+`ffmpeg-x264/libx264` (GPL H.264). The Linux Docker image bundles both plugins
+and can export MP4 without the download. The base package can decode H.264 and
 export ProRes/MOV and WebM (VP9 with alpha, Opus) without addons.
 
 macOS also bundles `avfoundation`, and Windows `mediafoundation`, using their

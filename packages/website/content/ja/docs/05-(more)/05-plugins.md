@@ -297,9 +297,10 @@ removed 2 unfinished downloads
 ## メディアプラグイン
 
 Celesta 本体の実行ファイルは FFmpeg をリンクしません。FFmpeg の 2 構成のうち、
-アプリと Linux イメージに同梱するのは標準の `ffmpeg`（LGPL）だけです。デコード、
+アプリに同梱するのは標準の `ffmpeg`（LGPL）だけです。デコード、
 ProRes、VP9、AAC、Opus、PCM、MP4・MOV・WebM の muxer を提供します。個別のダウンロードで
-`ffmpeg-x264/libx264`（GPL の H.264）を追加できます。標準版だけでも H.264 の読み込みと、
+`ffmpeg-x264/libx264`（GPL の H.264）を追加できます。Linux の Docker イメージには両方の
+プラグインが入っているため、ダウンロードせずに MP4 を書き出せます。標準版だけでも H.264 の読み込みと、
 ProRes／MOV、WebM（アルファ付き VP9、Opus）の書き出しが使えます。
 
 macOS は `avfoundation`、Windows は `mediafoundation` も同梱します。OS のメディア機能を
