@@ -37,13 +37,15 @@ Choose **Export…** at the bottom of the page, or press Enter on the page, to p
 
 ## From the command line
 
-On headless Linux, open a terminal in the project folder containing `first-scene.tsx` and use:
+On headless Linux with `celesta` on PATH, open a terminal in the project folder containing `first-scene.tsx` and use:
 
 ```sh title="Inspect and export a React composition"
 celesta info --react first-scene.tsx --json
 celesta export --react first-scene.tsx --frame 0 frame.png
 celesta export --react first-scene.tsx output.mov
 ```
+
+With the Linux Docker image, follow the [entry point override instructions](https://github.com/mika-f/Celesta/blob/main/packaging/linux/README.md#unified-cli) to run these subcommands.
 
 `celesta info` reports size, frame rate, duration, and React compositions without rendering. `celesta export` takes the same arguments as the standalone exporter, including `--list-components --check`. `celesta-exporter` and the Docker image's default entry point still work with their original arguments.
 

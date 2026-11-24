@@ -36,13 +36,15 @@ MP4 を選ばなかった理由と使えるようにする方法が **Preset** �
 
 ## コマンドラインから
 
-ディスプレイのない Linux では、`first-scene.tsx` があるプロジェクトフォルダで次のコマンドを実行します。
+ディスプレイのない Linux で `celesta` に PATH が通っている場合は、`first-scene.tsx` があるプロジェクトフォルダで次のコマンドを実行します。
 
 ```sh title="React コンポジションの確認と書き出し"
 celesta info --react first-scene.tsx --json
 celesta export --react first-scene.tsx --frame 0 frame.png
 celesta export --react first-scene.tsx output.mov
 ```
+
+Linux の Docker イメージを使う場合は、[エントリーポイントを切り替える手順](https://github.com/mika-f/Celesta/blob/main/packaging/linux/README.md#unified-cli)に従って、これらのサブコマンドを実行します。
 
 `celesta info` は描画せずにサイズ、フレームレート、長さ、React コンポジションを表示します。`celesta export` には `--list-components --check` を含め、従来の書き出しツールと同じ引数を渡せます。`celesta-exporter` と Docker イメージのデフォルトのエントリーポイントも、従来の引数のまま使えます。
 

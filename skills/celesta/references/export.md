@@ -27,7 +27,7 @@ stands for its path.
 
 ## Commands
 
-On Linux, use the unified CLI; `celesta export` accepts the same arguments as
+On Linux with `celesta` on PATH, use the unified CLI; `celesta export` accepts the same arguments as
 `celesta-exporter`, and `celesta info` is the standalone `--info` mode:
 
 ```sh
@@ -35,6 +35,8 @@ celesta info --react scene.tsx --json
 celesta export --react scene.tsx --frame 0 frame.png
 celesta export --react scene.tsx out.mov
 ```
+
+With the Linux Docker image, follow the [entry point override instructions](https://github.com/mika-f/Celesta/blob/main/packaging/linux/README.md#unified-cli) to run these subcommands.
 
 The standalone command still works:
 
