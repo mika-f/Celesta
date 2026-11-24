@@ -21,7 +21,7 @@ it('prints usage and handles malformed arguments', () => {
     [[], 'expected a workspace directory and Cargo command'],
     [['plugins', 'test'], 'expected at least one -p <package>'],
     [['plugins', 'test', '-p', '--locked'], '-p needs a package name'],
-    [['plugins', 'test', '-p', 'demo', '--target', '--locked'], '--target needs a value'],
+    [['plugins', 'test', '-p', 'demo', '--target'], '--target needs a value'],
   ] as const) {
     const { status, stdout, stderr } = spawnSync(process.execPath, [script, ...args], { encoding: 'utf8' });
     expect(status).toBe(2);
@@ -84,6 +84,13 @@ it('builds prerequisite programs in the requested profile and target without tes
   for (const call of builds) {
     expect(call.args).toEqual(['-p', call.name, '--locked', '--release', '--target', 'a-target']);
   }
+});
+
+it.each(['--jobs', '-j'])('forwards negative %s values to Cargo and prerequisite builds', (flag) => {
+  const { status, calls, stderr } = run(['-p', 'celesta-codec-ffmpeg-x264', flag, '-1'], '');
+  expect(status, stderr).toBe(0);
+  expect(calls.map((call) => call.action)).toEqual(['build', 'build', 'test']);
+  for (const call of calls) expect(call.args.slice(-2)).toEqual([flag, '-1']);
 });
 
 it('refuses tests with failed prerequisites and still reports independent package results', () => {

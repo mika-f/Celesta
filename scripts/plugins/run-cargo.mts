@@ -56,7 +56,7 @@ for (let index = 0; index < rest.length && rest[index] !== '--'; index++) {
   }
   if (!takesValue.includes(flag)) continue;
   const value = inline ?? rest[++index];
-  if (value === undefined || (inline === undefined && value.startsWith('-'))) usageError(`${flag} needs a value`);
+  if (value === undefined) usageError(`${flag} needs a value`);
   if (nextest && (flag === '--profile' || flag === '-P')) nextestProfile = value;
   else if (flag === '--cargo-profile') buildFlags.push('--profile', value);
   else {
