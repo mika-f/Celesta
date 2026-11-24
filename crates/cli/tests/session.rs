@@ -27,6 +27,19 @@ fn json_usage_errors_keep_exit_two() {
     assert_eq!(report["error"]["code"], "invalid_arguments");
 }
 
+#[test]
+fn unsupported_json_flag_reports_text_on_stderr() {
+    let home = Home::new();
+    let output = home
+        .command()
+        .args(["plugin", "--project", "audit", "search", "chart", "--json"])
+        .output()
+        .unwrap();
+    common::assert_exit(&output, 2);
+    assert_eq!(common::stdout(&output), "");
+    assert!(stderr(&output).starts_with("celesta: error: unexpected argument '--json'"));
+}
+
 fn stderr(output: &std::process::Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }

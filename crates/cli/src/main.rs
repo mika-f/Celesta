@@ -46,11 +46,7 @@ fn parse_error(error: clap::Error) -> ExitCode {
         }
         error => {
             let rendered = error.render().to_string();
-            if std::env::args_os()
-                .skip(1)
-                .take_while(|arg| arg != "--")
-                .any(|arg| arg == "--json")
-            {
+            if wants_json_usage_error() {
                 return celesta_cli::json::usage_error(rendered.trim_end());
             }
             match rendered.strip_prefix("error: ") {
@@ -62,6 +58,22 @@ fn parse_error(error: clap::Error) -> ExitCode {
             ExitCode::from(celesta_cli::USAGE)
         }
     }
+}
+
+fn wants_json_usage_error() -> bool {
+    let mut args = std::env::args_os().skip(1);
+    if !args.next().is_some_and(|arg| arg == "plugin") {
+        return false;
+    }
+    while let Some(arg) = args.next() {
+        if arg == "--project" {
+            args.next();
+        } else if !arg.as_encoded_bytes().starts_with(b"--project=") {
+            return matches!(arg.to_str(), Some("list" | "install" | "audit"))
+                && args.take_while(|arg| arg != "--").any(|arg| arg == "--json");
+        }
+    }
+    false
 }
 
 #[cfg(test)]
