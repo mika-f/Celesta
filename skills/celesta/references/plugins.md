@@ -179,6 +179,8 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   `ffmpeg/opus` and `ffmpeg/vp9` keep their IDs.
   A source build makes both with
   `node scripts/plugins/build.mts plugins/ffmpeg plugins/ffmpeg-x264`.
+  Run `node scripts/plugins/build.mts --help` for build options and FFmpeg
+  prefix examples.
   The macOS app also bundles `avfoundation`, and the Windows app
   `mediafoundation`; both use system libraries under MIT/Apache-2.0.
   Include `plugins/avfoundation plugins/mediafoundation` in source builds;
@@ -195,6 +197,7 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   Run tests per package:
   `node scripts/plugins/run-cargo.mts plugins nextest -p celesta-codec-ffmpeg -p celesta-codec-ffmpeg-x264`
   (cargo-nextest; `test` instead runs `cargo test`).
+  Run `node scripts/plugins/run-cargo.mts --help` for usage.
   Local builds may link a system GPL FFmpeg 8.1.x, but every native build
   opens each encoder (`--check-build`), so the standard FFmpeg needs libvpx
   and libopus. `--distribution` also validates licenses (`--check-license`):

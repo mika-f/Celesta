@@ -6,6 +6,33 @@ import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 
 const script = fileURLToPath(new URL('../run-cargo.mts', import.meta.url));
+
+it('prints usage and handles malformed arguments', () => {
+  for (const flag of ['--help', '-h']) {
+    const { status, stdout, stderr } = spawnSync(process.execPath, [script, flag], { encoding: 'utf8' });
+    expect(status, stderr).toBe(0);
+    expect(stderr).toBe('');
+    expect(stdout).toContain('Usage: node scripts/plugins/run-cargo.mts <workspace> <command> -p <package>');
+    expect(stdout).toContain('Use nextest for cargo nextest run');
+  }
+
+  for (const [args, message] of [
+    [['--bogus'], 'unexpected option "--bogus"; expected a workspace directory'],
+    [[], 'expected a workspace directory and Cargo command'],
+    [['plugins', 'test'], 'expected at least one -p <package>'],
+    [['plugins', 'test', '-p', '--locked'], '-p needs a package name'],
+    [['plugins', 'test', '-p', 'demo', '--target'], '--target needs a value'],
+  ] as const) {
+    const { status, stdout, stderr } = spawnSync(process.execPath, [script, ...args], { encoding: 'utf8' });
+    expect(status).toBe(2);
+    expect(stdout).toBe('');
+    expect(stderr.trim().split(/\r?\n/)).toEqual([
+      `run-cargo.mts: ${message}`,
+      'Run node scripts/plugins/run-cargo.mts --help for usage.',
+    ]);
+  }
+});
+
 // CARGO is Node.js, so `cargo <action> ...` runs the stub file named <action>;
 // `cargo nextest run ...` runs `nextest`, which writes a JUnit report as the
 // ci profile does, naming the package in it (unless it is NO_REPORT).
@@ -43,6 +70,19 @@ it('runs later packages after a test failure and returns failure overall', () =>
   expect(stderr).toContain('Cargo failed for: celesta-codec-ffmpeg');
 });
 
+it('forwards help after the Cargo command', () => {
+  const { status, calls, stderr } = run(['-p', 'demo', '--', '--help'], '');
+  expect(status, stderr).toBe(0);
+  expect(calls).toEqual([{ action: 'test', name: 'demo', args: ['-p', 'demo', '--', '--help'] }]);
+});
+
+it('forwards bare --help to the Cargo subcommand', () => {
+  const args = ['-p', 'demo', '--help'];
+  const { status, calls, stderr } = run(args, '', { command: 'build' });
+  expect(status, stderr).toBe(0);
+  expect(calls).toEqual([{ action: 'build', name: 'demo', args }]);
+});
+
 it('builds prerequisite programs in the requested profile and target without test arguments', () => {
   const { status, calls, stderr } = run(['-p', 'celesta-codec-ffmpeg-x264', '--locked', '--release', '--target', 'a-target', 'a_test_filter', '--', '--show-output'], '');
   expect(status, stderr).toBe(0);
@@ -51,6 +91,13 @@ it('builds prerequisite programs in the requested profile and target without tes
   for (const call of builds) {
     expect(call.args).toEqual(['-p', call.name, '--locked', '--release', '--target', 'a-target']);
   }
+});
+
+it.each(['--jobs', '-j'])('forwards negative %s values to Cargo and prerequisite builds', (flag) => {
+  const { status, calls, stderr } = run(['-p', 'celesta-codec-ffmpeg-x264', flag, '-1'], '');
+  expect(status, stderr).toBe(0);
+  expect(calls.map((call) => call.action)).toEqual(['build', 'build', 'test']);
+  for (const call of calls) expect(call.args.slice(-2)).toEqual([flag, '-1']);
 });
 
 it('refuses tests with failed prerequisites and still reports independent package results', () => {
