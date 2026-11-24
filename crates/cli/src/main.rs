@@ -65,14 +65,22 @@ fn wants_json_usage_error() -> bool {
     if !args.next().is_some_and(|arg| arg == "plugin") {
         return false;
     }
+    let mut json = false;
     while let Some(arg) = args.next() {
-        if arg == "--project" {
-            args.next();
-        } else if !arg.as_encoded_bytes().starts_with(b"--project=") {
-            return matches!(arg.to_str(), Some("list" | "install" | "audit"))
-                && args
-                    .take_while(|arg| arg != "--")
-                    .any(|arg| arg == "--json");
+        match arg.as_encoded_bytes() {
+            b"--" => break,
+            b"--project" => {
+                args.next();
+            }
+            b"--json" => json = true,
+            b"list" | b"install" | b"audit" => {
+                return json
+                    || args
+                        .take_while(|arg| arg != "--")
+                        .any(|arg| arg == "--json");
+            }
+            option if option.starts_with(b"-") => {}
+            _ => break,
         }
     }
     false

@@ -8,23 +8,25 @@ use common::Home;
 #[test]
 fn json_usage_errors_keep_exit_two() {
     let home = Home::new();
-    let output = home
-        .command()
-        .args([
+    for args in [
+        &[
             "plugin",
             "install",
             "--json",
             "--locked",
             "--global",
             "acme.codec",
-        ])
-        .output()
-        .unwrap();
-    common::assert_exit(&output, 2);
-    assert_eq!(stderr(&output), "");
-    let report = common::json_stdout(&output);
-    assert_eq!(report["status"], "error");
-    assert_eq!(report["error"]["code"], "invalid_arguments");
+        ][..],
+        &["plugin", "--locked", "install", "--json"],
+        &["plugin", "--json", "--locked", "install"],
+    ] {
+        let output = home.command().args(args).output().unwrap();
+        common::assert_exit(&output, 2);
+        assert_eq!(stderr(&output), "", "{args:?}");
+        let report = common::json_stdout(&output);
+        assert_eq!(report["status"], "error");
+        assert_eq!(report["error"]["code"], "invalid_arguments");
+    }
 }
 
 #[test]
