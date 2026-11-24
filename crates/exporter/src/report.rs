@@ -33,6 +33,9 @@ enum HintTarget {
     Mcp,
 }
 
+const DOCTOR_COMPONENT_LIST_HINT: &str = "run `celesta export --list-components --check` with \
+    the same source, --plugin-dir and --allow-plugin options to check this project's components";
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Report {
@@ -757,12 +760,12 @@ fn classify_for(
             "component_unavailable",
             Some(Cow::Owned(if cli {
                 let listing = if target == HintTarget::Doctor {
-                    "`celesta export --list-components`"
+                    DOCTOR_COMPONENT_LIST_HINT
                 } else {
-                    "--list-components"
+                    "--list-components shows the installed components"
                 };
                 format!(
-                    "{listing} shows the installed components; if the {plugin} \
+                    "{listing}; if the {plugin} \
                      plugin is installed but not allowed, allow it with --allow-plugin {plugin}",
                     plugin = component.plugin
                 )
@@ -1025,7 +1028,7 @@ fn no_default_encoder_hint(
     };
     let listing = match target {
         HintTarget::Export => "--list-components --check shows what works",
-        HintTarget::Doctor => "`celesta export --list-components --check` shows what works",
+        HintTarget::Doctor => DOCTOR_COMPONENT_LIST_HINT,
         HintTarget::Mcp => "list_components shows what is installed",
     };
     let pinned = if cli {
@@ -1806,6 +1809,34 @@ mod tests {
         let mcp = classified(&error, HintStyle::Mcp).1.unwrap();
         assert!(mcp.contains("list_components"), "{mcp}");
         assert!(mcp.contains("Plugins tab"), "{mcp}");
+    }
+
+    #[test]
+    fn doctor_component_hints_keep_the_plugin_search_context() {
+        let source = Path::new("film.tsx");
+        for reason in [
+            UnavailableReason::NotInstalled,
+            UnavailableReason::NoDefaultEncoder {
+                kind: ComponentKind::VideoEncoder,
+                codec: "avc1".to_owned(),
+            },
+        ] {
+            let error = ExportError::ComponentUnavailable {
+                component: "ffmpeg/mp4".parse().unwrap(),
+                reason,
+            };
+            let (code, hint) = classify_doctor(&error, source, true);
+            assert_eq!(code, "component_unavailable");
+            let hint = hint.unwrap();
+            assert!(
+                hint.contains("celesta export --list-components --check"),
+                "{hint}"
+            );
+            assert!(
+                hint.contains("same source, --plugin-dir and --allow-plugin"),
+                "{hint}"
+            );
+        }
     }
 
     #[test]
