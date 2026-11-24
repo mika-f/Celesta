@@ -15,7 +15,7 @@ use serde::Serialize;
 use crate::quality::QualityIssue;
 use crate::{
     AudioLoudness, CompositionInfo, EncoderPlan, ExportError, ExportProgress, ExportedFile,
-    OutputPlan, StillFormat, TrackInfo, UnavailableReason,
+    GraphicsInfo, OutputPlan, StillFormat, TrackInfo, UnavailableReason,
 };
 
 /// Whose options an error's hint names: `Celesta-export`'s flags or the MCP
@@ -42,6 +42,8 @@ pub struct Report {
     props_file_auto: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     composition: Option<Composition>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    graphics: Option<GraphicsInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     composition_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -257,6 +259,7 @@ pub fn build(
 ) -> (Report, bool) {
     let mut timing = Timing::new();
     let mut composition = None;
+    let mut graphics = None;
     let mut composition_id = None;
     let mut compositions = None;
     let mut files = Vec::new();
@@ -266,6 +269,7 @@ pub fn build(
     let result = export(&mut |event| {
         match &event {
             ExportProgress::Composition(info) => composition = Some(*info),
+            ExportProgress::Graphics(info) => graphics = Some(info.clone()),
             ExportProgress::ReactCompositions {
                 selected,
                 compositions: roots,
@@ -315,6 +319,7 @@ pub fn build(
         props_file_auto: props_file.as_ref().map(|choice| choice.auto),
         props_file: props_file.map(|choice| choice.path),
         composition: composition.map(composition_report),
+        graphics,
         outputs: Some(
             files
                 .into_iter()
@@ -389,8 +394,8 @@ pub struct Events {
 }
 
 impl Events {
-    pub fn event(&mut self, event: &ExportProgress) -> Event {
-        match event {
+    pub fn event(&mut self, event: &ExportProgress) -> Option<Event> {
+        Some(match event {
             ExportProgress::Composition(info) => {
                 self.frame_rate = Some(info.frame_rate);
                 Event::Composition {
@@ -405,6 +410,7 @@ impl Events {
                 compositions: compositions.clone(),
             },
             ExportProgress::Output(plan) => output_event(plan.clone()),
+            ExportProgress::Graphics(_) => return None,
             &ExportProgress::Rendering { frame, total } => Event::Rendering { frame, total },
             ExportProgress::MixingAudio => Event::MixingAudio,
             ExportProgress::Muxing => Event::Muxing,
@@ -427,7 +433,7 @@ impl Events {
             ExportProgress::Wrote(file) => Event::Wrote {
                 output: output(file.clone(), self.frame_rate),
             },
-        }
+        })
     }
 }
 
@@ -539,6 +545,7 @@ fn error_only(error: ErrorReport) -> Report {
         props_file: None,
         props_file_auto: None,
         composition: None,
+        graphics: None,
         composition_id: None,
         compositions: None,
         outputs: None,
@@ -745,6 +752,15 @@ pub(crate) fn classify(
             source: MediaError::Unsupported { .. },
             ..
         } => ("unsupported_media", None),
+        #[cfg(target_os = "linux")]
+        ExportError::Render(GpuRenderError::RequestAdapter(_)) => (
+            "render",
+            fixed(if cli {
+                "On headless Linux, install Mesa's software Vulkan driver (lavapipe), e.g. `sudo apt-get install mesa-vulkan-drivers` on Debian/Ubuntu, then retry with `--driver vulkan`. If you set VK_DRIVER_FILES or VK_ICD_FILENAMES, make sure it points to an installed Vulkan ICD."
+            } else {
+                "On headless Linux, install Mesa's software Vulkan driver (lavapipe), e.g. `sudo apt-get install mesa-vulkan-drivers` on Debian/Ubuntu. If you set VK_DRIVER_FILES or VK_ICD_FILENAMES, make sure it points to an installed Vulkan ICD."
+            }),
+        ),
         ExportError::Render(_) => ("render", None),
         ExportError::Audio(_) => ("audio", None),
         ExportError::React(ReactBridgeError::InvalidProperties(invalid)) => {
@@ -921,6 +937,25 @@ mod tests {
     ) -> serde_json::Value {
         serde_json::to_value(build(Path::new("/tmp/film.tsx"), None, HintStyle::Cli, export).0)
             .unwrap()
+    }
+
+    #[test]
+    fn report_names_graphics_only_when_a_renderer_was_selected() {
+        let graphics = ExportProgress::Graphics(GraphicsInfo {
+            backend: "vulkan",
+            adapter: "llvmpipe".into(),
+            software: true,
+        });
+        let value = report(|progress| {
+            progress(graphics.clone());
+            Ok(())
+        });
+        assert_eq!(
+            value["graphics"],
+            serde_json::json!({"backend": "vulkan", "adapter": "llvmpipe", "software": true})
+        );
+        assert!(report(|_| Ok(())).get("graphics").is_none());
+        assert!(Events::default().event(&graphics).is_none());
     }
 
     #[test]

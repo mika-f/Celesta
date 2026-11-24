@@ -213,7 +213,8 @@ impl Exporter {
             &mut progress,
         );
         let evaluator = Evaluator::new(project).map_err(ExportError::Evaluation)?;
-        let mut renderer = self.export_renderer(asset_root, frame_rate, cancellation)?;
+        let mut renderer =
+            self.export_renderer(asset_root, frame_rate, cancellation, &mut progress)?;
         check_frames(&run, &mut renderer, cancellation, &mut progress, |frame| {
             let time = Time::frames(frame as i64, frame_rate).map_err(ExportError::Time)?;
             evaluator.scene_at(time).map_err(ExportError::Evaluation)
@@ -270,7 +271,8 @@ impl Exporter {
             &mut progress,
         )?;
         let mut scenes = ReactScenes::new(bridge, project)?;
-        let mut renderer = self.export_renderer(asset_root, metadata.frame_rate, cancellation)?;
+        let mut renderer =
+            self.export_renderer(asset_root, metadata.frame_rate, cancellation, &mut progress)?;
         let checked = check_frames(&run, &mut renderer, cancellation, &mut progress, |frame| {
             scenes.scene_at(frame)
         });

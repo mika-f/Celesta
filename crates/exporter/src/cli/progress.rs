@@ -160,6 +160,9 @@ impl State {
                 self.diagnostics.push(Diagnostic::Warning(warning.message));
             }
             ExportProgress::Note(note) => self.diagnostics.push(Diagnostic::Note(note)),
+            ExportProgress::Graphics(info) => self
+                .diagnostics
+                .push(Diagnostic::Note(format!("graphics: {info}"))),
             ExportProgress::Quality(issue) => {
                 self.diagnostics
                     .push(Diagnostic::Warning(issue.to_string()));
@@ -409,6 +412,7 @@ pub fn run(
                     ExportProgress::Warning(_)
                         | ExportProgress::CodedWarning(_)
                         | ExportProgress::Note(_)
+                        | ExportProgress::Graphics(_)
                         | ExportProgress::Quality(_)
                 );
                 let mut state = state
@@ -891,6 +895,7 @@ impl PlainProgress {
                 self.print_diagnostic(&Diagnostic::Warning(warning.message.clone()).line());
             }
             ExportProgress::Note(note) => self.print_diagnostic(note),
+            ExportProgress::Graphics(info) => self.print_diagnostic(&format!("graphics: {info}")),
             ExportProgress::Quality(issue) => {
                 self.print_diagnostic(&Diagnostic::Warning(issue.to_string()).line());
             }

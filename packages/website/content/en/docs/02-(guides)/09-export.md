@@ -559,6 +559,8 @@ For scripts and AI agents, add `--json`. The exporter then prints no progress, o
 
 Warnings that scripts may want to act on also appear in `"codedWarnings"`, each with a stable `"code"` and its `"message"` (the key is absent when there are none). `nondeterministic_render` means the composition called `Math.random()`, `Date.now()`, or another clock while rendering (see [Animation](/en/docs/animation/)). `rough_scenes` means the exported span holds scenes of a rough cut (`status: 'rough'` in `<Composition chapters>`, see [Scenes, cues & beats](/en/docs/motion-toolkit/)), which are in the video as placeholder cards. Add `--final` to refuse them instead: the export then writes nothing and fails with the error code `rough_scenes`. The MCP `export_video` tool and `@celesta.studio/exporter` take `final` and report `codedWarnings` too.
 
+When the exporter initializes a renderer, human output includes a `graphics:` line with the actual backend, adapter name, and whether it's software or hardware. The final `--json` result includes the same information as `graphics`, for example `{"backend":"vulkan","adapter":"llvmpipe","software":true}`. Commands that don't initialize a renderer, such as `--info`, omit it.
+
 Using a source build? The [developer instructions](/en/docs/build-from-source/) include the equivalent Cargo command.
 
 Time values accept seconds, `MM:SS.mmm`, or `HH:MM:SS.mmm`. The selected span becomes a new video starting at its own 00:00.
@@ -570,6 +572,8 @@ On Linux, use Vulkan with --driver vulkan. For machines without a GPU, such as C
 ```sh title="Install software Vulkan"
 sudo apt-get install -y mesa-vulkan-drivers
 ```
+
+If the exporter reports “No suitable graphics adapter found,” its hint points to Mesa/lavapipe. If you set `VK_DRIVER_FILES` or `VK_ICD_FILENAMES`, make sure it points to an installed Vulkan driver manifest.
 
 Software rendering is much slower than a GPU: with 4 CPU cores, 1080p compositions render at roughly 10 to 60 frames per second, depending on the scene. Check a single frame as a PNG before exporting the whole video. From the repository root:
 

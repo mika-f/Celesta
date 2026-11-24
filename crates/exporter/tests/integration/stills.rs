@@ -33,6 +33,12 @@ fn json_cli_exports_first_last_and_rejects_overwrite_and_invalid_frames() {
         String::from_utf8_lossy(&result.stderr)
     );
     assert!(result.stdout.is_empty());
+    let err = stderr(&result);
+    let graphics = err.lines().find(|line| line.starts_with("graphics: "));
+    assert!(
+        graphics.is_some_and(|line| line.ends_with("(hardware)") || line.ends_with("(software)")),
+        "{err}"
+    );
     assert!(
         !result.stderr.contains(&0x1b),
         "redirected progress contains ANSI escapes"
@@ -74,6 +80,10 @@ fn json_report_lists_every_written_file_or_a_coded_error() {
     let (status, report) = invoke(&["--frames", "3,0"]);
     assert_eq!(status, Some(0), "{report}");
     assert_eq!(report["status"], "ok");
+    let graphics = &report["graphics"];
+    assert!(graphics["backend"].as_str().is_some_and(|s| !s.is_empty()));
+    assert!(graphics["adapter"].is_string());
+    assert!(graphics["software"].is_boolean());
     assert_eq!(
         report["composition"],
         serde_json::json!({ "width": 3, "height": 3, "fps": 4.0, "frames": 4, "duration": 1.0 })
@@ -110,10 +120,52 @@ fn json_report_lists_every_written_file_or_a_coded_error() {
     assert_eq!(status, Some(1));
     assert_eq!(report["error"]["code"], "invalid_selection");
     assert_eq!(report["composition"]["frames"], 4);
+    assert!(report.get("graphics").is_none());
 
     let (status, report) = invoke(&["--frame", "0", "--from", "0"]);
     assert_eq!(status, Some(2));
     assert_eq!(report["error"]["code"], "usage");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn missing_vulkan_adapter_suggests_lavapipe() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = tiny_project(dir.path());
+    let output = dir.path().join("check.png");
+    let invoke = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_celesta-exporter"))
+            .env_remove("VK_DRIVER_FILES")
+            .env("VK_ICD_FILENAMES", dir.path().join("missing-icd.json"))
+            .args(["--driver", "vulkan", "--frame", "0"])
+            .args(args)
+            .arg(&source)
+            .arg(&output)
+            .output()
+            .unwrap()
+    };
+
+    let plain = invoke(&["--no-ui"]);
+    assert_eq!(plain.status.code(), Some(1), "{}", stderr(&plain));
+    let plain = stderr(&plain);
+    assert!(
+        plain.contains("No suitable graphics adapter found"),
+        "{plain}"
+    );
+    assert!(plain.contains("hint: On headless Linux"), "{plain}");
+
+    let json = invoke(&["--json"]);
+    assert_eq!(json.status.code(), Some(1), "{}", stderr(&json));
+    assert!(json.stderr.is_empty(), "{}", stderr(&json));
+    let report: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(report["error"]["code"], "render");
+    assert!(
+        report["error"]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("mesa-vulkan-drivers")
+    );
+    assert!(report.get("graphics").is_none());
 }
 
 const COLORS: [[u8; 3]; 4] = [[255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 255]];

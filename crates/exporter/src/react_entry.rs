@@ -273,7 +273,8 @@ impl Exporter {
         // asset_root stays the renderer's single asset_root either way (see
         // absolutize_layers/absolutize_fonts for how a project's own,
         // differently-rooted assets still resolve).
-        let mut renderer = self.export_renderer(asset_root, metadata.frame_rate, cancellation)?;
+        let mut renderer =
+            self.export_renderer(asset_root, metadata.frame_rate, cancellation, progress)?;
         let file = staged.insert(stage_beside(output_path)?);
         open_video_output(
             session,
