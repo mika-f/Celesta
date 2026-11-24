@@ -37,7 +37,28 @@ Choose **Export…** at the bottom of the page, or press Enter on the page, to p
 
 ## From the command line
 
-The app includes a command-line exporter. Open a terminal in the project folder containing `first-scene.tsx`. Select your platform:
+On headless Linux with `celesta` on PATH, open a terminal in the project folder containing `first-scene.tsx` and use:
+
+```sh title="Inspect and export a React composition"
+celesta info --react first-scene.tsx --json
+celesta export --react first-scene.tsx --frame 0 frame.png
+celesta export --react first-scene.tsx output.mov
+```
+
+With the Linux Docker image, follow the [entry point override instructions](https://github.com/mika-f/Celesta/blob/main/packaging/linux/README.md#unified-cli) to run these subcommands.
+
+`celesta info` reports size, frame rate, duration, and React compositions without rendering. `celesta export` takes the same arguments as the standalone exporter, including `--list-components --check`. `celesta-exporter` and the Docker image's default entry point still work with their original arguments.
+
+Before export, run `celesta doctor --json` to check Node.js, the staged React runtime, and the graphics adapter. To test a specific source and output, supply both:
+
+```sh title="Check whether a headless worker can render"
+celesta doctor --json --react first-scene.tsx --frame 0 frame.png
+celesta doctor --json --react first-scene.tsx --from 0 --to 1 output.mov
+```
+
+The source check runs the requested render through its actual media components and honors the project's `celesta.lock`. It discards temporary output instead of publishing or replacing the intended file. A video probe tests the whole composition by default; pass a range to limit the work. A JSON project does not require Node.js. JSON mode writes one report with `schemaVersion: 1`, a top-level `status`, and `checks.node`, `checks.graphics`, and `checks.output`. Check statuses are `ok`, `error`, and `skipped`; errors have a machine-readable `code`. The command exits nonzero on failure.
+
+The app also includes the standalone command-line exporter. Select your platform:
 
 ::::tabs[Exporter platform]{default="macOS"}
 :::tab[macOS]

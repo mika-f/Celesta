@@ -68,8 +68,8 @@ claude mcp add celesta -- /Applications/Celesta.app/Contents/MacOS/Celesta-mcp
 | `Celesta-export --json … --check-quality` | `check_quality` (`source`, `start`, `end`) |
 | `Celesta-export --list-components [--check]` | `list_components` (`check`) |
 | `Celesta-export --describe <plugin/id>` | `describe_component` (`component`) |
-| `Celesta --init <folder> [--template <name>]` | `init_project` |
-| `Celesta --list-templates` | `list_templates` |
+| `celesta init <folder> [--template <name>]` | `init_project` |
+| `celesta templates` | `list_templates` |
 | reading these references | `read_docs` (`topic`: `setup`, `animation`, …) |
 
 Tool arguments are camelCase versions of the options (`propsFile`,
@@ -94,12 +94,28 @@ in a shell, with a larger `--timeout` if it needs one
 For a new video, initialize a folder instead of writing every file by hand:
 
 ```sh
-/Applications/Celesta.app/Contents/MacOS/Celesta --init my-video   # macOS app
-cargo run -p celesta-editor --release -- --init my-video            # source checkout
+celesta init my-video                                               # Linux CLI on PATH
+/Applications/Celesta.app/Contents/MacOS/Celesta-cli init my-video    # macOS app
+cargo run -p celesta-cli --release -- init my-video                  # source checkout with staged runtime
 ```
 
-`--init` without a folder initializes the current directory. It prints
-`Initialized Celesta project in …` and exits without opening a window. In
+Use PowerShell on Windows and replace `C:\path\to\Celesta` with your installed
+or extracted app folder. The installer does not add Celesta to PATH.
+
+```powershell
+& "C:\path\to\Celesta\Celesta-cli.exe" init my-video
+```
+
+With the Linux Docker image, override its default exporter entry point:
+
+```sh
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" \
+  --entrypoint /opt/celesta/celesta celesta-exporter init my-video
+```
+
+`init` without a folder initializes the current directory. It prints
+`Initialized Celesta project in …` and exits without opening a window.
+The desktop editor's `--init` and `--list-templates` still work. In
 the GUI, the same thing is **File → Create New Project…** (Command-N /
 Ctrl-N), which then opens `film.tsx`.
 
@@ -107,8 +123,8 @@ By default it creates the `blank` starter. To start from a ready-made video,
 pick a template:
 
 ```sh
-Celesta --list-templates                       # name, title, description
-Celesta --init my-video --template slideshow
+celesta templates                          # name, title, description
+celesta init my-video --template slideshow
 ```
 
 | Template | Contents |

@@ -36,7 +36,28 @@ MP4 を選ばなかった理由と使えるようにする方法が **Preset** �
 
 ## コマンドラインから
 
-アプリにはコマンドライン用の書き出しツールも含まれています。`first-scene.tsx` があるプロジェクトフォルダでターミナルを開き、OS に合ったコマンドを使ってください。
+ディスプレイのない Linux で `celesta` に PATH が通っている場合は、`first-scene.tsx` があるプロジェクトフォルダで次のコマンドを実行します。
+
+```sh title="React コンポジションの確認と書き出し"
+celesta info --react first-scene.tsx --json
+celesta export --react first-scene.tsx --frame 0 frame.png
+celesta export --react first-scene.tsx output.mov
+```
+
+Linux の Docker イメージを使う場合は、[エントリーポイントを切り替える手順](https://github.com/mika-f/Celesta/blob/main/packaging/linux/README.md#unified-cli)に従って、これらのサブコマンドを実行します。
+
+`celesta info` は描画せずにサイズ、フレームレート、長さ、React コンポジションを表示します。`celesta export` には `--list-components --check` を含め、従来の書き出しツールと同じ引数を渡せます。`celesta-exporter` と Docker イメージのデフォルトのエントリーポイントも、従来の引数のまま使えます。
+
+書き出す前に `celesta doctor --json` を実行すると、Node.js、配置済みの React ランタイム、グラフィックスアダプターを確認できます。特定のソースと出力を確認するには、両方を指定します。
+
+```sh title="ディスプレイのない環境で描画できるか確認"
+celesta doctor --json --react first-scene.tsx --frame 0 frame.png
+celesta doctor --json --react first-scene.tsx --from 0 --to 1 output.mov
+```
+
+ソースを指定すると、プロジェクトの `celesta.lock` に従って、実際に使用するメディアコンポーネントで描画します。一時出力は破棄され、指定した出力ファイルは作成も上書きもしません。動画ではコンポジション全体を確認するため、必要に応じて時間範囲を指定してください。JSON プロジェクトには Node.js は不要です。JSON モードでは `schemaVersion: 1`、全体の `status`、`checks.node`、`checks.graphics`、`checks.output` を含むレポートを1件出力します。各チェックの状態は `ok`、`error`、`skipped` のいずれかで、エラーには機械処理用の `code` が付きます。失敗時の終了ステータスは 0 以外です。
+
+アプリに同梱される単体の書き出しツールを使う場合は、OS に合ったコマンドを選んでください。
 
 ::::tabs[書き出しを行う OS]{default="macOS"}
 :::tab[macOS]

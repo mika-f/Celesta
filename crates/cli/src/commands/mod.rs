@@ -1,10 +1,11 @@
-//! What each `celesta plugin …` subcommand does.
+//! What each `celesta` subcommand does.
 
 use std::fmt::Display;
 use std::process::ExitCode;
 
 use crate::report;
 
+pub mod init;
 pub mod project;
 pub mod registry;
 pub mod store;

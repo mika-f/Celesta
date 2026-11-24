@@ -1,5 +1,4 @@
-//! The `celesta` command's library: editing a project's settings and managing
-//! its registry plugins.
+//! The `celesta` command's library.
 
 pub mod advisories;
 pub mod args;
@@ -12,7 +11,7 @@ use std::process::ExitCode;
 
 use args::{Cli, Command, PluginArgs, PluginCommand};
 use celesta_plugin_host::project_root_of_dir;
-use commands::{project, registry, store};
+use commands::{init, project, registry, store};
 use session::Session;
 
 /// Exit status for a mistake in how `celesta` was invoked.
@@ -21,10 +20,21 @@ pub const USAGE: u8 = 2;
 /// Runs `cli` and returns its exit status: 0 on success, 1 on failure, 2
 /// for a usage error.
 pub fn run(cli: Cli) -> ExitCode {
-    let Command::Plugin(PluginArgs {
+    match cli.command {
+        Command::Init {
+            directory,
+            template,
+        } => init::initialize(&directory, template.as_deref()),
+        Command::Templates => init::list(),
+        Command::Plugin(args) => run_plugin(args),
+    }
+}
+
+fn run_plugin(args: PluginArgs) -> ExitCode {
+    let PluginArgs {
         project: folder,
         command,
-    }) = cli.command;
+    } = args;
     let session = match Session::from_env() {
         Ok(session) => session,
         Err(error) => {

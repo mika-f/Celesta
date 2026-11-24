@@ -10,7 +10,7 @@ use semver::VersionReq;
 #[command(
     name = "celesta",
     version,
-    about = "Manages a Celesta project's plugins."
+    about = "Create, manage, and export Celesta projects."
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -19,6 +19,17 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Initialize a React project using a staged template.
+    Init {
+        /// The project directory (defaults to the current directory).
+        #[arg(value_name = "DIRECTORY", default_value = ".")]
+        directory: PathBuf,
+        /// Template to use (see celesta templates); refuses to overwrite files.
+        #[arg(long, value_name = "NAME")]
+        template: Option<String>,
+    },
+    /// List the templates available to celesta init.
+    Templates,
     /// Add, install, and inspect registry plugins.
     Plugin(PluginArgs),
 }

@@ -11,7 +11,7 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant};
 
-use celesta_exporter::{ExportError, ExportProgress, OutputPlan, RenderQuality, encoding_label};
+use crate::{ExportError, ExportProgress, OutputPlan, RenderQuality, encoding_label};
 use ratatui::{
     Frame, Terminal, TerminalOptions, Viewport,
     backend::CrosstermBackend,
@@ -920,7 +920,7 @@ fn clock(duration: Duration) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use celesta_exporter::EncoderPlan;
+    use crate::EncoderPlan;
     use ratatui::backend::TestBackend;
 
     fn settings() -> Settings<'static> {
