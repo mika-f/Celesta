@@ -59,9 +59,10 @@ from the program's `otool -L` (x264 must be one), and packaging fails on a
 bundled library that is neither a formula's nor FFmpeg's own.
 Linux release archives are built in an `ubuntu:22.04` container, so the glibc
 they require, the bundled `libx264.so.N` and the recorded `distribution` change
-only with the workflow. They need glibc 2.35 or later on x86-64: Ubuntu 22.04
-LTS, Debian 12 and later releases of either; older distributions are not
-supported. The supported release targets are macOS arm64, Windows x64,
+only with the workflow. From the release after 0.10.0 they need glibc 2.35 or
+later on x86-64: Ubuntu 22.04 LTS, Debian 12 and later releases of either;
+older distributions are not supported. The 0.10.0 archives, built on
+`ubuntu-24.04`, need glibc 2.38. The supported release targets are macOS arm64, Windows x64,
 and Linux x64.
 
 `package-build.yml` builds the archive separately from the app, validates

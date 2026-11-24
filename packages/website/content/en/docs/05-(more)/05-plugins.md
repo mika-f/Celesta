@@ -319,8 +319,9 @@ Files are named `Celesta-plugin-ffmpeg-x264-<version>-<os>-<arch>.zip`
 release as the app. The ZIP contains one `ffmpeg-x264` folder with its
 manifest, executable, native libraries and license notices; no separate FFmpeg
 installation is needed.
-The Linux x64 download needs glibc 2.35 or later: Ubuntu 22.04 LTS, Debian 12
-or a later release.
+From the release after 0.10.0, the Linux x64 download needs glibc 2.35 or
+later: Ubuntu 22.04 LTS, Debian 12 or a later release. The 0.10.0 download
+needs glibc 2.38 (Ubuntu 24.04 or later).
 
 Extract it and copy the entire folder into your user plugin folder listed
 above. Keep all files together. Open Celesta, choose **Reload Plugins** and
