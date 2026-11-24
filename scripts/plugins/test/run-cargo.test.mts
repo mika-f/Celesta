@@ -76,6 +76,13 @@ it('forwards help after the Cargo command', () => {
   expect(calls).toEqual([{ action: 'test', name: 'demo', args: ['-p', 'demo', '--', '--help'] }]);
 });
 
+it('forwards bare --help to the Cargo subcommand', () => {
+  const args = ['-p', 'demo', '--help'];
+  const { status, calls, stderr } = run(args, '', { command: 'build' });
+  expect(status, stderr).toBe(0);
+  expect(calls).toEqual([{ action: 'build', name: 'demo', args }]);
+});
+
 it('builds prerequisite programs in the requested profile and target without test arguments', () => {
   const { status, calls, stderr } = run(['-p', 'celesta-codec-ffmpeg-x264', '--locked', '--release', '--target', 'a-target', 'a_test_filter', '--', '--show-output'], '');
   expect(status, stderr).toBe(0);
