@@ -101,6 +101,36 @@ function build(target: string, extra: string[] = []) {
 const manifest = () => JSON.parse(readFileSync(join(out, 'celesta-plugin.json'), 'utf8'));
 
 describe('build.mts', () => {
+  it.each(['--help', '-h'])('prints usage without building for %s', (flag) => {
+    const { status, stdout, stderr } = spawnSync(process.execPath, [script, flag], { cwd: tree, encoding: 'utf8' });
+    expect(status, stderr).toBe(0);
+    expect(stderr).toBe('');
+    expect(stdout).toContain('Usage: node scripts/plugins/build.mts');
+    for (const option of ['--out', '--target', '--skip-js', '--distribution']) expect(stdout).toContain(option);
+    for (const key of ['PKG_CONFIG_PATH', 'VCPKG_ROOT', 'VCPKGRS_TRIPLET']) {
+      expect(stdout).toMatch(new RegExp(`\\b${key}\\b`));
+      expect(stdout).toContain(`FFMPEG_X264_${key}`);
+    }
+    expect(stdout).toContain('node scripts/plugins/build.mts plugins/ffmpeg\n');
+    expect(stdout).toContain('node scripts/plugins/build.mts plugins/ffmpeg-x264');
+    expect(existsSync(join(tree, 'ran-build'))).toBe(false);
+  });
+
+  it.each([
+    { args: ['--bogus'], error: "Unknown option '--bogus'" },
+    { args: ['demo', '--out'], error: '--out' },
+    { args: [], error: 'expected at least one plugin directory' },
+  ])('reports malformed arguments without a stack trace: $args', ({ args, error }) => {
+    const { status, stdout, stderr } = spawnSync(process.execPath, [script, ...args], { cwd: tree, encoding: 'utf8' });
+    expect(status).toBe(2);
+    expect(stdout).toBe('');
+    const [diagnostic, hint, ...rest] = stderr.trim().split(/\r?\n/);
+    expect(diagnostic).toContain(error);
+    expect(hint).toBe('Run node scripts/plugins/build.mts --help for usage.');
+    expect(rest).toEqual([]);
+    expect(existsSync(join(tree, 'ran-build'))).toBe(false);
+  });
+
   it.each([false, true])('refuses cross-compiled distributions before building (target from environment: %s)', (fromEnvironment) => {
     const source = JSON.parse(readFileSync(join(plugin, 'plugin.json'), 'utf8'));
     source.cargoPackage = 'celesta-codec-ffmpeg';
