@@ -155,7 +155,8 @@ The files the `blank` starter creates, without overwriting anything that exists:
 | File | Contents |
 | --- | --- |
 | `film.tsx` | A 5-second 1920×1080, 30 fps composition with a centered title inside a `<Group>`. The editor's Add menu inserts new layers into that group. Replace its body. |
-| `package.json` | Private, with scripts `preview` (`celesta-editor film.tsx`), `export` (`celesta-exporter --react --overwrite film.tsx output.mov`), `typecheck` (`tsc --project tsconfig.json`), and a `typescript` dev dependency. |
+| `fonts/` | `Inter-Regular.woff2`, loaded by `film.tsx` with `<Font>` so the title renders the same everywhere without installed fonts, and its `OFL.txt` license. |
+| `package.json` | Private, with scripts `preview` (`celesta-editor film.tsx`), `export` (`celesta export --react --overwrite film.tsx output.mov`), `typecheck` (`tsc --project tsconfig.json`), and a `typescript` dev dependency. |
 | `tsconfig.json` | Extends `./.celesta/tsconfig.json`. |
 | `.gitignore` | `node_modules/` and `output.mov`. |
 | `celesta.config.json` | `{}`. Marks the project root, so the app remembers that the user trusts the project; may list the project's [plugin folders](plugins.md). |
@@ -166,7 +167,7 @@ missing starter files only. If an existing `tsconfig.json` does not extend
 `./.celesta/tsconfig.json`, it says so; add the `extends` yourself.
 
 Preview and export need no `npm install`: Celesta supplies the runtime
-packages. The `package.json` scripts call `celesta-editor`/`celesta-exporter`
+packages. The `package.json` scripts call `celesta-editor`/`celesta`
 by name; with a packaged app that is not on PATH, run the executables by
 their full paths instead.
 

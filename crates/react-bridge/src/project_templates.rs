@@ -156,7 +156,7 @@ pub fn initialize_project(
   "private": true,
   "scripts": {
     "preview": "celesta-editor film.tsx",
-    "export": "celesta-exporter --react --overwrite film.tsx output.mov",
+    "export": "celesta export --react --overwrite film.tsx output.mov",
     "typecheck": "tsc --project tsconfig.json"
   },
   "devDependencies": {
@@ -363,6 +363,13 @@ mod tests {
         assert_eq!(manifest["private"], true);
         assert_eq!(manifest["devDependencies"]["typescript"], "^7.0.2");
         assert!(manifest.get("dependencies").is_none());
+        // Scripts go through the unified CLI; only the editor keeps its own
+        // executable.
+        assert_eq!(manifest["scripts"]["preview"], "celesta-editor film.tsx");
+        assert_eq!(
+            manifest["scripts"]["export"],
+            "celesta export --react --overwrite film.tsx output.mov"
+        );
         assert_eq!(
             fs::read_to_string(project.join("film.tsx")).unwrap(),
             BLANK_FILM
