@@ -356,9 +356,11 @@ struct SourceArgs {
     /// from the file's directory.
     #[arg(long, value_name = "FILE", requires = "react")]
     props_file: Option<PathBuf>,
-    /// A content plugin's directory, or a directory of them, searched before
-    /// every other plugin location (CELESTA_PLUGIN_PATH, the user's plugin
-    /// folder and the folders they added, the bundled one); repeatable.
+    /// A plugin's directory (a content plugin or a codec such as ffmpeg or
+    /// ffmpeg-x264), or a directory of them such as the --out of
+    /// scripts/plugins/build.mts, searched before every other plugin location
+    /// (CELESTA_PLUGIN_PATH, the user's plugin folder and the folders they
+    /// added, the bundled one); repeatable.
     #[arg(long, value_name = "DIR")]
     plugin_dir: Vec<PathBuf>,
     /// Run the plugin with this id without the desktop app's approval, as it
@@ -617,7 +619,13 @@ pub fn run_export(matches: &ArgMatches, command: Command) -> ExitCode {
         }
     };
     if cli.report.json {
-        let ok = json::run(cli.source(), props_file, cli.report.json_progress, export);
+        let ok = json::run(
+            cli.source(),
+            props_file,
+            cli.report.json_progress,
+            cli.input.react,
+            export,
+        );
         return checked(ok);
     }
     let result = match (cli.output(), &kind) {
@@ -668,7 +676,7 @@ pub fn run_export(matches: &ArgMatches, command: Command) -> ExitCode {
     match result {
         Ok(()) => checked(true),
         Err(error) => {
-            print_error("Celesta export", &error);
+            print_export_error(cli.source(), cli.input.react, &error);
             ExitCode::FAILURE
         }
     }
@@ -735,6 +743,15 @@ fn components(cli: &Cli) -> ExitCode {
 fn print_error(context: &str, error: &ExportError) {
     eprintln!("{context}: {error}");
     if let Some(hint) = report::hint(error, HintStyle::Cli) {
+        eprintln!("hint: {hint}");
+    }
+}
+
+/// [`print_error`] for an export of `source`, whose extension can change
+/// the hint (a React entry read without `react`, `--react`).
+fn print_export_error(source: &Path, react: bool, error: &ExportError) {
+    eprintln!("Celesta export: {error}");
+    if let Some(hint) = report::source_hint(error, source, react) {
         eprintln!("hint: {hint}");
     }
 }
@@ -854,9 +871,13 @@ fn describe(input: &SourceArgs, output: &ReportArgs, source: &Path) -> ExitCode 
         job
     });
     if output.json {
-        let ok = json::run(source, props_file, output.json_progress, |on_progress| {
-            job?.describe(on_progress)
-        });
+        let ok = json::run(
+            source,
+            props_file,
+            output.json_progress,
+            input.react,
+            |on_progress| job?.describe(on_progress),
+        );
         return if ok {
             ExitCode::SUCCESS
         } else {
@@ -901,7 +922,7 @@ fn describe(input: &SourceArgs, output: &ReportArgs, source: &Path) -> ExitCode 
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            print_error("Celesta export", &error);
+            print_export_error(source, input.react, &error);
             ExitCode::FAILURE
         }
     }
