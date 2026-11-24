@@ -1041,6 +1041,7 @@ name = "celesta-cli"
 version = "0.10.0"
 dependencies = [
  "celesta-plugin-host",
+ "celesta-react-bridge",
  "celesta-registry-client",
  "celesta-registry-format",
  "clap",

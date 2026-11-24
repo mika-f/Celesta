@@ -6,20 +6,22 @@ React コンポジション、メディア、npm の依存関係を置くフォ�
 
 ## コマンドラインから
 
-PATH にある `celesta-editor` に、`--init` とフォルダ名を渡します。フォルダを省略すると現在のディレクトリを初期化します。
+PATH にある `celesta` の `init` で初期化します。ウィンドウは開かず、ディスプレイサーバーは不要です。フォルダを省略すると現在のディレクトリを初期化します。
 
 ```sh title="プロジェクトを初期化して開く"
-celesta-editor --init my-video
+celesta init my-video
 cd my-video
 celesta-editor film.tsx
 celesta-exporter --react film.tsx output.mov
 ```
 
 ```sh title="現在のディレクトリを初期化"
-celesta-editor --init
+celesta init
 ```
 
-デスクトップ版の実行ファイル名は `Celesta`、`Celesta-export`、`Celesta-cli` です（Windows では `.exe` 付き）。`celesta-editor`、`celesta-exporter`、`celesta`（[プラグインのコマンド](/ja/docs/plugins/#レジストリのプラグイン)）の代わりにインストール先のパスを使ってください。必要に応じて生成されたスクリプト内も変更します。
+`celesta templates` で利用可能なテンプレートを確認し、`celesta init my-video --template slideshow` のように指定できます。テンプレートを明示すると、そのテンプレートが作成するファイルを上書きしません。`--template` を省略すると、空のひな形を使い、生成される `.celesta/` 以外の既存ファイルはそのまま残します。
+
+デスクトップ版の実行ファイル名は `Celesta`、`Celesta-export`、`Celesta-cli` です（Windows では `.exe` 付き）。`celesta-editor`、`celesta-exporter`、`celesta` の代わりにインストール先のパスを使ってください。必要に応じて生成されたスクリプト内も変更します。デスクトップエディターの従来の `--init` と `--list-templates` も引き続き使えます。
 
 ::::tabs[プロジェクトを初期化する OS]{default="macOS"}
 :::tab[macOS]
@@ -27,7 +29,7 @@ celesta-editor --init
 このコマンドは `/Applications` にアプリをインストールした場合の例です。必要に応じてパスを変更してください。
 
 ```sh title="インストールしたアプリで初期化"
-"/Applications/Celesta.app/Contents/MacOS/Celesta" --init my-video
+"/Applications/Celesta.app/Contents/MacOS/Celesta-cli" init my-video
 ```
 
 :::
@@ -36,13 +38,13 @@ celesta-editor --init
 PowerShell を使い、`C:\path\to\Celesta` をアプリのインストール先または展開先に置き換えてください。インストーラーは Celesta を PATH に追加しません。
 
 ```sh title="インストールしたアプリで初期化"
-& "C:\path\to\Celesta\Celesta.exe" --init my-video
+& "C:\path\to\Celesta\Celesta-cli.exe" init my-video
 ```
 
 :::
 ::::
 
-[ソースビルド](/ja/docs/build-from-source/)の場合は、先に React ランタイムをビルドし、リポジトリのルートから `cargo run -p celesta-editor --release -- --init my-video` を実行します。
+[ソースビルド](/ja/docs/build-from-source/)の場合は、先に React ランタイムをビルドしてテンプレートを配置し、リポジトリのルートから `cargo run -p celesta-cli --release -- init my-video` を実行します。
 
 ## 初期化で生成されるもの
 

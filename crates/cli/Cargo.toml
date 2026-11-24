@@ -1,6 +1,6 @@
 [package]
 name = "celesta-cli"
-description = "The celesta command: manages a project's registry plugins."
+description = "The Celesta command-line interface."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -14,6 +14,7 @@ path = "src/main.rs"
 
 [dependencies]
 celesta-plugin-host.workspace = true
+celesta-react-bridge.workspace = true
 celesta-registry-client.workspace = true
 celesta-registry-format.workspace = true
 clap.workspace = true

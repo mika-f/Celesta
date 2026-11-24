@@ -6,20 +6,22 @@ Choose **File → Create New Project…**, click **Create New Project…** in th
 
 ## From the command line
 
-With `celesta-editor` on PATH, pass the folder to `--init`. Omit the folder to initialize the current directory:
+With `celesta` on PATH, use `init` to create a project without opening a window or requiring a display server. Omit the folder to initialize the current directory:
 
 ```sh title="Initialize and open a project"
-celesta-editor --init my-video
+celesta init my-video
 cd my-video
 celesta-editor film.tsx
 celesta-exporter --react film.tsx output.mov
 ```
 
 ```sh title="Initialize the current directory"
-celesta-editor --init
+celesta init
 ```
 
-Desktop packages name the executables `Celesta`, `Celesta-export`, and `Celesta-cli` (`.exe` on Windows). Use their installed paths in place of `celesta-editor`, `celesta-exporter`, and `celesta` (the [plugin command](/en/docs/plugins/#registry-plugins)), including in generated scripts when needed:
+List the installed templates with `celesta templates` and pick one with `celesta init my-video --template slideshow`. Explicitly selecting a template refuses to overwrite its files. Without `--template`, initialization uses the blank starter and preserves existing files outside the generated `.celesta/` directory.
+
+Desktop packages name the executables `Celesta`, `Celesta-export`, and `Celesta-cli` (`.exe` on Windows). Use their installed paths in place of `celesta-editor`, `celesta-exporter`, and `celesta`, including in generated scripts when needed. The desktop editor's existing `--init` and `--list-templates` flags still work. Examples using the unified CLI:
 
 ::::tabs[Project initialization platform]{default="macOS"}
 :::tab[macOS]
@@ -27,7 +29,7 @@ Desktop packages name the executables `Celesta`, `Celesta-export`, and `Celesta-
 This command assumes the app is installed in `/Applications`. Adjust the path if needed.
 
 ```sh title="Initialize with the installed app"
-"/Applications/Celesta.app/Contents/MacOS/Celesta" --init my-video
+"/Applications/Celesta.app/Contents/MacOS/Celesta-cli" init my-video
 ```
 
 :::
@@ -36,13 +38,13 @@ This command assumes the app is installed in `/Applications`. Adjust the path if
 Use PowerShell and replace `C:\path\to\Celesta` with your installed or extracted app folder. The installer does not add Celesta to PATH.
 
 ```sh title="Initialize with the installed app"
-& "C:\path\to\Celesta\Celesta.exe" --init my-video
+& "C:\path\to\Celesta\Celesta-cli.exe" init my-video
 ```
 
 :::
 ::::
 
-For a [source build](/en/docs/build-from-source/), build the React runtime first, then run `cargo run -p celesta-editor --release -- --init my-video` from the repository root.
+For a [source build](/en/docs/build-from-source/), build the React runtime first to stage the templates, then run `cargo run -p celesta-cli --release -- init my-video` from the repository root.
 
 ## What initialization creates
 
