@@ -51,6 +51,7 @@ plugin management. Use it as the container entry point explicitly:
 
 ```sh
 docker run --rm -v "$PWD:/work" --entrypoint /opt/celesta/celesta celesta-exporter info --react film.tsx --json
+docker run --rm -v "$PWD:/work" --entrypoint /opt/celesta/celesta celesta-exporter doctor --react film.tsx --frame 0 frame.png --json
 docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" --entrypoint /opt/celesta/celesta celesta-exporter export --react film.tsx --frame 0 frame.png
 docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" --entrypoint /opt/celesta/celesta celesta-exporter plugin --help
 ```

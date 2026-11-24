@@ -12,19 +12,21 @@ fn main() -> ExitCode {
                 exporter::run_export(args, exporter::export_command().bin_name("celesta export"))
             }
             Some(("info", args)) => exporter::run_info(args),
+            Some(("doctor", args)) => exporter::run_doctor(args),
             _ => match Cli::from_arg_matches(&matches) {
                 Ok(cli) => celesta_cli::run(cli),
                 Err(error) => parse_error(error),
             },
         },
-        Err(error)
-            if std::env::args_os()
-                .nth(1)
-                .is_some_and(|arg| arg == "export" || arg == "info") =>
+        Err(error) => match std::env::args_os()
+            .nth(1)
+            .as_deref()
+            .and_then(|arg| arg.to_str())
         {
-            exporter::parse_failed(error)
-        }
-        Err(error) => parse_error(error),
+            Some("export" | "info") => exporter::parse_failed(error),
+            Some("doctor") => exporter::doctor_parse_failed(error),
+            _ => parse_error(error),
+        },
     }
 }
 
@@ -32,6 +34,7 @@ fn command() -> Command {
     Cli::command()
         .subcommand(exporter::export_command())
         .subcommand(exporter::info_command())
+        .subcommand(exporter::doctor_command())
 }
 
 fn parse_error(error: clap::Error) -> ExitCode {

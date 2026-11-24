@@ -8,9 +8,12 @@ use clap::error::ErrorKind;
 use clap::parser::ValueSource;
 use clap::{ArgMatches, Args, Command, CommandFactory, FromArgMatches, Parser};
 
+mod doctor;
 mod inspect;
 mod json;
 mod progress;
+
+pub use doctor::{doctor_command, doctor_parse_failed, run_doctor};
 
 use crate::components::{
     ListedComponent, describe_component, description_json, kind_label, list_components,

@@ -38,6 +38,13 @@ celesta export --react scene.tsx out.mov
 
 With the Linux Docker image, follow the [entry point override instructions](https://github.com/mika-f/Celesta/blob/main/packaging/linux/README.md#unified-cli) to run these subcommands.
 
+For a headless preflight, run `celesta doctor --json` for Node.js, the staged
+runtime, and graphics, or pass a source and output to exercise the plugins,
+including its lock: `celesta doctor --json --react scene.tsx --frame 0 out.png`.
+Use `--from` and `--to` to limit a video probe; otherwise it renders the whole
+composition. The command never publishes the requested file and exits nonzero
+on failure. Inspect `schemaVersion`, `status`, and the individual `checks` codes.
+
 The standalone command still works:
 
 ```sh
