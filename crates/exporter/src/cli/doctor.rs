@@ -6,6 +6,7 @@ use std::process::{Command, ExitCode};
 use celesta_composition::Time;
 use celesta_gpu_renderer::{GpuRenderOptions, GpuRenderer};
 use celesta_media::ComponentRef;
+use celesta_plugin_host::without_console_window;
 use celesta_react_bridge::runtime_paths;
 use clap::error::ErrorKind;
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser};
@@ -210,7 +211,7 @@ fn doctor_usage(kind: ErrorKind, message: String) -> ! {
 
 fn check_node() -> Check {
     let (node, runtime) = runtime_paths();
-    let version = match Command::new(&node).arg("--version").output() {
+    let version = match without_console_window(Command::new(&node).arg("--version")).output() {
         Ok(output) if output.status.success() => {
             String::from_utf8_lossy(&output.stdout).trim().to_owned()
         }
@@ -249,11 +250,8 @@ fn check_node() -> Check {
             );
         }
     };
-    match Command::new(&node)
-        .arg(&runtime)
-        .arg("--check-runtime")
-        .output()
-    {
+    let mut command = Command::new(&node);
+    match without_console_window(command.arg(&runtime).arg("--check-runtime")).output() {
         Ok(output) if output.status.success() => {
             Check::new("ok", format!("Node.js {version}; {}", runtime.display()))
         }
