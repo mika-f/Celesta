@@ -28,3 +28,6 @@ time = "0.3.55"
 
 [dev-dependencies]
 celesta-registry-client = { workspace = true, features = ["testing"] }
+
+[features]
+runtime-tests = []
