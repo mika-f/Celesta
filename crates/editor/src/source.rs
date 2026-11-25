@@ -10,6 +10,7 @@ use celesta_react_bridge::{
 };
 use std::collections::{BTreeSet, HashMap};
 use std::ffi::OsStr;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -322,7 +323,12 @@ pub(crate) fn source_files(dir: &Path) -> Vec<PathBuf> {
 /// source file under it (see [`source_files`]), with their metadata (not
 /// followed through a symlink). An unreadable entry is skipped.
 fn walk_sources(dir: &Path, visit: &mut dyn FnMut(&Path, &std::fs::Metadata)) {
-    fn walk(dir: &Path, visit: &mut dyn FnMut(&Path, &std::fs::Metadata), depth: u32) {
+    fn walk(
+        dir: &Path,
+        assets: &Path,
+        visit: &mut dyn FnMut(&Path, &std::fs::Metadata),
+        depth: u32,
+    ) {
         if depth > 8 {
             return;
         }
@@ -340,7 +346,7 @@ fn walk_sources(dir: &Path, visit: &mut dyn FnMut(&Path, &std::fs::Metadata)) {
                     Some("node_modules" | "dist" | ".tmp" | ".git")
                 ) {
                     visit(&path, &metadata);
-                    walk(&path, visit, depth + 1);
+                    walk(&path, assets, visit, depth + 1);
                 }
             } else if matches!(
                 path.extension().and_then(OsStr::to_str),
@@ -359,7 +365,7 @@ fn walk_sources(dir: &Path, visit: &mut dyn FnMut(&Path, &std::fs::Metadata)) {
                         | "srt"
                         | "vtt"
                 )
-            ) {
+            ) && !(path.starts_with(assets) && is_transport_stream_asset(&path)) {
                 visit(&path, &metadata);
             }
         }
@@ -368,7 +374,21 @@ fn walk_sources(dir: &Path, visit: &mut dyn FnMut(&Path, &std::fs::Metadata)) {
         return;
     };
     visit(dir, &metadata);
-    walk(dir, visit, 0);
+    walk(dir, &dir.join("assets"), visit, 0);
+}
+
+fn is_transport_stream_asset(path: &Path) -> bool {
+    if !matches!(path.extension().and_then(OsStr::to_str), Some("ts" | "mts")) {
+        return false;
+    }
+    // MPEG-TS uses 188-byte packets; Blu-ray adds a four-byte prefix.
+    let mut header = [0; 389];
+    std::fs::File::open(path)
+        .and_then(|mut file| file.read_exact(&mut header))
+        .is_ok()
+        && [[0, 188, 376], [4, 196, 388]]
+            .into_iter()
+            .any(|sync_bytes| sync_bytes.into_iter().all(|at| header[at] == 0x47))
 }
 
 #[cfg(test)]
@@ -528,6 +548,33 @@ mod tests {
         drop(staged);
         std::fs::remove_dir_all(&outside).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn transport_stream_assets_are_not_typescript_sources() {
+        let dir = scene_folder("watch-transport-stream");
+        let entry = dir.join("film.tsx");
+        let args = PropertyArgs::default();
+        let before = watched_stamp(&entry, &args);
+        let outside = scene_folder("watch-transport-source");
+        for (name, offset, size) in [("video.ts", 0, 188), ("video.mts", 4, 192)] {
+            let video = outside.join(name);
+            let mut packets = vec![0xff; size * 3];
+            for packet in packets.chunks_exact_mut(size) {
+                packet[offset] = 0x47;
+            }
+            std::fs::write(&video, packets).unwrap();
+            celesta_react_bridge::import_path(&dir, &dir, &video).unwrap();
+        }
+        let after_media = watched_stamp(&entry, &args);
+        let module = dir.join("assets/labels.ts");
+        std::fs::write(&module, "export const title = 'Scene';").unwrap();
+        let after_source = watched_stamp(&entry, &args);
+        std::fs::remove_dir_all(&outside).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        assert_eq!(before, after_media);
+        assert_ne!(after_media, after_source);
     }
 
     #[test]
