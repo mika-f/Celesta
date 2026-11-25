@@ -301,10 +301,11 @@ jobs:
         with:
           name: celesta-linux-x64
           path: ${{ runner.temp }}/linux-cli
-      - name: Check doctor and export from a moved Linux installation
+      - name: Check doctor, export, and inspection from a moved Linux installation
         run: |
           inputs="$RUNNER_TEMP/linux-cli"
           cp packages/cli/examples/title.tsx "$inputs/title.tsx"
+          cp skills/celesta/scripts/inspect.mjs "$inputs/inspect.mjs"
           docker run --rm -i -v "$inputs:/inputs:ro" ubuntu:22.04 bash -se <<'EOF'
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -322,4 +323,6 @@ jobs:
           celesta doctor --json
           celesta export --react title.tsx --to 0.1 title.mov --json
           test -s title.mov
+          "$work/moved-install/bin/runtime/node" /inputs/inspect.mjs title.tsx --frames 0 > inspect.txt
+          grep -Fx "native:  $work/moved-install/bin/celesta-exporter (found)" inspect.txt
           EOF
