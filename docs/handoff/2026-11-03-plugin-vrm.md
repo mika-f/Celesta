@@ -736,8 +736,9 @@ Celesta's side knows no format.
 - **MikkTSpace work is bounded at load.** Scratch is estimated at 384 bytes
   per triangle plus fixed and face-group buffers, against the model's
   remaining geometry budget after the primitive's output. Primitives over
-  that estimate, 131,072 triangles, or 256 triangle corners at one position
-  use default tangents and produce a warning naming the mesh and primitive.
+  that estimate, 131,072 triangles, 256 triangle corners at one position,
+  or 16,777,216 comparisons in degenerate-face recovery use default
+  tangents and produce a warning naming the mesh and primitive.
 
 ## Where Celesta knowingly differs from UniVRM
 

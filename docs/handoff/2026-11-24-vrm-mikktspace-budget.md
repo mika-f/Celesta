@@ -16,6 +16,10 @@ list before the tangent step.
 Each primitive is capped at 131,072 triangles (48 MiB of base scratch)
 and 256 corners at any one position. The latter bounds the quadratic face
 group work even if MikkTSpace welds vertices that use different indices.
+Repeated positions within one triangle also identify degenerate faces.
+MikkTSpace can search every other corner for each degenerate corner when
+recovering tangents, so the product of degenerate and non-degenerate
+corner counts is capped at 16,777,216 comparisons.
 
 Checks from the repository root:
 

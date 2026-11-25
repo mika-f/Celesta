@@ -36,6 +36,7 @@ const DEFAULT_TANGENT: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
 const MIKK_BYTES_PER_TRIANGLE: u64 = 384;
 const MAX_MIKK_TRIANGLES: usize = 1 << 17;
 const MAX_MIKK_CORNERS_AT_POSITION: u64 = 256;
+const MAX_MIKK_DEGENERATE_COMPARISONS: u64 = 1 << 24;
 pub(crate) const DEFAULT_TANGENT_WARNINGS: &str = "primitives using default tangents";
 
 /// The most a model's geometry may take, every primitive's streams, morph
@@ -322,16 +323,17 @@ pub(crate) fn primitive_geometry<'d>(
     }
 
     drop(kept);
-    let tangents =
-        needs_tangents.then(
-            || match check_tangent_work(&positions, &indices, budget - bytes) {
-                Ok(()) => tangents(&positions, &normals, &uvs, &indices),
-                Err(reason) => {
-                    tangent_warnings.push(|| format!("{at} uses default tangents: {reason}"));
-                    vec![DEFAULT_TANGENT; positions.len()]
-                }
-            },
-        );
+    let tangents = needs_tangents.then(|| {
+        tangents(
+            &positions,
+            &normals,
+            &uvs,
+            &indices,
+            budget - bytes,
+            at,
+            tangent_warnings,
+        )
+    });
     let geometry = Geometry {
         positions,
         normals,
@@ -937,16 +939,29 @@ fn check_tangent_work(
     // corner there also bounds groups whose vertices started at distinct indices.
     let mut corners = HashMap::new();
     let mut most = 0;
-    for &index in indices {
-        let position = positions[index as usize].map(|v| if v == 0.0 { 0 } else { v.to_bits() });
-        let count = corners.entry(position).or_insert(0);
-        *count += 1;
-        if *count > MAX_MIKK_CORNERS_AT_POSITION {
-            return Err(format!(
-                "more than {MAX_MIKK_CORNERS_AT_POSITION} triangle corners share one position"
-            ));
+    let mut degenerate = 0;
+    for triangle in indices.as_chunks::<3>().0 {
+        let [a, b, c] = triangle.map(|index| positions[index as usize]);
+        degenerate += u64::from(a == b || a == c || b == c);
+        for position in [a, b, c] {
+            let key = position.map(|v| if v == 0.0 { 0 } else { v.to_bits() });
+            let count = corners.entry(key).or_insert(0);
+            *count += 1;
+            if *count > MAX_MIKK_CORNERS_AT_POSITION {
+                return Err(format!(
+                    "more than {MAX_MIKK_CORNERS_AT_POSITION} triangle corners share one position"
+                ));
+            }
+            most = most.max(*count);
         }
-        most = most.max(*count);
+    }
+    // MikkTSpace's DegenEpilogue can search every non-degenerate corner
+    // for each degenerate one. Welding preserves the compared positions.
+    let comparisons = 9 * degenerate * (triangles as u64 - degenerate);
+    if comparisons > MAX_MIKK_DEGENERATE_COMPARISONS {
+        return Err(format!(
+            "MikkTSpace degenerate-face recovery could take {comparisons} comparisons, more than {MAX_MIKK_DEGENERATE_COMPARISONS}"
+        ));
     }
     // GenerateTSpaces keeps arrays sized to the largest group and up to
     // one clone of its i32 member array per face, plus a temporary clone.
@@ -963,8 +978,15 @@ fn tangents(
     normals: &[[f32; 3]],
     uvs: &[[f32; 2]],
     indices: &[u32],
+    remaining: u64,
+    at: &At<'_, '_>,
+    warnings: &mut Warnings,
 ) -> Vec<[f32; 4]> {
     let fallback = || vec![DEFAULT_TANGENT; positions.len()];
+    if let Err(reason) = check_tangent_work(positions, indices, remaining) {
+        warnings.push(|| format!("{at} uses default tangents: {reason}"));
+        return fallback();
+    }
     let finite = |values: &[f32]| values.iter().all(|value| value.is_finite());
     if !(finite(positions.as_flattened())
         && finite(normals.as_flattened())
@@ -1398,6 +1420,57 @@ mod tests {
                 "mesh \"FirstPersonOnly\" primitive 0 uses default tangents: more than {MAX_MIKK_CORNERS_AT_POSITION} triangle corners share one position"
             )
         );
+    }
+
+    #[test]
+    fn tangents_fall_back_when_degenerate_recovery_costs_too_much() {
+        let document = parse(&SyntheticVrm::avatar().glb());
+        let mesh = document.gltf.meshes().next().unwrap();
+        let at = At::Primitive {
+            mesh: &mesh,
+            primitive: 0,
+        };
+
+        let run = |half: u32| {
+            let positions: Vec<_> = (0..2 * half)
+                .flat_map(|i| {
+                    let x = 2.0 * i as f32;
+                    // Each degenerate face has two distinct vertices
+                    // at the same position, neither in a good face.
+                    let b = if i < half { x } else { x + 1.0 };
+                    [[x, 0.0, 0.0], [b, 0.0, 0.0], [x, 1.0, 0.0]]
+                })
+                .collect();
+            let normals = vec![[0.0, 0.0, 1.0]; positions.len()];
+            let uvs = [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0]].repeat(2 * half as usize);
+            let indices: Vec<_> = (0..6 * half).collect();
+            let mut warnings = Warnings::new(DEFAULT_TANGENT_WARNINGS);
+            let tangents = tangents(
+                &positions,
+                &normals,
+                &uvs,
+                &indices,
+                GEOMETRY_BUDGET,
+                &at,
+                &mut warnings,
+            );
+            let mut notices = Vec::new();
+            warnings.finish(&mut notices);
+            (tangents, notices)
+        };
+
+        let (within, notices) = run(1);
+        assert!(notices.is_empty());
+        assert_ne!(within[3], DEFAULT_TANGENT);
+        let (over, notices) = run(1400);
+        assert!(over.iter().all(|&value| value == DEFAULT_TANGENT));
+        let [warning] = notices.as_slice() else {
+            panic!("expected one warning, got {notices:?}");
+        };
+        assert_eq!(warning.level, celesta_plugin::NoticeLevel::Warning);
+        assert!(warning.message.starts_with(
+            "mesh \"Body\" primitive 0 uses default tangents: MikkTSpace degenerate-face recovery"
+        ));
     }
 
     fn body(vrm: &SyntheticVrm) -> Vec<Geometry> {
