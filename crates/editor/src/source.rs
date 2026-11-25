@@ -213,17 +213,14 @@ impl DependencyDebounce {
 }
 
 /// A sample of what the reload watcher watches: the path, mtime and size of
-/// every source file under the entry's folder (see [`source_files`]), the
-/// mtime of every folder walked (which changes when a file in it is added,
-/// removed or renamed), and the `--props-file`'s. Two samples differ when
+/// every source file under the entry's folder (see [`source_files`]) and
+/// the `--props-file`'s. Two samples differ when
 /// any of them changed, in either direction: a file restored with an older
 /// mtime (`cp -p`, `rsync -a`) counts, and so does a module deleted from a
-/// subfolder. `None` when the entry has no folder or its folder's metadata
-/// cannot be read; a subfolder that cannot be listed is left out of the
-/// sample.
+/// subfolder. `None` when no source files can be read.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct WatchStamp {
-    /// Every folder and source file walked, by path relative to the
+    /// Every source file walked, by path relative to the
     /// entry's folder (so an entry opened as `film.tsx` and later sampled
     /// as `/p/film.tsx` gives the same stamp), sorted by it.
     sources: Vec<WatchedSource>,
@@ -235,21 +232,18 @@ pub(crate) struct WatchStamp {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct WatchedSource {
     path: PathBuf,
-    folder: bool,
     modified: Option<SystemTime>,
     len: u64,
 }
 
 impl WatchStamp {
     pub(crate) fn same_source_inputs(&self, newer: &Self) -> bool {
-        self.props_file == newer.props_file && self.changed_files(newer).is_empty()
+        self == newer
     }
 
     /// The source files, relative to the entry's folder, that differ
     /// between this sample and `newer`: changed, added or removed, sorted.
-    /// A path that is a folder in both samples is left out (its files are
-    /// listed), and so is the `--props-file`; a file replaced by a folder of
-    /// the same name, or the other way round, is listed.
+    /// The separate `--props-file` sample is left out.
     pub(crate) fn changed_files(&self, newer: &WatchStamp) -> Vec<PathBuf> {
         let by_path = |stamp: &WatchStamp| -> HashMap<PathBuf, WatchedSource> {
             stamp
@@ -262,11 +256,7 @@ impl WatchStamp {
         let paths: BTreeSet<&PathBuf> = older.keys().chain(newer.keys()).collect();
         paths
             .into_iter()
-            .filter(|path| {
-                let (old, new) = (older.get(*path), newer.get(*path));
-                let file = |source: Option<&WatchedSource>| source.is_some_and(|s| !s.folder);
-                old != new && (file(old) || file(new))
-            })
+            .filter(|path| older.get(*path) != newer.get(*path))
             .cloned()
             .collect()
     }
@@ -276,9 +266,11 @@ pub(crate) fn watched_stamp(entry: &Path, property_args: &PropertyArgs) -> Optio
     let dir = entry.parent()?;
     let mut sources = Vec::new();
     walk_sources(dir, &mut |path, metadata| {
+        if metadata.is_dir() {
+            return;
+        }
         sources.push(WatchedSource {
             path: path.strip_prefix(dir).unwrap_or(path).to_owned(),
-            folder: metadata.is_dir(),
             modified: metadata.modified().ok(),
             len: metadata.len(),
         });
@@ -517,6 +509,24 @@ mod tests {
         let spelled = dir.join("..").join(name).join("film.tsx");
         assert_eq!(watched_stamp(&spelled, &args), watched_stamp(&entry, &args));
         assert_eq!(watched_stamp(&dir.join("missing/film.tsx"), &args), None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn staging_media_does_not_change_the_watcher_sample() {
+        let dir = scene_folder("watch-staged-media");
+        let entry = dir.join("film.tsx");
+        let args = PropertyArgs::default();
+        let before = watched_stamp(&entry, &args);
+
+        let outside = scene_folder("watch-media-source");
+        let video = outside.join("large.mp4");
+        std::fs::write(&video, b"video").unwrap();
+        let staged = celesta_react_bridge::stage_import(&dir, &dir, &video).unwrap();
+        assert_eq!(before, watched_stamp(&entry, &args));
+
+        drop(staged);
+        std::fs::remove_dir_all(&outside).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
