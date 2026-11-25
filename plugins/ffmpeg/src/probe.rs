@@ -3,9 +3,14 @@ use crate::ffmpeg_error;
 use crate::sequential::ffmpeg_path;
 use celesta_composition::{Rational, Time};
 use celesta_media::{AudioStream, MediaError, MediaProbe, VideoStream};
+use ez_ffmpeg::AVRational;
 use ez_ffmpeg::error::{Error, OpenInputError};
 use ez_ffmpeg::stream_info::{StreamInfo, find_all_stream_infos};
-use ez_ffmpeg::{AVRational, container_info};
+use ffmpeg_sys_next::{
+    AV_DISPOSITION_ATTACHED_PIC, avformat_close_input, avformat_find_stream_info,
+    avformat_open_input,
+};
+use std::ffi::CString;
 use std::path::Path;
 
 /// Fails with [`MediaError::NotFound`] for a missing file, whose FFmpeg
@@ -29,10 +34,7 @@ pub(crate) fn probe_path(path: &Path) -> Result<MediaProbe, MediaError> {
         },
         error => ffmpeg_error(error),
     })?;
-    let duration = container_info::get_duration_us(url.as_str())
-        .ok()
-        .filter(|micros| *micros > 0)
-        .map(|micros| Time::new(micros, 1_000_000).reduced());
+    let (duration, attached_pictures) = container_details(&url)?;
 
     let mut video = None;
     let mut audio = Vec::new();
@@ -52,7 +54,7 @@ pub(crate) fn probe_path(path: &Path) -> Result<MediaProbe, MediaError> {
                 color_transfer,
                 color_space,
                 ..
-            } if video.is_none() => {
+            } if video.is_none() && !attached_pictures.contains(&index) => {
                 let (width, height) = displayed_size(width, height, rotate);
                 video = Some(VideoStream {
                     index: index.max(0) as u32,
@@ -89,6 +91,43 @@ pub(crate) fn probe_path(path: &Path) -> Result<MediaProbe, MediaError> {
         video,
         audio,
     })
+}
+
+fn container_details(url: &str) -> Result<(Option<Time>, Vec<i32>), MediaError> {
+    let url = CString::new(url).map_err(|error| MediaError::Codec(error.to_string()))?;
+    let mut context = std::ptr::null_mut();
+    // SAFETY: FFmpeg owns this context after a successful open. The streams
+    // are read only within its stream count, then the context is closed.
+    unsafe {
+        if avformat_open_input(
+            &mut context,
+            url.as_ptr(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        ) < 0
+        {
+            return Err(MediaError::Codec(
+                "Couldn’t read media stream flags".to_owned(),
+            ));
+        }
+        let result = if avformat_find_stream_info(context, std::ptr::null_mut()) < 0 {
+            Err(MediaError::Codec(
+                "Couldn’t read media stream flags".to_owned(),
+            ))
+        } else {
+            let duration = (*context).duration;
+            let duration = (duration > 0).then(|| Time::new(duration, 1_000_000).reduced());
+            let attached_pictures = (0..(*context).nb_streams)
+                .filter_map(|index| {
+                    let stream = &**(*context).streams.add(index as usize);
+                    (stream.disposition & AV_DISPOSITION_ATTACHED_PIC != 0).then_some(stream.index)
+                })
+                .collect();
+            Ok((duration, attached_pictures))
+        };
+        avformat_close_input(&mut context);
+        result
+    }
 }
 
 /// A video's size as displayed — what a browser reports as

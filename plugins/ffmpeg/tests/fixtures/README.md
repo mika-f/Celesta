@@ -29,3 +29,6 @@ answer and compares against that, rather than storing an RGB golden image.
 
 Libx264 cannot encode odd-width/height I420; the odd H.264 case deliberately
 uses 4:4:4, and the separate FFV1 case verifies genuinely odd I420 fallback.
+
+`covered-audio.mp3` is a short synthetic sine tone with a 16×16 PNG
+embedded as ID3 cover art (`attached_pic`), not a video track.

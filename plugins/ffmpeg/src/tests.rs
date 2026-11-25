@@ -84,6 +84,15 @@ fn reports_a_missing_source_with_its_path() {
 }
 
 #[test]
+fn attached_cover_art_does_not_make_audio_a_video() {
+    let clip = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/covered-audio.mp3");
+    let mut backend = FfmpegBackend::new();
+    let probe = backend.probe(&clip).unwrap();
+    assert_eq!(probe.audio.len(), 1);
+    assert!(probe.video.is_none());
+}
+
+#[test]
 fn stream_durations_are_exact_in_the_stream_time_base() {
     use celesta_composition::Time;
     use ez_ffmpeg::AVRational;
