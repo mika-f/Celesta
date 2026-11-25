@@ -12,7 +12,17 @@ fn main() -> ExitCode {
                 exporter::run_export(args, exporter::export_command().bin_name("celesta export"))
             }
             Some(("info", args)) => exporter::run_info(args),
-            Some(("doctor", args)) => exporter::run_doctor(args),
+            Some(("doctor", args)) => {
+                #[cfg(target_os = "linux")]
+                let runtime_dir = temporary_runtime_dir();
+                #[cfg(target_os = "linux")]
+                if let Some(directory) = &runtime_dir {
+                    // SAFETY: Argument parsing runs on the main thread and
+                    // no other threads have been started in this process.
+                    unsafe { std::env::set_var("XDG_RUNTIME_DIR", directory.path()) };
+                }
+                exporter::run_doctor(args)
+            }
             _ => match Cli::from_arg_matches(&matches) {
                 Ok(cli) => celesta_cli::run(cli),
                 Err(error) => parse_error(error),
@@ -28,6 +38,24 @@ fn main() -> ExitCode {
             _ => parse_error(error),
         },
     }
+}
+
+#[cfg(target_os = "linux")]
+fn temporary_runtime_dir() -> Option<tempfile::TempDir> {
+    use std::fs::Permissions;
+    use std::os::unix::fs::PermissionsExt;
+
+    if std::env::var_os("XDG_RUNTIME_DIR").is_some_and(|path| !path.is_empty()) {
+        return None;
+    }
+    // Mesa can probe Wayland even in a headless process. Give it a private
+    // runtime directory, not the shared temporary directory itself.
+    let parent = std::path::absolute(std::env::temp_dir()).ok()?;
+    tempfile::Builder::new()
+        .prefix("celesta-runtime-")
+        .permissions(Permissions::from_mode(0o700))
+        .tempdir_in(parent)
+        .ok()
 }
 
 fn command() -> Command {

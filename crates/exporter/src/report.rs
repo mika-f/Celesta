@@ -26,6 +26,16 @@ pub enum HintStyle {
     Mcp,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HintTarget {
+    Export,
+    Doctor,
+    Mcp,
+}
+
+const DOCTOR_COMPONENT_LIST_HINT: &str = "run `celesta export --list-components --check` with \
+    the same source, --plugin-dir and --allow-plugin options to check this project's components";
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Report {
@@ -635,11 +645,31 @@ pub fn add_react_hint(report: &mut Report, source: &Path) {
 /// [`hint`], or without `react` (`--react`) for a React entry that failed to
 /// parse as a JSON project, `--react`.
 pub fn source_hint(error: &ExportError, source: &Path, react: bool) -> Option<Cow<'static, str>> {
-    let (code, hint) = classify(error, HintStyle::Cli, &mut Vec::new());
-    if react {
-        return hint;
-    }
-    react_entry_hint(code, source).or(hint)
+    classify_source(error, source, react, HintTarget::Export).1
+}
+
+/// The error code and hint for a doctor render probe.
+pub(crate) fn classify_doctor(
+    error: &ExportError,
+    source: &Path,
+    react: bool,
+) -> (&'static str, Option<Cow<'static, str>>) {
+    classify_source(error, source, react, HintTarget::Doctor)
+}
+
+fn classify_source(
+    error: &ExportError,
+    source: &Path,
+    react: bool,
+    target: HintTarget,
+) -> (&'static str, Option<Cow<'static, str>>) {
+    let (code, hint) = classify_for(error, target, &mut Vec::new());
+    let hint = if react {
+        hint
+    } else {
+        react_entry_hint(code, source).or(hint)
+    };
+    (code, hint)
 }
 
 fn react_entry_hint(code: &str, source: &Path) -> Option<Cow<'static, str>> {
@@ -698,14 +728,26 @@ pub(crate) fn classify(
     hints: HintStyle,
     issues: &mut Vec<Issue>,
 ) -> (&'static str, Option<Cow<'static, str>>) {
-    let cli = hints == HintStyle::Cli;
+    let target = match hints {
+        HintStyle::Cli => HintTarget::Export,
+        HintStyle::Mcp => HintTarget::Mcp,
+    };
+    classify_for(error, target, issues)
+}
+
+fn classify_for(
+    error: &ExportError,
+    target: HintTarget,
+    issues: &mut Vec<Issue>,
+) -> (&'static str, Option<Cow<'static, str>>) {
+    let cli = target != HintTarget::Mcp;
     match error {
-        ExportError::Frame(failure) => classify(&failure.error, hints, issues),
+        ExportError::Frame(failure) => classify_for(&failure.error, target, issues),
         ExportError::InvalidPresets { .. } => ("invalid_presets", None),
         ExportError::UnknownPreset { .. } => ("unknown_preset", None),
         ExportError::UnsupportedOutput { path, extensions } => (
             "unsupported_output",
-            Some(unsupported_output_hint(path, extensions, cli)),
+            Some(unsupported_output_hint(path, extensions, target)),
         ),
         ExportError::IncompatibleComponents { .. } => ("incompatible_components", None),
         // A component no installed plugin offers: its plugin is missing, has
@@ -717,8 +759,13 @@ pub(crate) fn classify(
         } => (
             "component_unavailable",
             Some(Cow::Owned(if cli {
+                let listing = if target == HintTarget::Doctor {
+                    DOCTOR_COMPONENT_LIST_HINT
+                } else {
+                    "--list-components shows the installed components"
+                };
                 format!(
-                    "--list-components shows the installed components; if the {plugin} \
+                    "{listing}; if the {plugin} \
                      plugin is installed but not allowed, allow it with --allow-plugin {plugin}",
                     plugin = component.plugin
                 )
@@ -737,7 +784,7 @@ pub(crate) fn classify(
         } => (
             "component_unavailable",
             Some(Cow::Owned(no_default_encoder_hint(
-                component, *kind, codec, cli,
+                component, *kind, codec, target,
             ))),
         ),
         ExportError::ComponentUnavailable { .. }
@@ -819,10 +866,12 @@ pub(crate) fn classify(
         ExportError::Codec { .. } => ("codec", None),
         ExportError::OutputExists(_) => (
             "output_exists",
-            fixed(if cli {
-                "pass --overwrite to replace it, or write to another path"
-            } else {
-                "set overwrite to replace it, or write to another path"
+            fixed(match target {
+                HintTarget::Export => "pass --overwrite to replace it, or write to another path",
+                HintTarget::Doctor => {
+                    "pass --overwrite to test without replacing it, or choose another path"
+                }
+                HintTarget::Mcp => "set overwrite to replace it, or write to another path",
             }),
         ),
         ExportError::InvalidSelection(_) => ("invalid_selection", None),
@@ -891,8 +940,11 @@ fn standard_format_install_hint(path: &Path) -> Option<&'static str> {
              optional ffmpeg-x264 plugin (a release download, \
              Celesta-plugin-ffmpeg-x264-<version>-<os>-<arch>.zip, extracted into your plugin \
              folder and allowed with --allow-plugin ffmpeg-x264); in a source checkout, stage both with `node scripts/plugins/build.mts \
-             plugins/ffmpeg plugins/ffmpeg-x264 --out <dir>` and pass --plugin-dir <dir>; a \
-             codec from the registry installs with `celesta plugin install --global <id>`"
+             plugins/ffmpeg plugins/ffmpeg-x264 --out <dir>` and pass --plugin-dir <dir>; from \
+             the registry, install the muxer with `celesta plugin install --global ffmpeg` and, \
+             on Linux, the encoder with `celesta plugin install --global ffmpeg-x264`. \
+             On Ubuntu 22.04 x86-64, use the source build if the download is 0.10.0 \
+             (its Linux binaries require glibc 2.38)"
         }
         _ => return None,
     })
@@ -928,8 +980,9 @@ fn no_default_encoder_hint(
     muxer: &ComponentRef,
     kind: ComponentKind,
     codec: &str,
-    cli: bool,
+    target: HintTarget,
 ) -> String {
+    let cli = target != HintTarget::Mcp;
     let named = codec_name(codec).unwrap_or(codec);
     let kind = match kind {
         ComponentKind::AudioEncoder => "audio",
@@ -950,8 +1003,10 @@ fn no_default_encoder_hint(
              into your plugin folder and allow it with --allow-plugin ffmpeg-x264, or in a \
              source checkout stage it with \
              `node scripts/plugins/build.mts plugins/ffmpeg-x264 --out <dir>` and pass \
-             --plugin-dir <dir>; a codec from the registry installs with \
-             `celesta plugin install --global <id>`"
+             --plugin-dir <dir>, or install it from the registry with \
+             `celesta plugin install --global ffmpeg-x264`. \
+             On Ubuntu 22.04 x86-64, use the source build if the download is 0.10.0 \
+             (its Linux binaries require glibc 2.38)"
                 .to_owned()
         } else {
             "H.264 needs an encoder plugin; on Linux that is the optional ffmpeg-x264 plugin: \
@@ -972,10 +1027,10 @@ fn no_default_encoder_hint(
              unless its FFmpeg build lacks that encoder"
         )
     };
-    let listing = if cli {
-        "--list-components --check shows what works"
-    } else {
-        "list_components shows what is installed"
+    let listing = match target {
+        HintTarget::Export => "--list-components --check shows what works",
+        HintTarget::Doctor => DOCTOR_COMPONENT_LIST_HINT,
+        HintTarget::Mcp => "list_components shows what is installed",
     };
     let pinned = if cli {
         "when --muxer or a preset names one"
@@ -999,7 +1054,11 @@ fn fixed(hint: &'static str) -> Option<Cow<'static, str>> {
 /// The extensions a video may be written to, and for a still's extension
 /// how to export stills instead; with no muxer at all, how to install the
 /// media plugin.
-fn unsupported_output_hint(path: &Path, extensions: &[String], cli: bool) -> Cow<'static, str> {
+fn unsupported_output_hint(
+    path: &Path,
+    extensions: &[String],
+    target: HintTarget,
+) -> Cow<'static, str> {
     let dotted: Vec<String> = extensions
         .iter()
         .map(|extension| format!(".{extension}"))
@@ -1008,13 +1067,21 @@ fn unsupported_output_hint(path: &Path, extensions: &[String], cli: bool) -> Cow
     // Stills are written by built-in components, so selecting frames works
     // whatever media plugins are installed.
     if still {
-        return Cow::Borrowed(if cli {
-            "PNG, JPEG and WebP outputs are still images: select frames with --frame, as in \
-             --frame 0 (or --frame 0,30,60, or --every 30)"
-        } else {
-            "PNG, JPEG and WebP outputs are still images: render them with render_frames"
+        return Cow::Borrowed(match target {
+            HintTarget::Export => {
+                "PNG, JPEG and WebP outputs are still images: select frames with --frame, as in \
+                 --frame 0 (or --frame 0,30,60, or --every 30)"
+            }
+            HintTarget::Doctor => {
+                "PNG, JPEG and WebP outputs are still images: select one frame with --frame 0 \
+                 and omit --from, --to, --preset, --preset-file, --audio-encoder and --audio-option"
+            }
+            HintTarget::Mcp => {
+                "PNG, JPEG and WebP outputs are still images: render them with render_frames"
+            }
         });
     }
+    let cli = target != HintTarget::Mcp;
     if cli && let Some(install) = standard_format_install_hint(path) {
         let only_gif = extensions
             .iter()
@@ -1696,8 +1763,24 @@ mod tests {
                 hint.contains("build.mts plugins/ffmpeg plugins/ffmpeg-x264 --out"),
                 "{hint}"
             );
-            assert!(hint.contains("celesta plugin install --global"), "{hint}");
+            assert!(
+                hint.contains("`celesta plugin install --global ffmpeg`"),
+                "{hint}"
+            );
+            assert!(
+                hint.contains("`celesta plugin install --global ffmpeg-x264`"),
+                "{hint}"
+            );
+            assert!(!hint.contains("<id>"), "{hint}");
             assert!(!hint.contains(".gif"), "{hint}");
+            assert!(
+                hint.contains(". On Ubuntu 22.04 x86-64, use the source build"),
+                "{hint}"
+            );
+            assert!(
+                hint.contains("0.10.0 (its Linux binaries require glibc 2.38)"),
+                "{hint}"
+            );
         }
         // Installed muxers other than GIF stay in the hint.
         let hint = classified(&unsupported("out.mp4", &["gif", "webm"]), HintStyle::Cli)
@@ -1731,6 +1814,34 @@ mod tests {
     }
 
     #[test]
+    fn doctor_component_hints_keep_the_plugin_search_context() {
+        let source = Path::new("film.tsx");
+        for reason in [
+            UnavailableReason::NotInstalled,
+            UnavailableReason::NoDefaultEncoder {
+                kind: ComponentKind::VideoEncoder,
+                codec: "avc1".to_owned(),
+            },
+        ] {
+            let error = ExportError::ComponentUnavailable {
+                component: "ffmpeg/mp4".parse().unwrap(),
+                reason,
+            };
+            let (code, hint) = classify_doctor(&error, source, true);
+            assert_eq!(code, "component_unavailable");
+            let hint = hint.unwrap();
+            assert!(
+                hint.contains("celesta export --list-components --check"),
+                "{hint}"
+            );
+            assert!(
+                hint.contains("same source, --plugin-dir and --allow-plugin"),
+                "{hint}"
+            );
+        }
+    }
+
+    #[test]
     fn a_muxer_without_a_default_encoder_hints_at_installing_one() {
         let error = |muxer: &str, kind, codec: &str| ExportError::ComponentUnavailable {
             component: muxer.parse().unwrap(),
@@ -1750,12 +1861,15 @@ mod tests {
             "Celesta-plugin-ffmpeg-x264-",
             "build.mts plugins/ffmpeg-x264 --out <dir>",
             "--plugin-dir <dir>",
-            "celesta plugin install --global <id>",
+            "`celesta plugin install --global ffmpeg-x264`",
+            ". On Ubuntu 22.04 x86-64, use the source build",
+            "0.10.0 (its Linux binaries require glibc 2.38)",
             "or write .mov (ProRes) or .webm (VP9) instead (with a muxer",
             "--list-components",
         ] {
             assert!(hint.contains(part), "{part}: {hint}");
         }
+        assert!(!hint.contains("<id>"), "{hint}");
         let mcp = classified(&mp4, HintStyle::Mcp).1.unwrap();
         assert!(mcp.contains("ffmpeg-x264") && mcp.contains("list_components"));
         assert!(!mcp.contains("--plugin-dir"), "{mcp}");

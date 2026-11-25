@@ -58,6 +58,8 @@ celesta doctor --json --react first-scene.tsx --from 0 --to 1 output.mov
 
 The source check runs the requested render through its actual media components and honors the project's `celesta.lock`. It discards temporary output instead of publishing or replacing the intended file. A video probe tests the whole composition by default; pass a range to limit the work. A JSON project does not require Node.js. JSON mode writes one report with `schemaVersion: 1`, a top-level `status`, and `checks.node`, `checks.graphics`, and `checks.output`. Check statuses are `ok`, `error`, and `skipped`; errors have a machine-readable `code`. The command exits nonzero on failure.
 
+Render failures can include a `checks.output.hint` with advice for the probe, such as which codec plugin to install or how to select a single frame. On headless Linux, `doctor` uses a private temporary runtime directory if `XDG_RUNTIME_DIR` is unset; it leaves any configured directory alone.
+
 The app also includes the standalone command-line exporter. Select your platform:
 
 ::::tabs[Exporter platform]{default="macOS"}
@@ -419,6 +421,8 @@ The file extension picks the video format. A `.mp4` file is H.264 with AAC audio
 Only areas nothing draws on are transparent, so a layer that fills the whole frame, such as a full-frame background, makes the output opaque. The alpha is straight (unassociated), and colors are converted and tagged as BT.709 (limited range).
 
 Celesta encodes through its [media plugins](/en/docs/plugins/#media-plugins). If the plugin's FFmpeg build lacks an encoder the video needs, or an optional encoder plugin is missing (H.264 needs a native encoder or `ffmpeg-x264`), the export fails with the error code `component_unavailable` and the reason. Without a media plugin, no muxer writes the extension, and the export fails with `unsupported_output` and a hint to install one.
+
+On Ubuntu 22.04 x86-64, the 0.10.0 Linux `ffmpeg-x264` archives from the release and the registry require a newer glibc. If 0.10.0 is the available version, [build the plugin from source](/en/docs/build-from-source/) on that system instead.
 
 ## Still frames and contact sheets
 

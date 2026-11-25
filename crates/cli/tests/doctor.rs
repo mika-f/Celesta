@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use common::Home;
+use common::{Home, assert_exit, json_stdout, stdout};
 use serde_json::{Value, json};
 
 fn report(output: &Output) -> Value {
@@ -29,6 +29,7 @@ fn doctor_json_usage_has_the_same_schema() {
     let report = report(&output);
     assert_eq!(report["status"], "error");
     assert_eq!(report["checks"]["output"]["code"], "usage");
+    assert!(report["checks"]["output"].get("hint").is_none());
 }
 
 #[test]
@@ -171,6 +172,104 @@ fn requested_adapter_must_work() {
     assert_eq!(output.status.code(), Some(1));
     let report = report(&output);
     assert_eq!(report["checks"]["graphics"]["code"], "graphics_unavailable");
+}
+
+#[test]
+fn doctor_reports_hints_for_the_probe() {
+    let home = Home::new();
+    let run = |subcommand, output, extra: &[&str]| {
+        home.command()
+            .env_remove("CELESTA_PLUGIN_PATH")
+            .arg(subcommand)
+            .arg(project())
+            .arg(output)
+            .args(extra)
+            .output()
+            .unwrap()
+    };
+
+    let doctor = run("doctor", "out.mov", &["--json"]);
+    let checks = report(&doctor);
+    if checks["checks"]["graphics"]["code"] == "graphics_unavailable" {
+        assert!(
+            std::env::var("CELESTA_REQUIRE_GPU").as_deref() != Ok("1"),
+            "{checks}"
+        );
+        eprintln!("skipping: no graphics adapter");
+        return;
+    }
+    assert_exit(&doctor, 1);
+    let check = &checks["checks"]["output"];
+    assert_eq!(check["code"], "unsupported_output", "{checks}");
+
+    let export = run("export", "out.mov", &["--json"]);
+    assert_exit(&export, 1);
+    let export = json_stdout(&export);
+    let hint = check["hint"].as_str().expect("doctor output has a hint");
+    assert_eq!(hint, export["error"]["hint"].as_str().unwrap());
+    assert!(hint.contains("plugins/ffmpeg --out"), "{hint}");
+
+    let plain = run("doctor", "out.mov", &[]);
+    assert_exit(&plain, 1);
+    assert!(
+        stdout(&plain).contains(&format!("hint: {hint}")),
+        "{plain:?}"
+    );
+    assert!(!home.path().join("out.mov").exists());
+
+    let png = run("doctor", "out.png", &["--json", "--from", "0", "--to", "1"]);
+    assert_exit(&png, 1);
+    let checks = report(&png);
+    let check = &checks["checks"]["output"];
+    assert_eq!(check["code"], "unsupported_output", "{checks}");
+    let hint = check["hint"]
+        .as_str()
+        .expect("doctor still output has a hint");
+    assert!(hint.contains("--frame 0"), "{hint}");
+    assert!(hint.contains("omit --from, --to"), "{hint}");
+    assert!(
+        !hint.contains("--every") && !hint.contains("--frame 0,"),
+        "{hint}"
+    );
+    let png = run("doctor", "out.png", &["--json", "--frame", "0"]);
+    assert_exit(&png, 0);
+    assert_eq!(report(&png)["checks"]["output"]["status"], "ok");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn headless_doctor_renders_without_an_xdg_runtime_warning() {
+    let home = Home::new();
+    let scratch = home.path().join("tmp");
+    fs::create_dir(&scratch).unwrap();
+    let output = home
+        .command()
+        .env_remove("XDG_RUNTIME_DIR")
+        .env_remove("DISPLAY")
+        .env_remove("WAYLAND_DISPLAY")
+        .env("TMPDIR", &scratch)
+        .args(["doctor", "--json", "--frame", "0"])
+        .arg(project())
+        .arg("out.png")
+        .output()
+        .unwrap();
+    let checks = report(&output);
+    if checks["checks"]["graphics"]["code"] == "graphics_unavailable" {
+        assert!(
+            std::env::var("CELESTA_REQUIRE_GPU").as_deref() != Ok("1"),
+            "{checks}"
+        );
+        eprintln!("skipping: no graphics adapter");
+        return;
+    }
+    assert_exit(&output, 0);
+    assert_eq!(checks["checks"]["output"]["status"], "ok", "{checks}");
+    assert!(
+        !common::stderr(&output).contains("XDG_RUNTIME_DIR"),
+        "{output:?}"
+    );
+    assert_eq!(fs::read_dir(&scratch).unwrap().count(), 0);
+    assert!(!home.path().join("out.png").exists());
 }
 
 #[test]
