@@ -100,7 +100,7 @@ pub(crate) fn react_cues(reports: &[ReactSubtitleDescriptor], window: Window) ->
                 &report.text,
                 report.start.to_bits(),
                 report.end.to_bits(),
-                &report.lang,
+                normalized_language(report.lang.as_deref()),
             ))
         })
         .filter_map(|report| {
@@ -237,13 +237,7 @@ pub(crate) fn files(path: &Path, cues: &[Cue]) -> Result<Vec<File>, ExportError>
     if is_per_language(path) {
         let mut languages = BTreeMap::<Option<String>, Vec<Cue>>::new();
         for cue in cues {
-            let lang = cue
-                .lang
-                .as_deref()
-                .unwrap_or_default()
-                .trim()
-                .to_lowercase();
-            let lang = (!lang.is_empty() && lang != UNDETERMINED).then_some(lang);
+            let lang = normalized_language(cue.lang.as_deref());
             languages.entry(lang).or_default().push(cue.clone());
         }
         let path = path.to_string_lossy();
@@ -283,6 +277,11 @@ pub(crate) fn files(path: &Path, cues: &[Cue]) -> Result<Vec<File>, ExportError>
         lang: lang.map(str::to_owned),
         cues: cues.to_vec(),
     }])
+}
+
+fn normalized_language(lang: Option<&str>) -> Option<String> {
+    let lang = lang.unwrap_or_default().trim().to_lowercase();
+    (!lang.is_empty() && lang != UNDETERMINED).then_some(lang)
 }
 
 /// `lang` as it goes in a file name: `und` without one, and only letters,
@@ -566,6 +565,21 @@ mod tests {
             react_cues(&reports, WHOLE),
             [cue("Hi", 0.0, 1.0), in_lang("en", cue("Hi", 0.0, 1.0))]
         );
+    }
+
+    #[test]
+    fn reports_for_the_same_normalized_language_are_one_cue() {
+        let reports = [" EN ", "en", "ja"].map(|lang| ReactSubtitleDescriptor {
+            lang: Some(lang.into()),
+            ..report("Hi", 0.0, 1.0)
+        });
+        let cues = react_cues(&reports, WHOLE);
+        let files = files_of(Path::new("film.{lang}.srt"), &cues);
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0].path, Path::new("film.en.srt"));
+        assert_eq!(files[0].cues.len(), 1);
+        assert_eq!(files[1].path, Path::new("film.ja.srt"));
+        assert_eq!(files[1].cues.len(), 1);
     }
 
     #[test]
