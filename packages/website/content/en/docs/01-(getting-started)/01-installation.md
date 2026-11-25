@@ -43,7 +43,7 @@ On Ubuntu, install the system libraries, a software Vulkan driver, and a
 font (hardware Vulkan also works if your system already has a driver):
 
 ```sh
-sudo apt-get install libatomic1 zlib1g libvulkan1 mesa-vulkan-drivers fonts-dejavu-core
+sudo apt-get install ca-certificates libatomic1 zlib1g libvulkan1 mesa-vulkan-drivers fonts-dejavu-core
 tar -xzf Celesta-<version>-linux-x64.tar.gz
 ./Celesta-<version>-linux-x64/bin/celesta doctor
 ```
