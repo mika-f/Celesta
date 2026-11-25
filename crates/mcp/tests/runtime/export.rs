@@ -7,10 +7,11 @@ use std::time::Duration;
 
 use crate::common::{call, client_with_test_codec, is_error, params, structured, text};
 use crate::entry;
-use celesta_codec_test::TestCodecPlugin;
+use celesta_codec_test::{PLUGIN_PATH_ENV, TestCodecPlugin, isolated_home_env};
 use rmcp::model::{ClientRequest, Request, ServerResult};
 use rmcp::service::PeerRequestOptions;
 use serde_json::{Value, json};
+use tokio::io::AsyncWriteExt;
 
 fn scene(frames: u32, width: u32, height: u32) -> String {
     format!(
@@ -172,6 +173,113 @@ fn stdout_carries_only_json_rpc() {
     }
     drop(stdin);
     let _ = child.wait();
+}
+
+#[tokio::test]
+async fn stdin_eof_discards_in_flight_video() {
+    shutdown_discards_in_flight_video(false).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn sigterm_discards_in_flight_video() {
+    shutdown_discards_in_flight_video(true).await;
+}
+
+async fn shutdown_discards_in_flight_video(sigterm: bool) {
+    crate::require_runtime();
+    let (dir, entry) = entry("");
+    let rendering = dir.path().join("rendering");
+    let source =
+        r#"
+import { writeFileSync } from 'node:fs';
+import { Composition, useCurrentFrame } from '@celesta.studio/react';
+function Block() {
+  const frame = useCurrentFrame();
+  if (frame === 1) writeFileSync(RENDERING_PATH, '');
+  if (frame > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 750);
+  return null;
+}
+export default function Root() {
+  return <Composition width={160} height={90} fps={30} durationInFrames={120}><Block /></Composition>;
+}
+"#
+        .replace("RENDERING_PATH", &serde_json::to_string(&rendering).unwrap());
+    std::fs::write(&entry, source).unwrap();
+    let output_dir = tempfile::tempdir().unwrap();
+    let output = output_dir.path().join("out.mp4");
+    let home = tempfile::tempdir().unwrap();
+    let plugin = TestCodecPlugin::new();
+    let mut child = crate::common::server()
+        .env(PLUGIN_PATH_ENV, plugin.folder())
+        .envs(isolated_home_env(home.path()))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take();
+    for request in [
+        json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-06-18", "capabilities": {},
+            "clientInfo": { "name": "test", "version": "0" } } }),
+        json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
+        json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+            "name": "export_video", "arguments": { "source": entry, "output": output } } }),
+    ] {
+        stdin
+            .as_mut()
+            .unwrap()
+            .write_all(format!("{request}\n").as_bytes())
+            .await
+            .unwrap();
+    }
+    tokio::time::timeout(Duration::from_secs(60), async {
+        while !rendering.exists() {
+            assert!(
+                child.try_wait().unwrap().is_none(),
+                "the MCP server exited before rendering"
+            );
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("the export started rendering the blocked frame");
+    assert!(
+        output_dir.path().read_dir().unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".celesta-")
+        }),
+        "the export did not stage the output"
+    );
+
+    if sigterm {
+        let status = Command::new("kill")
+            .args(["-TERM", &child.id().unwrap().to_string()])
+            .status()
+            .unwrap();
+        assert!(status.success());
+    } else {
+        drop(stdin.take());
+    }
+    let status = tokio::time::timeout(Duration::from_secs(30), child.wait())
+        .await
+        .expect("the MCP server shut down during the export")
+        .unwrap();
+    assert!(status.success(), "{status}");
+    let remaining: Vec<_> = output_dir
+        .path()
+        .read_dir()
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert!(
+        remaining.is_empty(),
+        "output files left after shutdown: {remaining:?}"
+    );
 }
 
 #[cfg(unix)]
