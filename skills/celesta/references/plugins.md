@@ -415,8 +415,8 @@ import { Vrm } from '@celesta-plugin/vrm';
   nodes, or a few thousand spring–collider checks) reaches less, warns
   when it opens, and fails past its reach, naming the time. Refused at
   open: clip key times, values, or `CUBICSPLINE` tangents past ±1e6
-  (naming the sampler), and a spring centre with no inverse at rest (a
-  zero scale).
+  (naming the sampler), and a moving spring's centre with no inverse
+  at rest (it or an ancestor has a 0 scale axis).
 - Not read: `VRMC_springBone_limit` (warned; those joints swing past their
   limits), a clip's `lookAt` animation, glTF animations after a clip's
   first. Springs ignore `lookAt` and expressions. No foot IK: as in

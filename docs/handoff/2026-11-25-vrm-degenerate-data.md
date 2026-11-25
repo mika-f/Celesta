@@ -11,7 +11,8 @@ for quaternion keys whose length is not finite.
   its ancestors, has a rest scale with a 0 component, or whose rest world
   matrix has a zero determinant or a non-finite inverse: `VRMC_springBone
   spring {s} center, node {n}, cannot be inverted at rest: it or an ancestor
-  scales an axis to 0`. The scales are checked directly because rounding in
+  scales an axis to 0` (or, with no zero scale, `its world matrix is too
+  small or too large to invert in f32`). The scales are checked directly because rounding in
   the composed matrix (a rotated parent flattening an axis under a rotated
   child) can leave a tiny non-zero determinant. A spring of one joint is
   never stepped, so its centre is not checked. Refusing

@@ -344,10 +344,17 @@ impl Springs {
                 let zero_scale = std::iter::successors(Some(center), |&node| tree.parents[node])
                     .any(|node| tree.rest[node].scale.cmpeq(Vec3::ZERO).any());
                 let world = rest_world[center];
-                if zero_scale || world.determinant() == 0.0 || !world.inverse().is_finite() {
+                let why = if zero_scale {
+                    "it or an ancestor scales an axis to 0"
+                } else if world.determinant() == 0.0 || !world.inverse().is_finite() {
+                    "its world matrix is too small or too large to invert in f32"
+                } else {
+                    ""
+                };
+                if !why.is_empty() {
                     return Err(LoadError::Invalid(format!(
                         "{VRMC_SPRING_BONE} spring {s} center, node {center}, cannot be \
-                         inverted at rest: it or an ancestor scales an axis to 0"
+                         inverted at rest: {why}"
                     )));
                 }
             }
@@ -1388,12 +1395,22 @@ mod tests {
     fn a_center_flattened_by_a_rotated_ancestor_is_refused() {
         let mut spring_bone = hair(json!({}), json!([]));
         spring_bone["springs"][0]["center"] = json!(node::SPINE);
-        let tilt = Quat::from_rotation_z(0.3).to_array();
-        let message = refusal_with(spring_bone, |root| {
+        let tilt = Quat::from_rotation_z(0.05).to_array();
+        let twist = Quat::from_euler(glam::EulerRot::XYZ, 0.25, 0.175, 0.075).to_array();
+        let edit = |root: &mut Value| {
             root["nodes"][node::HIPS]["rotation"] = json!(tilt);
             root["nodes"][node::HIPS]["scale"] = json!([1.0, 0.0, 1.0]);
-            root["nodes"][node::SPINE]["rotation"] = json!(Quat::from_rotation_x(0.7).to_array());
-        });
+            root["nodes"][node::SPINE]["rotation"] = json!(twist);
+        };
+        // The flattened world still rounds to a determinant and an inverse.
+        let document = Document::parse(&SyntheticVrm::avatar().glb_with(edit)).unwrap();
+        let tree = NodeTree::new(&document).unwrap();
+        let world = tree.world(&tree.rest_pose())[node::SPINE];
+        assert!(
+            world.determinant() != 0.0 && world.inverse().is_finite(),
+            "{world:?}"
+        );
+        let message = refusal_with(spring_bone, edit);
         assert!(
             message.contains(&format!(
                 "spring 0 center, node {}, cannot be inverted at rest",
