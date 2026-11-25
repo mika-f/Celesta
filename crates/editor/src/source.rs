@@ -263,6 +263,13 @@ impl WatchStamp {
     }
 }
 
+pub(crate) fn watch_stamp_changed(
+    previous: Option<&WatchStamp>,
+    latest: Option<&WatchStamp>,
+) -> bool {
+    latest != previous
+}
+
 pub(crate) fn watched_stamp(entry: &Path, property_args: &PropertyArgs) -> Option<WatchStamp> {
     let dir = entry.parent()?;
     let mut sources = Vec::new();
@@ -496,6 +503,22 @@ mod tests {
 
         assert!(before.is_some());
         assert_ne!(before, after);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn deleting_the_last_source_triggers_one_reload() {
+        let dir = scene_folder("watch-last-source");
+        let entry = dir.join("film.tsx");
+        let args = PropertyArgs::default();
+        std::fs::remove_dir_all(dir.join("scenes")).unwrap();
+        let before = watched_stamp(&entry, &args);
+        std::fs::remove_file(&entry).unwrap();
+        let after = watched_stamp(&entry, &args);
+        assert!(before.is_some());
+        assert!(after.is_none());
+        assert!(watch_stamp_changed(before.as_ref(), after.as_ref()));
+        assert!(!watch_stamp_changed(after.as_ref(), after.as_ref()));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

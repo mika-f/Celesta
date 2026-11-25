@@ -10,7 +10,7 @@ use crate::preview::{
 use crate::problems::{Source, error_chain};
 use crate::source::{
     DependencyDebounce, REACT_PREVIEW_SAMPLE_RATE, WatchStamp, changed_sources,
-    sample_dependencies, watched_stamp,
+    sample_dependencies, watch_stamp_changed, watched_stamp,
 };
 use crate::timecode::format_timecode;
 use crate::timeline_drag::{BandDrag, SceneDrag};
@@ -665,7 +665,9 @@ impl EditorView {
                 let changed = view
                     .update(cx, |this, _| match this.react_preview.as_ref() {
                         Some(_) if this.react_reloads.is_running() => false,
-                        Some(react) if latest.is_some() && latest != react.watched => {
+                        Some(react)
+                            if watch_stamp_changed(react.watched.as_ref(), latest.as_ref()) =>
+                        {
                             debounce.reset();
                             true
                         }
