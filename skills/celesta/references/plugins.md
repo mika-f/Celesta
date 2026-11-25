@@ -342,15 +342,17 @@ import { Vrm } from '@celesta-plugin/vrm';
   colour, with a note.
 - First-person-only meshes are hidden (UniVRM's third-person view); a node
   annotated twice keeps its first annotation, as UniVRM, and each later
-  one warns. Repeated warnings of one kind (primitives not drawn, textures
-  a material draws without, morph binds ignored, repeated firstPerson
-  annotations) list 20, then `and N more …`.
+  one warns. Unknown humanoid bone and expression preset names in avatars
+  are ignored with warnings; required humanoid bones must still be present.
+  Repeated warnings of one kind list 20, then `and N more …`.
 - Emission: `KHR_materials_emissive_strength`, else
   `VRMC_materials_hdr_emissiveMultiplier` (as UniVRM); a multiplier that is
   not a finite number refuses the model.
 - Files: over 1 GiB, or glTF JSON over 64 MiB, refused. `src` may be a
   `.gltf` with `data:` URI buffers, but those are JSON too, so the whole
   `.gltf` is capped at 64 MiB. Buffers or images in other files: refused.
+  Avatars and animation clips can declare supported VRM extensions in
+  `extensionsRequired`; unsupported required extensions still refuse the file.
 - Textures are written as image files to a cache: `celesta-plugin-vrm` in
   the user's cache folder, or `CELESTA_VRM_TEXTURE_CACHE`, which must be
   an absolute path to a real folder of the user's own, not writable by

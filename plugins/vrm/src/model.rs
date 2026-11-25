@@ -328,6 +328,7 @@ impl VrmModel {
 
         // The usage terms first, then what loading left out or changed.
         let mut notices = usage_notices(&document.vrm.meta);
+        notices.append(&mut document.notices);
         notices.extend(read.notices);
         let drawn: BTreeSet<usize> = draws.infos.iter().map(|info| info.material).collect();
         let pbr: Vec<&str> = read
@@ -1869,6 +1870,28 @@ mod tests {
                 notice.message.as_str()
             })
             .collect()
+    }
+
+    #[test]
+    fn unknown_humanoid_bones_and_presets_are_ignored_with_warnings() {
+        let model = edited(|root| {
+            let vrm = &mut root["extensions"]["VRMC_vrm"];
+            vrm["humanoid"]["humanBones"]["leftThumbIntermediate"] = json!({ "node": 5 });
+            vrm["expressions"]["preset"]["extraSmile"] = json!({});
+        });
+        for (field, name) in [
+            ("humanoid.humanBones", "leftThumbIntermediate"),
+            ("expressions.preset", "extraSmile"),
+        ] {
+            let warnings: Vec<_> = model
+                .notices()
+                .iter()
+                .filter(|notice| notice.message.contains(name))
+                .collect();
+            assert_eq!(warnings.len(), 1);
+            assert_eq!(warnings[0].level, NoticeLevel::Warning);
+            assert!(warnings[0].message.contains(field));
+        }
     }
 
     #[test]
