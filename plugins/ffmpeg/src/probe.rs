@@ -1,4 +1,5 @@
 use crate::color::video_color;
+use crate::ffi::av_error;
 use crate::ffmpeg_error;
 use crate::sequential::ffmpeg_path;
 use celesta_composition::{Rational, Time};
@@ -7,8 +8,8 @@ use ez_ffmpeg::AVRational;
 use ez_ffmpeg::error::{Error, OpenInputError};
 use ez_ffmpeg::stream_info::{StreamInfo, find_all_stream_infos};
 use ffmpeg_sys_next::{
-    AV_DISPOSITION_ATTACHED_PIC, avformat_close_input, avformat_find_stream_info,
-    avformat_open_input,
+    AV_DISPOSITION_ATTACHED_PIC, av_dict_free, av_dict_set, avformat_close_input,
+    avformat_find_stream_info, avformat_open_input,
 };
 use std::ffi::CString;
 use std::path::Path;
@@ -96,16 +97,23 @@ pub(crate) fn probe_path(path: &Path) -> Result<MediaProbe, MediaError> {
 fn container_details(url: &str) -> Result<(Option<Time>, Vec<i32>), MediaError> {
     let url = CString::new(url).map_err(|error| MediaError::Codec(error.to_string()))?;
     let mut context = std::ptr::null_mut();
-    // SAFETY: FFmpeg owns this context after a successful open. The streams
-    // are read only within its stream count, then the context is closed.
+    // SAFETY: The options dictionary is freed regardless of the open result.
+    // A successfully opened context is closed after reading its streams.
     unsafe {
-        if avformat_open_input(
+        let mut options = std::ptr::null_mut();
+        let result = av_dict_set(&mut options, c"scan_all_pmts".as_ptr(), c"1".as_ptr(), 0);
+        if result < 0 {
+            av_dict_free(&mut options);
+            return Err(av_error(result, "set media probe options"));
+        }
+        let result = avformat_open_input(
             &mut context,
             url.as_ptr(),
             std::ptr::null_mut(),
-            std::ptr::null_mut(),
-        ) < 0
-        {
+            &mut options,
+        );
+        av_dict_free(&mut options);
+        if result < 0 {
             return Err(MediaError::Codec(
                 "Couldn’t read media stream flags".to_owned(),
             ));
