@@ -11,7 +11,8 @@ The compatibility baseline is Ubuntu 22.04 (glibc 2.35).
 - Runtime discovery prefers `runtime/` beside the executable, as in the
   existing Windows and Linux container builds. For a Linux Cargo build, it
   checks the original build tree first (including builds with a shared Cargo
-  target directory), then looks for the source tree relative to `target/`.
+  target directory). Only when the original build tree is gone does it
+  look for the source tree relative to `target/`.
 - The archive contains `bin/{celesta,celesta-exporter,runtime/}` and the
   standard LGPL FFmpeg plugin under `lib/celesta/plugins/ffmpeg/`, the
   normal Linux executable-relative plugin location. It ships the plugin's

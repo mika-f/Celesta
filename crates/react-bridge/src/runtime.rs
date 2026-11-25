@@ -8,14 +8,11 @@ use std::path::{Path, PathBuf};
 pub fn runtime_paths() -> (PathBuf, PathBuf) {
     paths_for(
         std::env::current_exe().ok().as_deref(),
-        Path::new(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../packages/cli/dist/cli.js"
-        )),
+        Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")),
     )
 }
 
-fn paths_for(executable: Option<&Path>, build_runtime: &Path) -> (PathBuf, PathBuf) {
+fn paths_for(executable: Option<&Path>, build_workspace: &Path) -> (PathBuf, PathBuf) {
     if let Some(directory) = executable.and_then(Path::parent) {
         if directory.file_name().is_some_and(|name| name == "MacOS")
             && let Some(contents) = directory.parent()
@@ -40,7 +37,7 @@ fn paths_for(executable: Option<&Path>, build_runtime: &Path) -> (PathBuf, PathB
             );
         }
         if cfg!(target_os = "linux")
-            && !build_runtime.is_file()
+            && !build_workspace.is_dir()
             && let Some(workspace) = directory
                 .ancestors()
                 .find(|path| path.file_name().is_some_and(|name| name == "target"))
@@ -52,7 +49,10 @@ fn paths_for(executable: Option<&Path>, build_runtime: &Path) -> (PathBuf, PathB
             }
         }
     }
-    (PathBuf::from("node"), build_runtime.to_path_buf())
+    (
+        PathBuf::from("node"),
+        build_workspace.join("packages/cli/dist/cli.js"),
+    )
 }
 
 #[cfg(test)]
@@ -60,7 +60,7 @@ mod tests {
     use super::*;
 
     fn paths_for(executable: Option<&Path>) -> (PathBuf, PathBuf) {
-        super::paths_for(executable, Path::new("build/packages/cli/dist/cli.js"))
+        super::paths_for(executable, Path::new("build"))
     }
 
     #[test]
@@ -101,7 +101,7 @@ mod tests {
     fn a_moved_cargo_build_uses_its_own_workspace_unless_a_runtime_is_staged() {
         let root = tempfile::tempdir().unwrap();
         let cli = root.path().join("packages/cli/dist/cli.js");
-        let build_runtime = root.path().join("build-cli.js");
+        let build_workspace = root.path().join("missing");
         std::fs::create_dir_all(cli.parent().unwrap()).unwrap();
         std::fs::write(&cli, "").unwrap();
 
@@ -112,7 +112,7 @@ mod tests {
             let directory = root.path().join(subdirectory);
             let executable = directory.join("celesta");
             assert_eq!(
-                super::paths_for(Some(&executable), &build_runtime),
+                super::paths_for(Some(&executable), &build_workspace),
                 (PathBuf::from("node"), cli.clone())
             );
 
@@ -129,15 +129,18 @@ mod tests {
     #[test]
     fn a_shared_cargo_target_uses_the_runtime_from_the_checkout_that_built_it() {
         let root = tempfile::tempdir().unwrap();
-        let build_runtime = root.path().join("build-cli.js");
-        std::fs::write(&build_runtime, "").unwrap();
+        let build_workspace = root.path().join("build");
+        std::fs::create_dir(&build_workspace).unwrap();
         let other_runtime = root.path().join("other/packages/cli/dist/cli.js");
         std::fs::create_dir_all(other_runtime.parent().unwrap()).unwrap();
         std::fs::write(other_runtime, "").unwrap();
         let executable = root.path().join("other/target/release/celesta");
         assert_eq!(
-            super::paths_for(Some(&executable), &build_runtime),
-            (PathBuf::from("node"), build_runtime)
+            super::paths_for(Some(&executable), &build_workspace),
+            (
+                PathBuf::from("node"),
+                build_workspace.join("packages/cli/dist/cli.js")
+            )
         );
     }
 
