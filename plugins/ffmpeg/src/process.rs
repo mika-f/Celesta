@@ -11,8 +11,8 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::process::ExitCode;
 
-/// The flag that has a program refuse a build that links a GPL library it
-/// may not ship with (the standard program) or misses one (x264).
+/// The flag that checks whether the linked FFmpeg libraries report licenses
+/// allowed by the program's distribution profile.
 pub const CHECK_LICENSE_FLAG: &str = "--check-license";
 
 /// The flag that has a program open every encoder it describes.

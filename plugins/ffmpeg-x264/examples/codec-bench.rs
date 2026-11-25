@@ -13,6 +13,11 @@
 //!     <video.mp4> [frames]
 //! ```
 //!
+//! For the direct `cargo run` command, point `PKG_CONFIG_PATH` on Unix at the
+//! x264 build's `lib/pkgconfig` directory, or `VCPKG_ROOT` on Windows at the
+//! x264 vcpkg root. The benchmark needs libx264, which the standard build
+//! does not provide.
+//!
 //! The first two arguments are the standard and x264 programs. Each line gives the
 //! wall-clock time a frame took and, on Unix, the CPU time (user and
 //! system) it cost this process and the plugin's, which a busy machine

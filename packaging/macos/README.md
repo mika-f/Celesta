@@ -162,8 +162,9 @@ The bundle includes available Rust license notices and a dependency inventory. T
 and `LICENSE-APACHE`; FFmpeg license texts and source notices stay in the
 corresponding plugin's `licenses/` folder.
 
-Celesta's own executables link no FFmpeg. Only `ffmpeg` (standard LGPL) is
-staged under `Contents/Resources/PlugIns`, with its own `Frameworks/` and `licenses/`.
+Celesta's own executables link no FFmpeg. Of the FFmpeg plugins, only `ffmpeg`
+(standard LGPL) is staged under `Contents/Resources/PlugIns`, with its own
+`Frameworks/` and `licenses/`.
 The plugin's `Frameworks/` holds the FFmpeg dylibs built from source and the
 Homebrew libopus and libvpx (BSD licensed) they link; the app's
 `licenses/homebrew.json` and `licenses/native/` carry those formulas'
