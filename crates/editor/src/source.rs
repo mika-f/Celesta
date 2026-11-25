@@ -10,6 +10,7 @@ use celesta_react_bridge::{
 };
 use std::collections::{BTreeSet, HashMap};
 use std::ffi::OsStr;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -213,17 +214,14 @@ impl DependencyDebounce {
 }
 
 /// A sample of what the reload watcher watches: the path, mtime and size of
-/// every source file under the entry's folder (see [`source_files`]), the
-/// mtime of every folder walked (which changes when a file in it is added,
-/// removed or renamed), and the `--props-file`'s. Two samples differ when
+/// every source file under the entry's folder (see [`source_files`]) and
+/// the `--props-file`'s. Two samples differ when
 /// any of them changed, in either direction: a file restored with an older
 /// mtime (`cp -p`, `rsync -a`) counts, and so does a module deleted from a
-/// subfolder. `None` when the entry has no folder or its folder's metadata
-/// cannot be read; a subfolder that cannot be listed is left out of the
-/// sample.
+/// subfolder. `None` when no source files can be read.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct WatchStamp {
-    /// Every folder and source file walked, by path relative to the
+    /// Every source file walked, by path relative to the
     /// entry's folder (so an entry opened as `film.tsx` and later sampled
     /// as `/p/film.tsx` gives the same stamp), sorted by it.
     sources: Vec<WatchedSource>,
@@ -235,17 +233,18 @@ pub(crate) struct WatchStamp {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct WatchedSource {
     path: PathBuf,
-    folder: bool,
     modified: Option<SystemTime>,
     len: u64,
 }
 
 impl WatchStamp {
+    pub(crate) fn same_source_inputs(&self, newer: &Self) -> bool {
+        self == newer
+    }
+
     /// The source files, relative to the entry's folder, that differ
     /// between this sample and `newer`: changed, added or removed, sorted.
-    /// A path that is a folder in both samples is left out (its files are
-    /// listed), and so is the `--props-file`; a file replaced by a folder of
-    /// the same name, or the other way round, is listed.
+    /// The separate `--props-file` sample is left out.
     pub(crate) fn changed_files(&self, newer: &WatchStamp) -> Vec<PathBuf> {
         let by_path = |stamp: &WatchStamp| -> HashMap<PathBuf, WatchedSource> {
             stamp
@@ -258,23 +257,28 @@ impl WatchStamp {
         let paths: BTreeSet<&PathBuf> = older.keys().chain(newer.keys()).collect();
         paths
             .into_iter()
-            .filter(|path| {
-                let (old, new) = (older.get(*path), newer.get(*path));
-                let file = |source: Option<&WatchedSource>| source.is_some_and(|s| !s.folder);
-                old != new && (file(old) || file(new))
-            })
+            .filter(|path| older.get(*path) != newer.get(*path))
             .cloned()
             .collect()
     }
+}
+
+pub(crate) fn watch_stamp_changed(
+    previous: Option<&WatchStamp>,
+    latest: Option<&WatchStamp>,
+) -> bool {
+    latest != previous
 }
 
 pub(crate) fn watched_stamp(entry: &Path, property_args: &PropertyArgs) -> Option<WatchStamp> {
     let dir = entry.parent()?;
     let mut sources = Vec::new();
     walk_sources(dir, &mut |path, metadata| {
+        if metadata.is_dir() {
+            return;
+        }
         sources.push(WatchedSource {
             path: path.strip_prefix(dir).unwrap_or(path).to_owned(),
-            folder: metadata.is_dir(),
             modified: metadata.modified().ok(),
             len: metadata.len(),
         });
@@ -326,7 +330,12 @@ pub(crate) fn source_files(dir: &Path) -> Vec<PathBuf> {
 /// source file under it (see [`source_files`]), with their metadata (not
 /// followed through a symlink). An unreadable entry is skipped.
 fn walk_sources(dir: &Path, visit: &mut dyn FnMut(&Path, &std::fs::Metadata)) {
-    fn walk(dir: &Path, visit: &mut dyn FnMut(&Path, &std::fs::Metadata), depth: u32) {
+    fn walk(
+        dir: &Path,
+        assets: &Path,
+        visit: &mut dyn FnMut(&Path, &std::fs::Metadata),
+        depth: u32,
+    ) {
         if depth > 8 {
             return;
         }
@@ -344,7 +353,7 @@ fn walk_sources(dir: &Path, visit: &mut dyn FnMut(&Path, &std::fs::Metadata)) {
                     Some("node_modules" | "dist" | ".tmp" | ".git")
                 ) {
                     visit(&path, &metadata);
-                    walk(&path, visit, depth + 1);
+                    walk(&path, assets, visit, depth + 1);
                 }
             } else if matches!(
                 path.extension().and_then(OsStr::to_str),
@@ -363,7 +372,8 @@ fn walk_sources(dir: &Path, visit: &mut dyn FnMut(&Path, &std::fs::Metadata)) {
                         | "srt"
                         | "vtt"
                 )
-            ) {
+            ) && !(path.starts_with(assets) && is_transport_stream_asset(&path))
+            {
                 visit(&path, &metadata);
             }
         }
@@ -372,7 +382,21 @@ fn walk_sources(dir: &Path, visit: &mut dyn FnMut(&Path, &std::fs::Metadata)) {
         return;
     };
     visit(dir, &metadata);
-    walk(dir, visit, 0);
+    walk(dir, &dir.join("assets"), visit, 0);
+}
+
+fn is_transport_stream_asset(path: &Path) -> bool {
+    if !matches!(path.extension().and_then(OsStr::to_str), Some("ts" | "mts")) {
+        return false;
+    }
+    // MPEG-TS uses 188-byte packets; Blu-ray adds a four-byte prefix.
+    let mut header = [0; 389];
+    std::fs::File::open(path)
+        .and_then(|mut file| file.read_exact(&mut header))
+        .is_ok()
+        && [[0, 188, 376], [4, 196, 388]]
+            .into_iter()
+            .any(|sync_bytes| sync_bytes.into_iter().all(|at| header[at] == 0x47))
 }
 
 #[cfg(test)]
@@ -483,6 +507,22 @@ mod tests {
     }
 
     #[test]
+    fn deleting_the_last_source_triggers_one_reload() {
+        let dir = scene_folder("watch-last-source");
+        let entry = dir.join("film.tsx");
+        let args = PropertyArgs::default();
+        std::fs::remove_dir_all(dir.join("scenes")).unwrap();
+        let before = watched_stamp(&entry, &args);
+        std::fs::remove_file(&entry).unwrap();
+        let after = watched_stamp(&entry, &args);
+        assert!(before.is_some());
+        assert!(after.is_none());
+        assert!(watch_stamp_changed(before.as_ref(), after.as_ref()));
+        assert!(!watch_stamp_changed(after.as_ref(), after.as_ref()));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn the_watcher_notices_a_file_restored_with_an_older_mtime() {
         let dir = scene_folder("watch-restore");
         let entry = dir.join("film.tsx");
@@ -514,6 +554,51 @@ mod tests {
         assert_eq!(watched_stamp(&spelled, &args), watched_stamp(&entry, &args));
         assert_eq!(watched_stamp(&dir.join("missing/film.tsx"), &args), None);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn staging_media_does_not_change_the_watcher_sample() {
+        let dir = scene_folder("watch-staged-media");
+        let entry = dir.join("film.tsx");
+        let args = PropertyArgs::default();
+        let before = watched_stamp(&entry, &args);
+
+        let outside = scene_folder("watch-media-source");
+        let video = outside.join("large.mp4");
+        std::fs::write(&video, b"video").unwrap();
+        let staged = celesta_react_bridge::stage_import(&dir, &dir, &video).unwrap();
+        assert_eq!(before, watched_stamp(&entry, &args));
+
+        drop(staged);
+        std::fs::remove_dir_all(&outside).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn transport_stream_assets_are_not_typescript_sources() {
+        let dir = scene_folder("watch-transport-stream");
+        let entry = dir.join("film.tsx");
+        let args = PropertyArgs::default();
+        let before = watched_stamp(&entry, &args);
+        let outside = scene_folder("watch-transport-source");
+        for (name, offset, size) in [("video.ts", 0, 188), ("video.mts", 4, 192)] {
+            let video = outside.join(name);
+            let mut packets = vec![0xff; size * 3];
+            for packet in packets.chunks_exact_mut(size) {
+                packet[offset] = 0x47;
+            }
+            std::fs::write(&video, packets).unwrap();
+            celesta_react_bridge::import_path(&dir, &dir, &video).unwrap();
+        }
+        let after_media = watched_stamp(&entry, &args);
+        let module = dir.join("assets/labels.ts");
+        std::fs::write(&module, "export const title = 'Scene';").unwrap();
+        let after_source = watched_stamp(&entry, &args);
+        std::fs::remove_dir_all(&outside).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        assert_eq!(before, after_media);
+        assert_ne!(after_media, after_source);
     }
 
     #[test]

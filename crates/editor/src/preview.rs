@@ -1,3 +1,4 @@
+use crate::add_element::{DropLookup, DropRequest, read_drop_lookup};
 use crate::helpers::prepare_preview_frame;
 use crate::layer_select::LookupResult;
 use crate::problems::error_chain;
@@ -55,6 +56,7 @@ pub(crate) struct PreviewRequest {
     /// The selected layer whose JSX source to look up in this frame
     /// (`WholeScene` only); `None` sends no lookup, as during playback.
     pub(crate) source_of: Option<String>,
+    pub(crate) drop_source_of: Option<DropRequest>,
     /// Values the React entry evaluates the props written at their positions
     /// with in this frame, while a layer is dragged (`WholeScene` only).
     pub(crate) prop_overrides: Vec<PropOverride>,
@@ -348,6 +350,7 @@ pub(crate) struct PreviewResult {
     /// when the frame has no layer with that id. `None` when nothing was
     /// looked up.
     pub(crate) layer_source: Option<(String, LookupResult)>,
+    pub(crate) drop_lookup: Option<DropLookup>,
     /// The request's `frame_of` and what measuring it returned: `None` inside
     /// when the layer is absent or has no affine frame (see `layer_frame`).
     /// `None` when nothing was measured.
@@ -377,9 +380,7 @@ pub(crate) struct ReactPreviewContext {
     /// Project property values; changed values respawn the bridge.
     pub(crate) properties: PropertyInputs,
     /// Whether the runtime records where each JSX element was written, so
-    /// layers can be picked and their source looked up (the React preview's
-    /// interactive mode). Switching respawns the bridge: the plain preview
-    /// pays nothing for it.
+    /// standalone React previews can locate source for selection and file drops.
     pub(crate) source_locations: bool,
     pub(crate) composition_id: Option<String>,
     /// The editor's plugins, as the runtime takes them.
@@ -660,7 +661,21 @@ pub(crate) fn spawn_preview(mut renderer: GpuRenderer) -> anyhow::Result<Preview
             let source = look_up_layer_source(&mut react_bridge, time, &id);
             (id, source)
         });
-        let hit_regions = renderer.take_hit_regions();
+        let mut hit_regions = renderer.take_hit_regions();
+        if frame.is_err() {
+            hit_regions.clear();
+        }
+        let drop_lookup =
+            request
+                .drop_source_of
+                .zip(request.react.as_ref())
+                .map(|(request, react)| {
+                    let time = drawn.as_ref().map_or(time, |scene| scene.time);
+                    let source = look_up_layer_source(&mut react_bridge, time, request.layer());
+                    read_drop_lookup(request, &react.entry, source, |id| {
+                        children_space(drawn.as_ref().copied().map_err(|_| ()), id)
+                    })
+                });
         let layer_frame = request.frame_of.filter(|_| whole_scene).map(|id| {
             let measured = drawn
                 .as_ref()
@@ -685,6 +700,7 @@ pub(crate) fn spawn_preview(mut renderer: GpuRenderer) -> anyhow::Result<Preview
             scene_errors,
             hit_regions,
             layer_source,
+            drop_lookup,
             layer_frame,
             parent_space: children_space,
             added,

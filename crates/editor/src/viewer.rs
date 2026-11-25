@@ -322,10 +322,11 @@ impl EditorView {
         };
         // Why the last addition was not written comes first: it answers the
         // release just made, and the next press clears it.
-        let notice = self
-            .add
-            .notice
-            .clone()
+        let drop_feedback = self.media_drop_feedback(window, cx.has_active_drag());
+        let notice = drop_feedback
+            .as_ref()
+            .map(|(_, message)| message.clone())
+            .or_else(|| self.add.notice.clone())
             .or_else(|| match drag_state {
                 DragState::NoFrame => Some(NO_AFFINE_FRAME.to_owned()),
                 _ => None,
@@ -408,6 +409,14 @@ impl EditorView {
             .justify_center()
             .overflow_hidden()
             .bg(cx.theme().background)
+            .on_drop(cx.listener(Self::drop_external_media))
+            .when_some(drop_feedback.as_ref(), |area, (accepted, _)| {
+                area.cursor(if *accepted {
+                    CursorStyle::DragCopy
+                } else {
+                    CursorStyle::OperationNotAllowed
+                })
+            })
             .when_some(
                 self.preview.current().cloned(),
                 |area, preview| match preview {
@@ -1433,9 +1442,8 @@ impl EditorView {
 
     /// Switches the React preview between its plain mode and the
     /// interactive mode that picks layers. The bridge respawns with or
-    /// without source positions; entering interactive mode sweeps the
-    /// composition for scenes, and leaving it drops the selection and the
-    /// sweep's index.
+    /// without source positions; the first selection sweeps the
+    /// composition for scenes, and leaving drops the selection.
     ///
     /// Leaving is a click on nothing first: the rows' typed text is
     /// submitted, and when their commits are held the mode stays until they
@@ -1455,7 +1463,6 @@ impl EditorView {
             InteractiveToggle::Enter => {
                 self.interactive = true;
                 self.refresh_preview();
-                self.refresh_occurrences(false);
             }
             InteractiveToggle::Leave => {
                 self.leave_interactive();
@@ -1471,7 +1478,7 @@ impl EditorView {
     }
 
     /// Leaves the interactive mode, its selection already cleared. The
-    /// frame and the sweep without it are asked for once, not here: a
+    /// frame without it is asked for once, not here: a
     /// reload handler that clears the selection asks for both right after,
     /// and `settle_interactive_mode` does otherwise.
     fn leave_interactive(&mut self) {
@@ -1482,12 +1489,12 @@ impl EditorView {
         self.interactive_refresh_due = true;
     }
 
-    /// Asks for the frame and the sweep a leave of the interactive mode
-    /// left due, unless a reload runs: its answer asks for both.
+    /// Asks for the frame a leave of the interactive mode left due,
+    /// unless a reload runs: its answer asks for it.
     pub(crate) fn settle_interactive_mode(&mut self) {
         if self.interactive_refresh_due && !self.react_reloads.is_running() {
+            self.interactive_refresh_due = false;
             self.refresh_preview();
-            self.refresh_occurrences(false);
         }
     }
 
@@ -1641,6 +1648,7 @@ impl EditorView {
         self.pending_instance = pending;
         self.add_restore_confirm(confirm);
         if self.selected_layer.is_some() {
+            self.ensure_occurrences();
             self.source_lookup = Some(SourceLookup::Pending);
             self.refresh_preview();
         } else {

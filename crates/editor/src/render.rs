@@ -34,6 +34,7 @@ impl Render for EditorView {
         self.sync_add_facts(cx);
         self.ask_add_space();
         self.settle_add_release(cx);
+        self.settle_external_media(window, cx.has_active_drag());
         self.settle_inline_text(window, cx);
         self.sync_element_rows(window, cx);
         self.update_playback(window);
@@ -153,6 +154,7 @@ impl EditorView {
                     cx.notify();
                 }
             }))
+            .on_drag_move(cx.listener(Self::move_external_media))
             .on_mouse_move(cx.listener(Self::drag_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::drag_end))
             .on_mouse_up(MouseButton::Middle, cx.listener(Self::middle_drag_end))

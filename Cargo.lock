@@ -1098,6 +1098,7 @@ dependencies = [
  "celesta-registry-client",
  "celesta-registry-format",
  "celesta-remote",
+ "celesta-renderer",
  "celesta-source-edit",
  "chrono",
  "clap",

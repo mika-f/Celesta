@@ -34,6 +34,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
+#[path = "external_media.rs"]
+mod external_media;
+pub(crate) use external_media::{DropLookup, DropRequest, read_drop_lookup};
+
 /// The Add menu's kinds, in menu order.
 const KINDS: [NewKind; 6] = [
     NewKind::Rect,
@@ -1045,6 +1049,7 @@ pub(crate) struct ChosenParent {
 /// What the view keeps for adding elements.
 #[derive(Debug, Default)]
 pub(crate) struct AddState {
+    external: external_media::ExternalMedia,
     pub(crate) mode: AddMode,
     /// The parent shown when the drawn kind was chosen.
     pub(crate) chosen: Option<ChosenParent>,
@@ -1529,7 +1534,7 @@ impl EditorView {
     /// Escape: ends the add mode. True when it was on.
     pub(crate) fn escape_add(&mut self) -> bool {
         if self.add.mode == AddMode::Off {
-            return false;
+            return self.cancel_external_media();
         }
         self.step_add(AddEvent::Escape);
         true
@@ -1625,6 +1630,18 @@ impl EditorView {
                 return;
             }
         };
+        self.write_child(parent, tag, timing, new, None, cx);
+    }
+
+    fn write_child(
+        &mut self,
+        parent: AddParent,
+        tag: String,
+        timing: Option<Timing>,
+        new: Addition,
+        expected_source: Option<external_media::ExpectedSource>,
+        cx: &mut Context<Self>,
+    ) {
         let file = parent.entry.file.clone();
         let at = SourcePos::from(&parent.entry);
         let under = AddedUnder {
@@ -1637,6 +1654,11 @@ impl EditorView {
         self.record_own_writes(
             vec![file.clone()],
             move |texts| {
+                if let Some(expected) = expected_source
+                    && !expected.matches(texts.get(&file))
+                {
+                    return Err(SOURCE_CHANGED.to_owned());
+                }
                 let (files, position) = add_files(texts, &file, &at, &tag, &new, timing.as_ref())?;
                 *written.lock().unwrap_or_else(PoisonError::into_inner) = Some(position);
                 Ok(files)
@@ -1648,7 +1670,9 @@ impl EditorView {
                     .take();
                 match (result, position) {
                     // Not over a selection made while the file was written.
-                    (Ok(()), Some(position)) if this.selected_layer == selected => {
+                    (Ok(()), Some(position))
+                        if this.picks_layers() && this.selected_layer == selected =>
+                    {
                         let pending = PendingSelect {
                             position,
                             under,

@@ -7,11 +7,21 @@ description: Write, edit, check, and export Celesta videos. Covers React composi
 
 Celesta is a code-first video tool. A video is source code: a React
 composition (`.tsx`) built from Celesta's React packages, a
-`.celesta.json` project timeline, or both combined. The Celesta app only
-**previews** and exports; it never edits your source (its Properties panel
-only writes the props file, and copies files the user chooses from outside the
-project into `assets/`). You edit the source; the user watches the result
+`.celesta.json` project timeline, or both combined. The Celesta app
+previews and exports, and its React canvas tools can write supported JSX
+edits. You can also edit the source directly; the user watches the result
 in the app.
+
+In a paused standalone React preview, a user can drop one image (including
+SVG or animated images) or supported video from their file manager, with
+**Select layers** on or off and without selecting a layer. The preview
+shows the destination or why the drop is blocked. The topmost drawn layer
+at that position must lead to a writable `<Group>`; empty areas or groups
+are not targets, and the selection is not a fallback. The addition follows
+**Add**'s group-local placement, playhead timing, and shared-source rules.
+Outside files are copied to entry-relative `assets/`; Undo reverts the
+JSX and import, not the copy. Audio, multiple files, and JSON projects
+aren't drop targets.
 
 ## Pick the format
 
