@@ -7,9 +7,14 @@ for quaternion keys whose length is not finite.
 ## Specification
 
 - **Spring centre without an inverse.** `Springs::read` refuses a spring
-  whose `center` node's rest world matrix has a zero determinant or a
-  non-finite inverse: `VRMC_springBone spring {s} center, node {n}, cannot be
-  inverted at rest: its world matrix is singular (a zero scale?)`. Refusing
+  that moves (at least one head–tail pair) whose `center` node, or one of
+  its ancestors, has a rest scale with a 0 component, or whose rest world
+  matrix has a zero determinant or a non-finite inverse: `VRMC_springBone
+  spring {s} center, node {n}, cannot be inverted at rest: it or an ancestor
+  scales an axis to 0`. The scales are checked directly because rounding in
+  the composed matrix (a rotated parent flattening an axis under a rotated
+  child) can leave a tiny non-zero determinant. A spring of one joint is
+  never stepped, so its centre is not checked. Refusing
   was chosen over treating the spring as centreless: the file is malformed,
   and a silent fallback would swing the joints differently from UniVRM's
   reading of the same file. Nothing animates a node's scale, so the rest
@@ -42,7 +47,9 @@ for quaternion keys whose length is not finite.
 ## Checks
 
 - `cargo test -p celesta-plugin-vrm` in `plugins/`: all pass, including
-  `springs::tests::a_center_that_cannot_be_inverted_is_refused` and
+  `springs::tests::a_center_that_cannot_be_inverted_is_refused`,
+  `a_center_flattened_by_a_rotated_ancestor_is_refused`,
+  `a_center_of_a_spring_that_never_moves_is_not_read`, and
   `vrma::tests::keys_past_the_bound_are_refused` (values, translations,
   rotations, key times, `CUBICSPLINE` tangents, and keys at the bound that
   still load).
