@@ -95,11 +95,6 @@ pub(crate) fn check_tracks(
                 "tracks name {name:?}, which is not a humanoid bone"
             )));
         };
-        if look_at.turns_bone(bone) {
-            return Err(FrameError(format!(
-                "tracks.{name}: the avatar's lookAt turns this bone"
-            )));
-        }
         for (axis, animation) in track.axes() {
             let Some(animation) = animation else {
                 continue;
@@ -110,6 +105,11 @@ pub(crate) fn check_tracks(
                 )));
             }
             check_keyframes(&format!("tracks.{name}.{axis}"), animation)?;
+            if look_at.turns_bone(bone) {
+                return Err(FrameError(format!(
+                    "tracks.{name}: the avatar's lookAt turns this bone"
+                )));
+            }
         }
     }
     Ok(())
@@ -423,6 +423,16 @@ mod tests {
                 format!("tracks.{name}: the avatar's lookAt turns this bone")
             );
         }
+    }
+
+    #[test]
+    fn axisless_eye_tracks_are_accepted_with_bone_look_at() {
+        let (mut model, _files) = open();
+        let empty = data(json!({ "tracks": { "leftEye": {}, "rightEye": {} } }));
+        model.frame(0.0, &empty).unwrap();
+
+        let message = refusal(&model, json!({ "leftEye": { "yaw": keys(&[]) } }));
+        assert_eq!(message, "tracks.leftEye.yaw has no keyframes");
     }
 
     #[test]
