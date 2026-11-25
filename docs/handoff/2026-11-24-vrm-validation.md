@@ -6,9 +6,11 @@ extension as required. Unknown avatar bone and expression preset names
 are skipped, as in UniVRM, without relaxing validation of known fields
 or required bones.
 
-- `document::validated_gltf` removes only implemented VRM extensions from
-  `extensionsRequired` before glTF validation. Both avatar and animation
-  parsing use it. The extension data and `extensionsUsed` are left intact.
+- `document::validated_gltf` removes only VRM extensions implemented by
+  the current loader from `extensionsRequired` before glTF validation.
+  The avatar and animation parsers share the allowlist, but only the
+  avatar loader handles avatar extensions such as node constraints.
+  The extension data and `extensionsUsed` are left intact.
 - `Document::parse` filters the two avatar maps before deserializing the
   VRM schema. `VrmModel` returns the warnings after the usage terms, with
   the usual cap per warning kind.
@@ -16,7 +18,8 @@ or required bones.
 ## Checks
 
 The synthetic avatar and animation tests cover supported required VRM
-extensions and the refusal of required Draco. The model test checks
+extensions and the refusal of required Draco or avatar constraints in a
+clip. The model test checks
 that each unknown key is named in a warning and the avatar still opens.
 
 ```sh

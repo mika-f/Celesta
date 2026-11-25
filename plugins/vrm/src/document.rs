@@ -14,16 +14,24 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 use vrm_spec::vrmc_materials_mtoon_1_0::{VRMC_MATERIALS_MTOON, VrmcMaterialsMtoonSchema};
-use vrm_spec::vrmc_vrm_1_0::{HumanBoneName, VRMCVrmSchema};
+use vrm_spec::vrmc_spring_bone_1_0::VRMC_SPRING_BONE;
+use vrm_spec::vrmc_vrm_1_0::{HumanBoneName, VRMC_VRM, VRMCVrmSchema};
+use vrm_spec::vrmc_vrm_animation_1_0::VRMC_VRM_ANIMATION;
 
-const SUPPORTED_VRMC_EXTENSIONS: &[&str] = &[
-    "VRMC_vrm",
-    VRMC_MATERIALS_MTOON,
-    "VRMC_springBone",
-    "VRMC_springBone_extended_collider",
-    "VRMC_node_constraint",
-    "VRMC_materials_hdr_emissiveMultiplier",
-    "VRMC_vrm_animation",
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum VrmAsset {
+    Avatar,
+    Animation,
+}
+
+const SUPPORTED_VRMC_EXTENSIONS: &[(VrmAsset, &str)] = &[
+    (VrmAsset::Avatar, VRMC_VRM),
+    (VrmAsset::Avatar, VRMC_MATERIALS_MTOON),
+    (VrmAsset::Avatar, VRMC_SPRING_BONE),
+    (VrmAsset::Avatar, "VRMC_springBone_extended_collider"),
+    (VrmAsset::Avatar, "VRMC_node_constraint"),
+    (VrmAsset::Avatar, "VRMC_materials_hdr_emissiveMultiplier"),
+    (VrmAsset::Animation, VRMC_VRM_ANIMATION),
 ];
 
 /// Why a file did not open.
@@ -150,7 +158,7 @@ impl Document {
         let vrm = VRMCVrmSchema::deserialize(vrm)
             .map_err(|error| LoadError::Invalid(format!("VRMC_vrm is malformed: {error}")))?;
 
-        let gltf = validated_gltf(&json)?;
+        let gltf = validated_gltf(&json, VrmAsset::Avatar)?;
         check_humanoid(&vrm, gltf.nodes().len())?;
         let buffers = embedded_buffers(&gltf, blob, ".vrm")?;
 
@@ -219,10 +227,13 @@ fn ignore_unknown_keys(vrm: &mut Value, notices: &mut Vec<Notice>) {
     }
 }
 
-pub(crate) fn validated_gltf(json: &[u8]) -> Result<gltf::Document, LoadError> {
+pub(crate) fn validated_gltf(json: &[u8], asset: VrmAsset) -> Result<gltf::Document, LoadError> {
     let mut root = gltf::json::Root::from_slice(json).map_err(gltf::Error::Deserialize)?;
-    root.extensions_required
-        .retain(|name| !SUPPORTED_VRMC_EXTENSIONS.contains(&name.as_str()));
+    root.extensions_required.retain(|name| {
+        !SUPPORTED_VRMC_EXTENSIONS
+            .iter()
+            .any(|&(supported_asset, extension)| supported_asset == asset && extension == name)
+    });
     Ok(gltf::Document::from_json(root)?)
 }
 
