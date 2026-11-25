@@ -141,6 +141,7 @@ mod tests {
             super::paths_for(Some(&executable), &build_workspace),
             (PathBuf::from("node"), build_runtime.clone())
         );
+        std::fs::remove_file(build_workspace.join("Cargo.toml")).unwrap();
         std::fs::create_dir_all(build_runtime.parent().unwrap()).unwrap();
         std::fs::write(&build_runtime, "").unwrap();
         assert_eq!(
