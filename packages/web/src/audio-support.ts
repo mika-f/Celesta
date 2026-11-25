@@ -48,6 +48,18 @@ export function applyEvents(param: Pick<AudioParam, 'setValueAtTime' | 'linearRa
   }
 }
 
+function timeToAdvance(rate: AnimatedNumber, distance: number, span: number): number {
+  if (typeof rate === 'number') return rate > 0 ? Math.min(distance / rate, span) : span;
+  if (integrateAnimated(rate, span) < distance) return span;
+  let low = 0, high = span;
+  for (let step = 0; step < 64; step++) {
+    const middle = (low + high) / 2;
+    if (integrateAnimated(rate, middle) < distance) low = middle;
+    else high = middle;
+  }
+  return high;
+}
+
 /**
  * Timeline seconds at which `clip` stops sounding: the end of its range, or
  * earlier, unless it loops, where its source position reaches the end of its
@@ -58,21 +70,7 @@ export function audibleEnd(clip: AudioClip, sourceSeconds: number): number {
   if (clip.loop === true) return end;
   const remaining = sourceSeconds - clip.sourceStart;
   if (remaining <= 0) return clip.start;
-  const rate = clip.playbackRate;
-  let local: number;
-  if (typeof rate === 'number') {
-    if (!(rate > 0)) return end;
-    local = remaining / rate;
-  } else {
-    if (integrateAnimated(rate, clip.duration) < remaining) return end;
-    let low = 0, high = clip.duration;
-    for (let step = 0; step < 64; step++) {
-      const middle = (low + high) / 2;
-      if (integrateAnimated(rate, middle) < remaining) low = middle;
-      else high = middle;
-    }
-    local = high;
-  }
+  const local = timeToAdvance(clip.playbackRate, remaining, clip.duration);
   return Math.min(clip.start + local, end);
 }
 
@@ -125,18 +123,33 @@ export function scheduleClip(
   duck?: AnimatedNumber,
 ): void {
   assertBrowserMixable(clip);
-  const begin = Math.max(0, clip.start);
+  let begin = Math.max(0, clip.start);
   const end = clip.start + clip.duration;
-  if (clip.start >= total || end <= begin) return;
+  const stop = Math.min(end, total);
+  if (stop <= begin) return;
   const rate = automationEvents(clip.playbackRate, clip.start, end);
   // Web Audio would play a negative rate backwards; the native mixer plays silence.
   if (rate.some((event) => !(event.value > 0))) throw new Error(RATE_MESSAGE);
+  const loop = clip.loop === true;
+  let offset = clip.sourceStart;
+  if (loop) {
+    offset = ((offset % buffer.duration) + buffer.duration) % buffer.duration;
+  } else if (offset < 0) {
+    // The native mixer is silent before the file begins; keep automation on
+    // the original clock while delaying playback until the source reaches 0.
+    const entry = clip.start + timeToAdvance(clip.playbackRate, -offset, stop - clip.start);
+    if (entry >= stop) return;
+    if (entry < begin) offset = Math.max(0, offset + integrateAnimated(clip.playbackRate, begin - clip.start));
+    else {
+      begin = entry;
+      offset = 0;
+    }
+  }
   const source = context.createBufferSource();
   source.buffer = buffer;
   applyEvents(source.playbackRate, rate);
   // Looping starts the source over from its beginning past its end.
-  source.loop = clip.loop === true;
-  const offset = source.loop ? ((clip.sourceStart % buffer.duration) + buffer.duration) % buffer.duration : clip.sourceStart;
+  source.loop = loop;
   const gain = context.createGain();
   applyEvents(gain.gain, automationEvents(clip.volume, clip.start, end, { min: 0, max: 16 }));
   let output: AudioNode = source.connect(gain);
@@ -150,7 +163,7 @@ export function scheduleClip(
   // Stopping on the timeline holds for any rate, where start()'s duration
   // argument is in source seconds and only right for a constant rate.
   source.start(begin, offset);
-  source.stop(Math.min(end, total));
+  source.stop(stop);
 }
 
 /**

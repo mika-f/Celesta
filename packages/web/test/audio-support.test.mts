@@ -132,6 +132,18 @@ test('scheduleClip schedules the rate and volume curves', () => {
   assert.deepEqual(context.sources[0].events, recorded(automationEvents(clip.playbackRate, 2, 6)));
   assert.deepEqual(context.gains[0].events, recorded(automationEvents(clip.volume, 2, 6, { min: 0, max: 16 })));
 });
+test('a negative source start is silent until the original rate curve reaches the start of the file', () => {
+  const clip: AudioClip = { ...base, start: 2, duration: 3, sourceStart: -1.5, playbackRate: keys([0, 1], [2, 3]) };
+  const context = recording();
+  scheduleClip(context, clip, buffer, 10);
+  assert.deepEqual(context.sources[0].calls, [['start', 3, 0], ['stop', 5]]);
+  assert.deepEqual(context.sources[0].events, [['set', 1, 2], ['ramp', 3, 4]]);
+});
+test('a clip that remains before the source for the entire mix is not scheduled', () => {
+  const context = recording();
+  scheduleClip(context, { ...base, start: 2, duration: 3, sourceStart: -2 }, buffer, 4);
+  assert.equal(context.sources.length, 0);
+});
 test('a rate that overshoots below 0 is rejected', () => {
   const clip: AudioClip = { ...base, duration: 2, playbackRate: keys([0, 1], [1, 0.05, 'ease-out-back']) };
   assert.throws(() => scheduleClip(recording(), clip, buffer, 10), /playback rate must be positive/);
