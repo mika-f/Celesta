@@ -11,8 +11,8 @@
 //! - **What a step sees:** the pose at `k / 60` from the motions and tracks,
 //!   and the constraints on it, never the step before's turned pose. The
 //!   lookAt and expressions are a frame's own values, which earlier steps
-//!   cannot be given; in a VRM 1.0 avatar they turn no bone but the eyes,
-//!   so a spring hanging from an eye bone swings as if the eye rested.
+//!   cannot be given. If lookAt turns the eye bones, tracks on them are
+//!   refused, so a spring hanging from an eye bone ignores its gaze.
 //! - **Kept states** only save work; no frame depends on them. A
 //!   performance (a model's motions and tracks, everything the steps read:
 //!   the springs' settings are the model's) keeps a **cursor**, the state
@@ -395,7 +395,7 @@ impl Stepper {
             )));
         }
         // Checked once here, so the steps only read them.
-        check_tracks(&data.tracks)?;
+        check_tracks(&data.tracks, model.look_at())?;
         let id = (self.model, performance_key(data)?);
         let springs = model.springs();
         let tree = model.tree();
@@ -814,6 +814,20 @@ mod tests {
             model.stepper().state_at(model, 2.0, data).unwrap()
         };
         assert_eq!(state(&fresh_plain, &a()), state(&fresh_looking, &gazing));
+    }
+
+    #[test]
+    fn spring_requests_refuse_eye_tracks_when_look_at_turns_the_eyes() {
+        let (model, _files) = open();
+        let mut turn = b();
+        let track = turn.tracks.remove("head").unwrap();
+        turn.tracks.insert("leftEye".into(), track);
+        let error = model.stepper().state_at(&model, 2.0, &turn).unwrap_err();
+        assert_eq!(
+            error.0,
+            "tracks.leftEye: the avatar's lookAt turns this bone"
+        );
+        assert_eq!(model.stepper().performances(), 0);
     }
 
     #[test]
