@@ -7,7 +7,7 @@ use crate::stylesheet_fonts::{ActiveStylesheets, StylesheetFace};
 use crate::text::{FontFallback, MissingGlyphs};
 use celesta_composition::{FontFamily, FontFeatures, ResolvedAsset, TextStyle};
 use celesta_remote::FontFaceSource;
-use cosmic_text::skrifa::{FontRef, MetadataProvider, string::StringId};
+use cosmic_text::skrifa::{FontRef, MetadataProvider, Tag, string::StringId};
 use cosmic_text::{Family, FontSystem, SwashCache, Weight, fontdb};
 use std::collections::{HashMap, HashSet};
 #[cfg(target_os = "windows")]
@@ -510,17 +510,17 @@ impl TextRasterizer {
         names.get(&name.to_lowercase()).copied()
     }
 
-    /// The weight of the face that CSS font matching (CSS Fonts §5.2) picks
-    /// from `family` for `requested`: `requested` itself when the family has
-    /// a face of that weight, otherwise the nearest one it has. `None` when
-    /// no face of `family` is loaded or installed. For a stylesheet family,
-    /// the weight its descriptors match, which a `font-weight` range can
-    /// make the request itself.
+    /// The weight to draw in the face CSS font matching (CSS Fonts §5.2)
+    /// picks from `family`: the requested weight clamped to a variable
+    /// face's `wght` range, or a static face's declared weight. Stylesheet
+    /// families and their private copies use the descriptor-matched weight.
+    /// `None` when no face of `family` is loaded or installed.
     pub(crate) fn matched_weight(&mut self, family: &str, requested: u16) -> Option<u16> {
         if self.is_stylesheet_family(family) {
             return self.stylesheet_weight(family, requested);
         }
         let database = self.font_system.db();
+        let stylesheet_copy = self.stylesheet_privates.contains_key(family);
         *self
             .matched_weights
             .entry((family.to_owned(), requested))
@@ -530,7 +530,20 @@ impl TextRasterizer {
                     weight: Weight(requested),
                     ..fontdb::Query::default()
                 })?;
-                Some(database.face(id)?.weight.0)
+                let declared = database.face(id)?.weight.0;
+                if stylesheet_copy {
+                    return Some(declared);
+                }
+                let variable_weight = database
+                    .with_face_data(id, |data, index| {
+                        let font = FontRef::from_index(data, index).ok()?;
+                        let axis = font.axes().get_by_tag(Tag::new(b"wght"))?;
+                        let min = axis.min_value().ceil() as u16;
+                        let max = axis.max_value().floor() as u16;
+                        (min <= max).then(|| requested.clamp(min, max))
+                    })
+                    .flatten();
+                Some(variable_weight.unwrap_or(declared))
             })
     }
 

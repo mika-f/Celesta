@@ -62,10 +62,10 @@ impl TextRasterizer {
             .as_ref()
             .map(|family| self.primary_family(family, requested_weight));
         let family = primary.as_deref();
-        // cosmic-text only picks the requested family's face when its weight
-        // is exactly the requested one, and otherwise falls back to another
-        // family. Ask for the weight CSS matching picks within the family
-        // instead, so a family loaded only in Bold still draws a 400 request.
+        // cosmic-text accepts an exact face weight or a weight within the
+        // face's `wght` range. Match within the requested family first so
+        // a static Bold face can draw a 400 request and a variable face can
+        // draw requests outside its range at the nearest endpoint.
         let weight = family
             .and_then(|family| self.matched_weight(family, requested_weight))
             .unwrap_or(requested_weight);

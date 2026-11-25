@@ -538,6 +538,73 @@ fn matches_the_nearest_weight_within_a_loaded_family() {
     }
 }
 
+const VARIABLE_FAMILY: &str = "CelestaVariableTest";
+
+fn variable_weight_rasterizer() -> TextRasterizer {
+    let mut rasterizer = TextRasterizer::new();
+    rasterizer
+        .load_fonts(
+            &[file_font("tests/fixtures/CelestaVariableTest.ttf")],
+            Path::new(env!("CARGO_MANIFEST_DIR")),
+        )
+        .unwrap();
+    rasterizer
+}
+
+fn variable_weight_style(weight: u16) -> TextStyle {
+    TextStyle {
+        font_family: Some(VARIABLE_FAMILY.into()),
+        font_size: Some(72.0),
+        font_weight: Some(weight),
+        ..TextStyle::default()
+    }
+}
+
+#[test]
+fn variable_weight_changes_shaped_advances_and_pixels() {
+    let mut rasterizer = variable_weight_rasterizer();
+    let regular = rasterizer.measure("A", &variable_weight_style(400), None);
+    let bold = rasterizer.measure("A", &variable_weight_style(700), None);
+    assert!(bold.glyphs[0].width > regular.glyphs[0].width);
+
+    let ink = |text: crate::text::RasterizedText| -> u32 {
+        text.pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|pixel| u32::from(pixel[3]))
+            .sum()
+    };
+    let regular = rasterizer
+        .rasterize("A", &variable_weight_style(400), None, 1.0)
+        .unwrap();
+    let bold = rasterizer
+        .rasterize("A", &variable_weight_style(700), None, 1.0)
+        .unwrap();
+    assert!(ink(bold) > ink(regular));
+    assert_eq!(rasterizer.matched_weight(VARIABLE_FAMILY, 437), Some(437));
+}
+
+#[test]
+fn variable_weights_clamp_to_the_axis_endpoints() {
+    let mut rasterizer = variable_weight_rasterizer();
+    for (asked, endpoint) in [(100, 200), (900, 800)] {
+        assert_eq!(
+            rasterizer.matched_weight(VARIABLE_FAMILY, asked),
+            Some(endpoint)
+        );
+        let draw = |rasterizer: &mut TextRasterizer, weight| {
+            rasterizer
+                .rasterize("A", &variable_weight_style(weight), None, 1.0)
+                .unwrap()
+        };
+        assert_eq!(
+            draw(&mut rasterizer, asked),
+            draw(&mut rasterizer, endpoint)
+        );
+    }
+}
+
 #[test]
 fn reports_a_family_with_no_face() {
     let mut rasterizer = regular_only_rasterizer();

@@ -138,8 +138,8 @@ measures as one, and its baseline stays where the text's own glyphs put it.
 ```
 
 - `fill` is a hex color or a solid paint; gradients are rejected.
-- `fontWeight` uses the family's nearest face when it has no face at that
-  weight, as the text's own `fontWeight` does. No bold is synthesized.
+- `fontWeight` follows the same [font weight matching](#fonts-fallback-and-emoji)
+  as the text's own `fontWeight`. No bold is synthesized.
 - `fontFamily` must be installed or loaded with `<Font>`, like the text's.
   It may be a [font stack](#font-stacks-和欧混植), which replaces the text's
   whole stack inside the span.
@@ -364,10 +364,12 @@ stylesheet's faces go by each rule's `font-family` instead). For reproducible
 output, ship the font file next to the entry rather than relying on
 installed fonts.
 
-- Weights match within the family first: when `fontFamily` has no face at
-  the requested `fontWeight`, its nearest weight is used, picked as CSS font
-  matching does. A family loaded only in Bold therefore draws `fontWeight`
-  400, or no weight, in Bold. Bold is never synthesized.
+- Weights match within the family first. In the desktop app and exporter,
+  a matched variable face uses the requested `fontWeight`, clamped to its
+  `wght` axis range. Other variable axes and `font-variation-settings` are
+  not supported by the native renderer. For static fonts, Celesta picks
+  the nearest face as CSS font matching does: a family loaded only in Bold
+  draws `fontWeight` 400, or no weight, in Bold. Bold is never synthesized.
 - With Google Fonts, list every weight you use in the URL; a missing weight
   uses the family's nearest one. A `text=` subset (`<Font google text>`)
   must include every character the video draws.
