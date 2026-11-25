@@ -34,7 +34,24 @@ Prefer a portable app? Download the `windows-x64.zip` package, extract the entir
 :::
 :::tab[Linux]
 
-Use the [source-build instructions](/en/docs/build-from-source/) for Linux. Check the release assets for any additional platform packages provided with a release.
+For headless Linux on x86_64 (Ubuntu 22.04 or newer, glibc 2.35+), download
+`Celesta-<version>-linux-x64.tar.gz` from the release assets. It contains the
+unified CLI, the standalone exporter, Node.js, the React runtime, and the
+standard FFmpeg plugin, but no desktop editor.
+
+On Ubuntu, install the system libraries, a software Vulkan driver, and a
+font (hardware Vulkan also works if your system already has a driver):
+
+```sh
+sudo apt-get install libatomic1 zlib1g libvulkan1 mesa-vulkan-drivers fonts-dejavu-core
+tar -xzf Celesta-<version>-linux-x64.tar.gz
+./Celesta-<version>-linux-x64/bin/celesta doctor
+```
+
+Replace `<version>` with the release version. Move the entire extracted
+directory together; if you want `celesta` on PATH, add its `bin` directory.
+See [Create a project](/en/docs/create-project/) to start from the CLI, or
+[Build from source](/en/docs/build-from-source/) for the Linux desktop editor.
 
 :::
 ::::

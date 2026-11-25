@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 /// Locates the bundled Node.js and React CLI beside the running executable.
 /// Source builds without a `runtime` directory use the workspace and PATH.
+/// A moved Cargo build can still use the runtime in its moved source tree.
 /// An incomplete bundle is kept selected so spawning reports the missing file
 /// instead of silently depending on software installed on the user's machine.
 pub fn runtime_paths() -> (PathBuf, PathBuf) {
@@ -31,6 +32,17 @@ fn paths_for(executable: Option<&Path>) -> (PathBuf, PathBuf) {
                 runtime.join(if cfg!(windows) { "node.exe" } else { "node" }),
                 runtime.join("react/dist/cli.js"),
             );
+        }
+        if cfg!(target_os = "linux")
+            && let Some(workspace) = directory
+                .ancestors()
+                .find(|path| path.file_name().is_some_and(|name| name == "target"))
+                .and_then(Path::parent)
+        {
+            let cli = workspace.join("packages/cli/dist/cli.js");
+            if cli.is_file() {
+                return (PathBuf::from("node"), cli);
+            }
         }
     }
     (
@@ -74,6 +86,34 @@ mod tests {
                 root.join("runtime/react/dist/cli.js"),
             )
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_moved_cargo_build_uses_its_own_workspace_unless_a_runtime_is_staged() {
+        let root = tempfile::tempdir().unwrap();
+        let cli = root.path().join("packages/cli/dist/cli.js");
+        std::fs::create_dir_all(cli.parent().unwrap()).unwrap();
+        std::fs::write(&cli, "").unwrap();
+
+        for subdirectory in [
+            "target/release",
+            "target/x86_64-unknown-linux-gnu/debug/deps",
+        ] {
+            let directory = root.path().join(subdirectory);
+            let executable = directory.join("celesta");
+            assert_eq!(
+                paths_for(Some(&executable)),
+                (PathBuf::from("node"), cli.clone())
+            );
+
+            let runtime = directory.join("runtime");
+            std::fs::create_dir_all(&runtime).unwrap();
+            assert_eq!(
+                paths_for(Some(&executable)),
+                (runtime.join("node"), runtime.join("react/dist/cli.js"))
+            );
+        }
     }
 
     #[test]
