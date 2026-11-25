@@ -144,6 +144,13 @@ test('a clip that remains before the source for the entire mix is not scheduled'
   scheduleClip(context, { ...base, start: 2, duration: 3, sourceStart: -2 }, buffer, 4);
   assert.equal(context.sources.length, 0);
 });
+test('a clip entering the file before its first rate key holds that rate until the first key', () => {
+  const clip: AudioClip = { ...base, start: 2, duration: 3, sourceStart: -2.5, playbackRate: keys([1, 5], [2, 7]) };
+  const context = recording();
+  scheduleClip(context, clip, buffer, 10);
+  assert.deepEqual(context.sources[0].calls, [['start', 2.5, 0], ['stop', 5]]);
+  assert.deepEqual(context.sources[0].events, [['set', 5, 2], ['set', 5, 3], ['ramp', 7, 4]]);
+});
 test('a rate that overshoots below 0 is rejected', () => {
   const clip: AudioClip = { ...base, duration: 2, playbackRate: keys([0, 1], [1, 0.05, 'ease-out-back']) };
   assert.throws(() => scheduleClip(recording(), clip, buffer, 10), /playback rate must be positive/);

@@ -37,6 +37,9 @@ export function automationEvents(value: AnimatedNumber, start: number, end: numb
       events.push({ kind: 'set', value: clamp(to.value), time: start + finish });
       continue;
     }
+    if (index === 1 && begin > from0) {
+      events.push({ kind: 'set', value: clamp(from.value), time: start + begin });
+    }
     // Only what is heard is scheduled, so a segment across the end stops there.
     const stop = Math.min(finish, until);
     const valueAt = (local: number) => (local === finish ? to.value : evaluateAnimated(value, local));
