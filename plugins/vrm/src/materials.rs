@@ -81,8 +81,8 @@ pub(crate) struct Materials {
     /// draws use in one notice.
     pub pbr: Vec<(usize, String)>,
     /// By material: its base color texture's transform, which texture
-    /// transform binds start from. `None` without a base color texture,
-    /// or when that texture's image cannot be read.
+    /// transform binds start from. `None` if no transform is specified or
+    /// no base color image index resolves.
     pub base_transforms: Vec<Option<TextureTransform>>,
     /// By material: an MToon material's parameters, which its custom
     /// material carries packed.
@@ -470,7 +470,7 @@ impl<'d> Reader<'d> {
         };
         let pbr = material.pbr_metallic_roughness();
         let base_color = at.finite("baseColorFactor", pbr.base_color_factor())?;
-        let base_color_texture = match pbr.base_color_texture() {
+        let (base_color_texture, transform) = match pbr.base_color_texture() {
             Some(info) => {
                 let transform = info
                     .texture_transform()
@@ -486,14 +486,12 @@ impl<'d> Reader<'d> {
                         })
                     })
                     .transpose()?;
-                self.slot(at, info.texture().index(), ColorSpace::Srgb)?
-                    .map(|texture| TextureRef { texture, transform })
+                let (texture, image_resolved) =
+                    self.resolve_slot(at, info.texture().index(), ColorSpace::Srgb)?;
+                (texture, transform.filter(|_| image_resolved))
             }
-            None => None,
+            None => (None, None),
         };
-        let transform = base_color_texture
-            .as_ref()
-            .and_then(|texture| texture.transform);
 
         let kind = match mtoon {
             Some(mtoon) => Kind::Mtoon(Box::new(self.mtoon(
@@ -502,14 +500,16 @@ impl<'d> Reader<'d> {
                 at,
                 Mtoon {
                     base_color,
-                    base_color_texture,
+                    base_color_texture: base_color_texture.map(|texture| TextureSlot { texture }),
+                    base_transform: transform,
                     ..Mtoon::default()
                 },
             )?)),
             // KHR_materials_unlit, and glTF PBR drawn as its base color.
             None => Kind::Unlit(UnlitMaterial {
                 base_color,
-                base_color_texture,
+                base_color_texture: base_color_texture
+                    .map(|texture| TextureRef { texture, transform }),
             }),
         };
         Ok((alpha_mode, kind, transform))
@@ -638,14 +638,24 @@ impl<'d> Reader<'d> {
             .map(|texture| TextureSlot { texture }))
     }
 
-    /// The scene texture for glTF texture `texture` in `color_space`, or
-    /// `None` with a warning when its image cannot be read.
     fn slot(
         &mut self,
         at: &At,
         texture: usize,
         color_space: ColorSpace,
     ) -> Result<Option<usize>, LoadError> {
+        let (texture, _) = self.resolve_slot(at, texture, color_space)?;
+        Ok(texture)
+    }
+
+    /// The scene texture for glTF texture `texture` in `color_space`, and
+    /// whether it resolved to an image index, even if that image was unreadable.
+    fn resolve_slot(
+        &mut self,
+        at: &At,
+        texture: usize,
+        color_space: ColorSpace,
+    ) -> Result<(Option<usize>, bool), LoadError> {
         let Some(json) = self.json.textures.get(texture) else {
             return Err(LoadError::Invalid(format!(
                 "{at} uses texture {texture}, but the file has {} textures",
@@ -658,7 +668,7 @@ impl<'d> Reader<'d> {
                 self.warn(format!(
                     "texture {texture} is {mime}, which the VRM plugin cannot read; {at} draws without it"
                 ));
-                return Ok(None);
+                return Ok((None, false));
             }
         };
         let sampler = match json.sampler {
@@ -684,15 +694,15 @@ impl<'d> Reader<'d> {
         if let Some(Image::Unreadable(reason)) = &self.images[image] {
             let message = format!("texture {texture} {reason}; {at} draws without it");
             self.warn(message);
-            return Ok(None);
+            return Ok((None, true));
         }
         let key = (image, color_space, sampler);
         if let Some(&index) = self.lookup.get(&key) {
-            return Ok(Some(index));
+            return Ok((Some(index), true));
         }
         self.keys.push(key);
         self.lookup.insert(key, self.keys.len() - 1);
-        Ok(Some(self.keys.len() - 1))
+        Ok((Some(self.keys.len() - 1), true))
     }
 
     /// A warning, once however many slots give it (see `notices`).
@@ -1186,14 +1196,7 @@ mod tests {
             rotation: 0.0,
             scale: [1.0, 1.0],
         };
-        assert_eq!(
-            mtoon(&materials, 0)
-                .base_color_texture
-                .as_ref()
-                .unwrap()
-                .transform,
-            Some(transform)
-        );
+        assert_eq!(mtoon(&materials, 0).base_transform, Some(transform));
         assert_eq!(materials.base_transforms[0], Some(transform));
         assert_eq!(materials.base_transforms[1], None);
         assert_eq!(materials.base_transforms.len(), 4);
@@ -1550,7 +1553,12 @@ mod tests {
         assert_eq!(body.base_color_texture, None);
         assert_eq!(body.shade_multiply_texture, None);
         assert_eq!(body.shading_shift_texture, None);
-        assert_eq!(materials.base_transforms[0], None);
+        let transform = TextureTransform {
+            offset: [0.5, 0.0],
+            ..TextureTransform::default()
+        };
+        assert_eq!(body.base_transform, Some(transform));
+        assert_eq!(materials.base_transforms[0], Some(transform));
         assert_eq!(
             warnings(&materials),
             [0, 2].map(|texture| format!(
@@ -1619,6 +1627,23 @@ mod tests {
             ]
         );
         assert_eq!(materials.textures.len(), 1);
+    }
+
+    #[test]
+    fn a_ktx2_only_base_texture_does_not_supply_a_transform() {
+        let (materials, _cache) = load_with(&SyntheticVrm::avatar(), |root| {
+            root["textures"][0] =
+                json!({ "extensions": { "KHR_texture_basisu": { "source": 0 } } });
+            root["extensionsRequired"] = json!(["KHR_texture_basisu"]);
+            root["extensionsUsed"]
+                .as_array_mut()
+                .unwrap()
+                .push("KHR_texture_basisu".into());
+        });
+        let body = mtoon(&materials, 0);
+        assert_eq!(body.base_color_texture, None);
+        assert_eq!(body.base_transform, None);
+        assert_eq!(materials.base_transforms[0], None);
     }
 
     #[test]

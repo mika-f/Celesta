@@ -378,6 +378,35 @@ pub struct TextureTransform {
     pub scale: [f32; 2],
 }
 
+impl Default for TextureTransform {
+    fn default() -> Self {
+        Self {
+            offset: [0.0; 2],
+            rotation: 0.0,
+            scale: [1.0; 2],
+        }
+    }
+}
+
+impl TextureTransform {
+    /// The two affine rows for shader texture coordinates, with optional
+    /// replacements for offset and scale. Rotation turns `(1, 0)` toward
+    /// `(0, 1)`.
+    pub fn rows(
+        self,
+        offset_override: Option<[f32; 2]>,
+        scale_override: Option<[f32; 2]>,
+    ) -> ([f32; 4], [f32; 4]) {
+        let offset = offset_override.unwrap_or(self.offset);
+        let scale = scale_override.unwrap_or(self.scale);
+        let (sin, cos) = self.rotation.sin_cos();
+        (
+            [cos * scale[0], -sin * scale[1], offset[0], 0.0],
+            [sin * scale[0], cos * scale[1], offset[1], 0.0],
+        )
+    }
+}
+
 /// A geometry drawn with a material, and with a skin when the geometry is
 /// skinned.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -503,6 +532,30 @@ pub struct MaterialOverrides {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn texture_transform_rows() {
+        let identity = TextureTransform::default().rows(None, None);
+        assert_eq!(identity, ([1.0, -0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]));
+        assert_eq!(identity.0[1].to_bits(), (-0.0f32).to_bits());
+
+        let transform = TextureTransform {
+            offset: [0.25, 0.5],
+            rotation: std::f32::consts::FRAC_PI_2,
+            scale: [2.0, 3.0],
+        };
+        let (u, v) = transform.rows(None, None);
+        let (s, c) = transform.rotation.sin_cos();
+        assert_eq!(u, [c * 2.0, -s * 3.0, 0.25, 0.0]);
+        assert_eq!(v, [s * 2.0, c * 3.0, 0.5, 0.0]);
+        assert_eq!(
+            transform.rows(Some([0.75, -0.5]), Some([4.0, -5.0])),
+            (
+                [c * 4.0, s * 5.0, 0.75, 0.0],
+                [s * 4.0, -c * 5.0, -0.5, 0.0]
+            )
+        );
+    }
 
     #[test]
     fn scene_model_default_sampler() {

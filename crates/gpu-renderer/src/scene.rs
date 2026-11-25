@@ -39,8 +39,8 @@ use crate::wgsl;
 use celesta_plugin::scene::{MAX_DIRECTIONAL_LIGHTS, MAX_SCENE_CANVAS_SIDE, MAX_SCENE_SHADERS};
 use celesta_plugin::{
     AlphaMode, Camera, ColorSpace, CullFace, DrawState, EmptyTexel, Filter, Material, MaterialKind,
-    MaterialOverrides, ModelId, Projection, SceneFrame, SceneModel, SceneShader, TextureRef,
-    UnlitMaterial, Wrap,
+    MaterialOverrides, ModelId, Projection, SceneFrame, SceneModel, SceneShader, UnlitMaterial,
+    Wrap,
 };
 use celesta_renderer::resample::Coverage;
 use sha2::{Digest, Sha256};
@@ -2875,32 +2875,16 @@ fn material_params(material: &Material, state: &DrawState) -> [u8; MAX_MATERIAL_
     slot
 }
 
-/// The rows of `texture`'s transform, which scales, then rotates, then
-/// offsets coordinates as `KHR_texture_transform`'s sample code does, with
-/// the offset and scale `overrides` names in place of the texture's. A
-/// rotation turns `(1, 0)` toward `(0, 1)`.
-fn texture_rows(
-    texture: Option<&TextureRef>,
-    overrides: &MaterialOverrides,
-) -> ([f32; 4], [f32; 4]) {
-    let transform = texture.and_then(|texture| texture.transform);
-    let (offset, rotation, scale) = transform.map_or(([0.0; 2], 0.0, [1.0; 2]), |transform| {
-        (transform.offset, transform.rotation, transform.scale)
-    });
-    let offset = overrides.texture_offset.unwrap_or(offset);
-    let scale = overrides.texture_scale.unwrap_or(scale);
-    let (sin, cos) = rotation.sin_cos();
-    (
-        [cos * scale[0], -sin * scale[1], offset[0], 0.0],
-        [sin * scale[0], cos * scale[1], offset[1], 0.0],
-    )
-}
-
 /// `scene_unlit.wgsl`'s `Params` for `unlit`: its base color and its
 /// texture's transform, with the values `overrides` names in place of the
 /// material's.
 fn unlit_params(unlit: &UnlitMaterial, overrides: &MaterialOverrides) -> [u8; UNLIT_PARAMS] {
-    let (uv_u, uv_v) = texture_rows(unlit.base_color_texture.as_ref(), overrides);
+    let (uv_u, uv_v) = unlit
+        .base_color_texture
+        .as_ref()
+        .and_then(|texture| texture.transform)
+        .unwrap_or_default()
+        .rows(overrides.texture_offset, overrides.texture_scale);
     bytemuck::cast(UnlitParams {
         base_color: overrides.base_color.unwrap_or(unlit.base_color),
         uv_u,
