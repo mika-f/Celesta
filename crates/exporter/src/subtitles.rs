@@ -253,28 +253,24 @@ pub(crate) fn files(path: &Path, cues: &[Cue]) -> Result<Vec<File>, ExportError>
             })
             .collect());
     }
-    let mut languages = BTreeMap::<Option<&str>, Vec<Cue>>::new();
-    for cue in cues {
-        languages
-            .entry(cue.lang.as_deref())
-            .or_default()
-            .push(cue.clone());
-    }
+    let languages: BTreeSet<_> = cues
+        .iter()
+        .map(|cue| normalized_language(cue.lang.as_deref()))
+        .collect();
     if languages.len() > 1 {
         return Err(ExportError::MixedSubtitleLanguages {
             path: path.to_owned(),
             languages: languages
-                .keys()
-                .map(|lang| lang.map_or_else(|| "(none)".to_owned(), str::to_owned))
+                .into_iter()
+                .map(|lang| lang.unwrap_or_else(|| "(none)".to_owned()))
                 .collect::<BTreeSet<_>>()
                 .into_iter()
                 .collect(),
         });
     }
-    let lang = languages.keys().next().copied().flatten();
     Ok(vec![File {
         path: path.to_owned(),
-        lang: lang.map(str::to_owned),
+        lang: languages.into_iter().next().flatten(),
         cues: cues.to_vec(),
     }])
 }
@@ -706,6 +702,28 @@ mod tests {
             Err(ExportError::DuplicateSubtitleOutput(path)) if path == absolute
         ));
         assert_eq!(dir.path().read_dir().unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_plain_path_compares_normalized_languages() {
+        let path = Path::new("film.srt");
+        let unknown = [
+            in_lang(" UND ", cue("first", 0.0, 1.0)),
+            cue("second", 1.0, 2.0),
+        ];
+        let file = &files_of(path, &unknown)[0];
+        assert_eq!(file.lang, None);
+        assert_eq!(file.cues, unknown);
+
+        let english = [
+            in_lang(" EN ", cue("first", 0.0, 1.0)),
+            in_lang("en", cue("second", 1.0, 2.0)),
+        ];
+        assert_eq!(files_of(path, &english)[0].lang.as_deref(), Some("en"));
+        assert!(matches!(
+            files(path, &[unknown[0].clone(), english[0].clone()]),
+            Err(ExportError::MixedSubtitleLanguages { languages, .. }) if languages == ["(none)", "en"]
+        ));
     }
 
     #[test]

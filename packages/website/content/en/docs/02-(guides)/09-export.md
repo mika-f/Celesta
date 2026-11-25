@@ -121,7 +121,7 @@ const cues = parseSubtitles(captions, { fps: 30 });
 
 `--subtitles` writes a subtitle file beside the video: SRT for a `.srt` path, WebVTT for `.vtt`. It holds the cues `<Subtitles>` declares and the `<Dialogue>` lines, each for as long as it is shown. With `--from` and `--to`, the times start at the span's start and cues are cut to the span.
 
-Use a path such as `'film.{lang}.srt'` to write one file per language. Tags are trimmed and lowercased; missing and empty tags use `und`. If two subtitle files would have the same name, the export fails before publishing the video or replacing any subtitles. In MCP, a subtitles-only `export_video` request omits `output` and cannot set `loudness`, `truePeak`, or `peakHandling`.
+Use a path such as `'film.{lang}.srt'` to write one file per language. A path without `{lang}` accepts only one language. In both cases, tags are trimmed and lowercased, and missing and empty tags count as `und`. If two subtitle files would have the same name, the export fails before publishing the video or replacing any subtitles. In MCP, a subtitles-only `export_video` request omits `output` and cannot set `loudness`, `truePeak`, or `peakHandling`.
 
 ::::tabs[Exporter platform]{default="macOS"}
 :::tab[macOS]

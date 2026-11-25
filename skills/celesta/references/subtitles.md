@@ -254,9 +254,9 @@ Celesta-export --json --react film.tsx film.mp4 \
   `<Subtitles>` whose language differs from the composition's: in a
   `<Composition lang="ja-JP">`, an English `<Subtitles>` without `lang` is
   `ja-JP` too.
-- For `{lang}`, tags are trimmed and lowercased: `ja` and `ja-JP` are still
-  two files, but `EN` and `en` share one. Empty or missing tags go to `und`
-  (`film.und.srt`). Characters other than ASCII letters, digits, `-`, and
+- Tags are trimmed and lowercased for both kinds of paths: `ja` and `ja-JP`
+  are different languages, but `EN` and `en` are the same. Empty or missing
+  tags count as `und`. For `{lang}`, characters other than ASCII letters, digits, `-`, and
   `_` become `_` in the file name. A filename collision fails with
   `duplicate_subtitle_output` before any output is published.
 - A `{lang}` path with no subtitles writes nothing and warns.
