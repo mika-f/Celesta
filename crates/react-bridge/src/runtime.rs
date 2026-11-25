@@ -13,6 +13,7 @@ pub fn runtime_paths() -> (PathBuf, PathBuf) {
 }
 
 fn paths_for(executable: Option<&Path>, build_workspace: &Path) -> (PathBuf, PathBuf) {
+    let build_runtime = build_workspace.join("packages/cli/dist/cli.js");
     if let Some(directory) = executable.and_then(Path::parent) {
         if directory.file_name().is_some_and(|name| name == "MacOS")
             && let Some(contents) = directory.parent()
@@ -37,7 +38,8 @@ fn paths_for(executable: Option<&Path>, build_workspace: &Path) -> (PathBuf, Pat
             );
         }
         if cfg!(target_os = "linux")
-            && !build_workspace.is_dir()
+            && !build_runtime.is_file()
+            && !build_workspace.join("Cargo.toml").is_file()
             && let Some(workspace) = directory
                 .ancestors()
                 .find(|path| path.file_name().is_some_and(|name| name == "target"))
@@ -49,10 +51,7 @@ fn paths_for(executable: Option<&Path>, build_workspace: &Path) -> (PathBuf, Pat
             }
         }
     }
-    (
-        PathBuf::from("node"),
-        build_workspace.join("packages/cli/dist/cli.js"),
-    )
+    (PathBuf::from("node"), build_runtime)
 }
 
 #[cfg(test)]
@@ -98,10 +97,11 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn a_moved_cargo_build_uses_its_own_workspace_unless_a_runtime_is_staged() {
+    fn a_moved_cargo_build_uses_its_own_workspace_even_if_an_empty_build_directory_remains() {
         let root = tempfile::tempdir().unwrap();
         let cli = root.path().join("packages/cli/dist/cli.js");
         let build_workspace = root.path().join("missing");
+        std::fs::create_dir(&build_workspace).unwrap();
         std::fs::create_dir_all(cli.parent().unwrap()).unwrap();
         std::fs::write(&cli, "").unwrap();
 
@@ -131,16 +131,21 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let build_workspace = root.path().join("build");
         std::fs::create_dir(&build_workspace).unwrap();
+        std::fs::write(build_workspace.join("Cargo.toml"), "[workspace]\n").unwrap();
         let other_runtime = root.path().join("other/packages/cli/dist/cli.js");
         std::fs::create_dir_all(other_runtime.parent().unwrap()).unwrap();
         std::fs::write(other_runtime, "").unwrap();
         let executable = root.path().join("other/target/release/celesta");
+        let build_runtime = build_workspace.join("packages/cli/dist/cli.js");
         assert_eq!(
             super::paths_for(Some(&executable), &build_workspace),
-            (
-                PathBuf::from("node"),
-                build_workspace.join("packages/cli/dist/cli.js")
-            )
+            (PathBuf::from("node"), build_runtime.clone())
+        );
+        std::fs::create_dir_all(build_runtime.parent().unwrap()).unwrap();
+        std::fs::write(&build_runtime, "").unwrap();
+        assert_eq!(
+            super::paths_for(Some(&executable), &build_workspace),
+            (PathBuf::from("node"), build_runtime)
         );
     }
 
