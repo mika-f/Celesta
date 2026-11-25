@@ -202,6 +202,7 @@ fn request(
         react_reload,
         render_quality: RenderQuality::Final,
         source_of: None,
+        drop_source_of: None,
         prop_overrides: Vec::new(),
         frame_of: None,
         space_of: None,

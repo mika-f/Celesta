@@ -241,6 +241,10 @@ struct WatchedSource {
 }
 
 impl WatchStamp {
+    pub(crate) fn same_source_inputs(&self, newer: &Self) -> bool {
+        self.props_file == newer.props_file && self.changed_files(newer).is_empty()
+    }
+
     /// The source files, relative to the entry's folder, that differ
     /// between this sample and `newer`: changed, added or removed, sorted.
     /// A path that is a folder in both samples is left out (its files are

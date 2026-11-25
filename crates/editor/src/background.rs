@@ -70,6 +70,7 @@ impl EditorView {
         self.problems
             .set_scene_errors(result.scene_errors.iter().map(scene_problem).collect());
         self.hit_regions = result.hit_regions;
+        self.take_external_drop_lookup(result.drop_lookup);
         self.layer_frame = result.layer_frame;
         self.text_layout = result.text_layout;
         self.refit_inline_text();

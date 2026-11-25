@@ -602,6 +602,14 @@ The line under the parent's name says why every item is disabled, and an item's 
 | Can’t draw into a group scaled to zero | The group or one around it is scaled to 0, so nothing drawn has a size inside it |
 | `Rect` here is not Celesta’s | The file declares or imports another `Rect`, which disables that item only. With another `Sequence` (**`Sequence` here is not Celesta’s**), every item is disabled when the element needs a `<Sequence>` |
 
+### Drop an image or video from your file manager
+
+Pause a standalone React composition and drag one image (including SVG or animated images) or a video your media plugins can open onto the preview. **Select layers** can be on or off; you don't have to select a layer first. The drop message names the destination when you can release, or explains why you can't. A file manager may still show a copy cursor even when the editor rejects the drop.
+
+Celesta starts with the topmost layer under the pointer and looks for a writable `<Group>` around it. It doesn't use your current selection or search behind that layer. Blank areas and empty groups without drawn children aren't drop targets. The same sharing rules as **Add** apply to the layer under the pointer; the drop message identifies a shared destination. The new element uses the group's coordinates, keeps the media's proportions, and starts at the paused frame with the same timing as **Add**.
+
+Files outside the entry folder are copied to `assets/`. Press Escape while the editor is importing to cancel the source edit. One **Undo** removes the added JSX and any new import, but leaves the copied file. Timeline audio drops, multiple files at once, and drops into JSON projects aren't supported.
+
 ## Leave review comments
 
 Review a video in Celesta and leave comments where something should change; an agent (or you, later) picks each one up at exactly that place. Comments are in the **Comments** tab beside **Problems**, which counts the open ones.

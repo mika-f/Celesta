@@ -269,7 +269,7 @@ impl EditorView {
                         self.document.asset_root(),
                     ),
                 },
-                source_locations: self.picks_layers(),
+                source_locations: self.picks_layers() || self.tracking_external_media(),
                 composition_id: self
                     .react_preview
                     .as_ref()
@@ -322,6 +322,7 @@ impl EditorView {
                         RenderQuality::Final
                     },
                     source_of,
+                    drop_source_of: self.external_drop_request(),
                     prop_overrides: self.prop_overrides(),
                     frame_of: self
                         .selected_layer

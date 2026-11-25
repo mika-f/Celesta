@@ -283,7 +283,7 @@ const SCANNING: &str = "Scanning scenes…";
 const NOT_SCANNED: &str = "The scenes are not scanned";
 
 /// The index the occurrence state holds and whether a sweep is refreshing
-/// it, or why it can't answer: no sweep runs (Select layers is off), one is
+/// it, or why it can't answer: no sweep runs, one is
 /// scanning, or it failed.
 pub(crate) fn occurrence_index(
     occurrences: Option<&OccurrenceState>,

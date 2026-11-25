@@ -159,8 +159,7 @@ pub(crate) fn sweep(
 }
 
 /// Whether a sweep for reload `result` lands: it belongs to the `current`
-/// reload and an index is still `wanted` (Select layers was not turned off
-/// while it ran).
+/// reload and an index is still `wanted`.
 pub(crate) const fn accepts(current: u64, result: u64, wanted: bool) -> bool {
     wanted && current == result
 }
@@ -196,9 +195,8 @@ fn sweeping(slot: Option<&(u64, OccurrenceState)>) -> bool {
 
 impl EditorView {
     /// Starts sweeping the React entry for where each element renders,
-    /// tagged with the current reload. Only a preview that picks layers
-    /// (Select layers on) can select anything to show the impact of; any
-    /// other state has nothing to sweep. `keep` (the editor's own write)
+    /// tagged with the current reload. Standalone React previews use it
+    /// for both layer edits and file drops. `keep` (the editor's own write)
     /// keeps the last index in use, and holds the sweep back until the
     /// preview draws the reloaded code, so the two do not compete while the
     /// written values are on their way to the screen.
@@ -206,7 +204,7 @@ impl EditorView {
         // Called with `refresh_preview`: both carry the current mode.
         self.interactive_refresh_due = false;
         self.occurrence_generation += 1;
-        if self.react_preview.is_none() || !self.picks_layers() {
+        if self.react_preview.is_none() {
             self.occurrences = None;
             self.occurrence_sweep_after = None;
             // No sweep will answer commits held for one.
