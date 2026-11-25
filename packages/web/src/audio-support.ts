@@ -1,6 +1,7 @@
 import { checkDuckGroup, duckEnvelope, duckGroups } from '@celesta.studio/media-utils/duck';
+import { integrateAnimated } from '@celesta.studio/react/internal/animated-number';
 import type { AnimatedNumber, AudioClip } from './types';
-import { type AutomationEvent, automationEvents, integrateAnimated } from './keyframes';
+import { type AutomationEvent, automationEvents } from './keyframes';
 
 const RATE_MESSAGE = 'Audio playback rate must be positive.';
 

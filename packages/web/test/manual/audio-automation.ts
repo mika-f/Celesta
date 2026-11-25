@@ -1,8 +1,8 @@
 // How closely Web Audio follows keyframed volume and playback rate in
 // browser export. Run `pnpm --dir packages/web exec vite` and open
 // /test/manual/audio-automation.html in the browser to check.
+import { evaluateAnimated, integrateAnimated } from '@celesta.studio/react/internal/animated-number';
 import { scheduleClip } from '../../src/audio-support';
-import { evaluateAnimated, integrateAnimated } from '../../src/keyframes';
 import type { AnimatedNumber, AudioClip, KeyframeEasing } from '../../src/types';
 
 const RATE = 48_000;
