@@ -1,6 +1,6 @@
 //! Shared command-line frontend for the standalone and unified commands.
 
-use std::num::{NonZeroU32, NonZeroU64};
+use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -221,11 +221,7 @@ struct Cli {
     #[arg(long)]
     contact_sheet: bool,
     /// JPEG or WebP quality, 1-100; higher is sharper and larger [default: 90].
-    #[arg(
-        long,
-        value_name = "1-100",
-        value_parser = clap::value_parser!(u8).range(1..=i64::from(StillExport::MAX_QUALITY))
-    )]
+    #[arg(long, value_name = "1-100", value_parser = parse_quality)]
     quality: Option<u8>,
     /// Draw the entry's debug guides (<DebugOverlay>, <DebugBounds>) into
     /// still frames and contact sheets; never into a video.
@@ -236,17 +232,19 @@ struct Cli {
         long,
         value_name = "N",
         requires = "contact_sheet",
-        default_value_t = non_zero(ContactSheet::DEFAULT_COLUMNS)
+        value_parser = parse_columns,
+        default_value_t = ContactSheet::DEFAULT_COLUMNS
     )]
-    columns: NonZeroU32,
+    columns: u32,
     /// Contact sheet tile width in pixels.
     #[arg(
         long,
         value_name = "PX",
         requires = "contact_sheet",
-        default_value_t = non_zero(ContactSheet::DEFAULT_TILE_WIDTH)
+        value_parser = parse_tile_width,
+        default_value_t = ContactSheet::DEFAULT_TILE_WIDTH
     )]
-    tile_width: NonZeroU32,
+    tile_width: u32,
     /// An export preset: looked up in --preset-file, then the project's export-presets.json, then yours.
     #[arg(long, value_name = "NAME")]
     preset: Option<String>,
@@ -295,16 +293,16 @@ struct Cli {
         long,
         value_name = "LUFS",
         allow_negative_numbers = true,
-        value_parser = parse_loudness
+        value_parser = LoudnessTarget::parse
     )]
-    loudness: Option<f64>,
+    loudness: Option<LoudnessTarget>,
     /// The highest true peak --loudness may leave, -9 to 0 [default: -1].
     #[arg(
         long,
         value_name = "DBTP",
         allow_negative_numbers = true,
         requires = "loudness",
-        value_parser = parse_true_peak
+        value_parser = LoudnessTarget::parse_true_peak
     )]
     true_peak: Option<f64>,
     /// What --loudness does where its gain would take a true peak over
@@ -493,7 +491,7 @@ impl Cli {
     }
 
     fn loudness(&self) -> Option<LoudnessTarget> {
-        let target = LoudnessTarget::new(self.loudness?);
+        let target = self.loudness?;
         Some(LoudnessTarget {
             true_peak_dbtp: self.true_peak.unwrap_or(target.true_peak_dbtp),
             peak_handling: self.peak_handling.unwrap_or(target.peak_handling),
@@ -502,28 +500,22 @@ impl Cli {
     }
 }
 
-/// `--loudness`: a number of LUFS in [`LoudnessTarget::INTEGRATED_RANGE`],
-/// or a preset's name.
-fn parse_loudness(value: &str) -> Result<f64, String> {
-    match value {
-        "streaming" => Ok(LoudnessTarget::STREAMING.integrated_lufs),
-        "broadcast" => Ok(LoudnessTarget::BROADCAST.integrated_lufs),
-        _ => decibels(value, LoudnessTarget::INTEGRATED_RANGE, "LUFS")
-            .map_err(|error| format!("{error}, streaming or broadcast")),
-    }
+fn parse_quality(text: &str) -> Result<u8, String> {
+    let value = text.parse::<u8>().map_err(|error| error.to_string())?;
+    StillExport::validate_quality(Some(value), None, false).map_err(|error| error.to_string())?;
+    Ok(value)
 }
 
-/// `--true-peak`: dBTP in [`LoudnessTarget::TRUE_PEAK_RANGE`].
-fn parse_true_peak(value: &str) -> Result<f64, String> {
-    decibels(value, LoudnessTarget::TRUE_PEAK_RANGE, "dBTP")
+fn parse_columns(text: &str) -> Result<u32, String> {
+    let value = text.parse::<u32>().map_err(|error| error.to_string())?;
+    ContactSheet::validate_columns(value).map_err(|error| error.to_string())?;
+    Ok(value)
 }
 
-fn decibels(value: &str, (low, high): (f64, f64), unit: &str) -> Result<f64, String> {
-    value
-        .parse::<f64>()
-        .ok()
-        .filter(|value| (low..=high).contains(value))
-        .ok_or_else(|| format!("expected {low} to {high} {unit}"))
+fn parse_tile_width(text: &str) -> Result<u32, String> {
+    let value = text.parse::<u32>().map_err(|error| error.to_string())?;
+    ContactSheet::validate_tile_width(value).map_err(|error| error.to_string())?;
+    Ok(value)
 }
 
 /// How the human-readable output reports an exported mix's loudness.
@@ -539,10 +531,6 @@ fn loudness_line(loudness: &AudioLoudness) -> String {
         line.push_str(&format!(", gain {gain:+.1} dB"));
     }
     line
-}
-
-fn non_zero(value: u32) -> NonZeroU32 {
-    NonZeroU32::new(value).expect("contact sheet defaults are positive")
 }
 
 /// Run the backwards-compatible standalone exporter.
@@ -1091,11 +1079,15 @@ fn output_kind(cli: &Cli, explicit: &dyn Fn(&str) -> bool) -> Result<OutputKind,
         // `invalid_selection`, and a plugin's muxer may write others. A
         // quality for `.png` is refused here only when no encoder is named;
         // a named one says what it takes.
-        let format = StillFormat::from_extension(output);
-        if cli.quality.is_some() && cli.video_encoder.is_none() && format == Some(StillFormat::Png)
-        {
-            return Err("--quality applies to JPEG and WebP output; PNG is lossless".into());
-        }
+        StillExport::validate_quality(
+            cli.quality,
+            StillFormat::from_extension(output),
+            cli.video_encoder.is_some(),
+        )
+        .map_err(|error| match error {
+            ExportError::InvalidSelection(message) => format!("--{message}"),
+            error => error.to_string(),
+        })?;
         if cli.quality.is_some() && cli.video_option.iter().any(|(key, _)| key == "quality") {
             return Err(
                 "--quality and --video-option quality= both set the quality; give one".into(),
@@ -1174,8 +1166,8 @@ fn described_job(cli: &Cli, kind: &OutputKind, range: Option<ExportRange>) -> Ex
                 None => FrameSelection::Frames(cli.frames.clone()),
             },
             contact_sheet: cli.contact_sheet.then_some(ContactSheet {
-                columns: cli.columns.get(),
-                tile_width: cli.tile_width.get(),
+                columns: cli.columns,
+                tile_width: cli.tile_width,
             }),
             debug_guides: cli.debug_guides,
             quality: cli.quality,
@@ -1238,23 +1230,10 @@ fn validated_export_range(
 }
 
 fn export_range(start: Option<Time>, end: Option<Time>) -> Result<Option<ExportRange>, String> {
-    if start.is_none() && end.is_none() {
-        return Ok(None);
-    }
-
-    if let (Some(start), Some(end)) = (start, end)
-        && end
-            .cmp_exact(start)
-            .map_err(|error| error.to_string())?
-            .is_le()
-    {
-        return Err("--to must be after --from".into());
-    }
-
-    Ok(Some(ExportRange {
-        start: start.unwrap_or(Time::ZERO),
-        end,
-    }))
+    ExportRange::from_bounds(start, end).map_err(|error| match error {
+        ExportError::EmptyRange => "--to must be after --from".into(),
+        error => error.to_string(),
+    })
 }
 
 #[cfg(test)]

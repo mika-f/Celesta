@@ -1135,6 +1135,39 @@ fn a_written_file_is_named_by_its_published_path() {
     );
 }
 
+#[test]
+fn a_project_audio_failure_stops_rendering_and_discards_staged_files() {
+    let assets = tempfile::tempdir().unwrap();
+    let mut project = with_audio(
+        transparent_project(assets.path()),
+        assets.path(),
+        &[0.0; 8_000],
+        "missing.ctc",
+    );
+    std::fs::remove_file(assets.path().join("missing.ctc")).unwrap();
+    project.settings.duration = Some(Time::new(60, 1));
+    let directory = tempfile::tempdir().unwrap();
+    let output = directory.path().join("film.mp4");
+    let mut finished_rendering = false;
+    let result = crate::exporter(ExportOptions::default()).export_project_with_progress(
+        &project,
+        assets.path(),
+        &output,
+        |event| {
+            if let ExportProgress::Rendering { frame, total } = event {
+                finished_rendering |= frame == total;
+            }
+        },
+    );
+    if let Err(ExportError::Render(GpuRenderError::RequestAdapter(error))) = &result {
+        skip_without_gpu(error);
+        return;
+    }
+    assert!(matches!(result, Err(ExportError::Audio(_))), "{result:?}");
+    assert!(!finished_rendering);
+    assert!(files_in(directory.path()).is_empty());
+}
+
 /// Cancelling while frames are encoded leaves no file in the output's
 /// directory: not the staged output, and not a spill file.
 #[test]

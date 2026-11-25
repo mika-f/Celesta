@@ -2,17 +2,17 @@ use crate::control::{ExportCancellation, ExportProgress, GraphicsInfo};
 use crate::encode::{ExportSession, readback_for};
 use crate::error::ExportError;
 use crate::exporter::Exporter;
-use crate::project::{absolutize_fonts, absolutize_layers};
+use crate::project::{ProjectLayers, project_fonts, project_frame};
 use crate::quality::{self, SceneLint};
 use crate::range::ExportWindow;
 use crate::react::ReactVideoRequest;
 use celesta_composition::{Rational, Time, TimeError};
-use celesta_evaluator::{EvaluationError, Evaluator};
+use celesta_evaluator::Evaluator;
 use celesta_gpu_renderer::{Color, GpuRenderOptions, GpuRenderer, NoticeLevel};
 use celesta_media::{MediaBackend, VideoEncoderOpened};
 use celesta_project::Project;
-use celesta_react_bridge::{ProjectFrame, ReactBridge};
-use std::collections::{BTreeMap, HashSet};
+use celesta_react_bridge::ReactBridge;
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::mpsc;
 use std::thread;
@@ -20,7 +20,8 @@ use std::thread;
 impl Exporter {
     /// Renders `window`'s frames of `project` with `renderer` and encodes
     /// each through `session`, calling `after_frame` once each frame is
-    /// submitted (the project's mix is polled there).
+    /// submitted (the project's mix is polled there). If the mix fails, stop
+    /// without draining the renderer; the caller reports the audio error.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn render_video(
         &self,
@@ -30,6 +31,7 @@ impl Exporter {
         session: &mut ExportSession,
         cancellation: &ExportCancellation,
         progress: &mut impl FnMut(ExportProgress),
+        audio_failed: impl Fn() -> bool,
         after_frame: &mut dyn FnMut(&mut ExportSession) -> Result<(), ExportError>,
     ) -> Result<(), ExportError> {
         let ExportWindow {
@@ -50,6 +52,9 @@ impl Exporter {
         let mut lint = SceneLint::new(frame_rate, true);
         for frame_index in 0..frame_count {
             ensure_not_cancelled(cancellation)?;
+            if audio_failed() {
+                return Ok(());
+            }
             progress(ExportProgress::Rendering {
                 frame: frame_index + 1,
                 total: frame_count,
@@ -82,10 +87,12 @@ impl Exporter {
             report_render_warnings(renderer, &mut reported_warnings, progress);
             after_frame(session)?;
         }
-        for frame in renderer.drain().map_err(ExportError::Render)? {
-            session.encode_frame(frame)?;
+        if !audio_failed() {
+            for frame in renderer.drain().map_err(ExportError::Render)? {
+                session.encode_frame(frame)?;
+            }
+            quality::report(lint.finish(), progress);
         }
-        quality::report(lint.finish(), progress);
         Ok(())
     }
 
@@ -114,16 +121,10 @@ impl Exporter {
             .map(|(project, _)| Evaluator::new(project))
             .transpose()
             .map_err(ExportError::Evaluation)?;
-        let project_asset_root = project.map(|(_, asset_root)| asset_root);
         let project_fonts = project_evaluator
             .as_ref()
-            .map(|evaluator| -> Result<_, EvaluationError> {
-                let mut fonts = evaluator.scene_at(Time::ZERO)?.fonts;
-                if let Some(asset_root) = project_asset_root {
-                    absolutize_fonts(&mut fonts, asset_root);
-                }
-                Ok(fonts)
-            })
+            .zip(project)
+            .map(|(evaluator, (_, root))| project_fonts(evaluator, root))
             .transpose()
             .map_err(ExportError::Evaluation)?
             .unwrap_or_default();
@@ -141,32 +142,12 @@ impl Exporter {
             let project_frame = project_evaluator
                 .as_ref()
                 .zip(project)
-                .map(|(evaluator, (project, _))| -> Result<_, EvaluationError> {
-                    let mut scene = evaluator.scene_at(time)?;
-                    let mut tracks = BTreeMap::new();
-                    for track in &project.tracks {
-                        let mut layers = evaluator.layers_for_track(&track.id, time)?;
-                        if let Some(asset_root) = project_asset_root {
-                            absolutize_layers(&mut layers, asset_root);
-                        }
-                        tracks.insert(track.id.clone(), layers);
-                    }
-                    if let Some(asset_root) = project_asset_root {
-                        absolutize_layers(&mut scene.layers, asset_root);
-                    }
-                    Ok((scene.layers, tracks))
-                })
+                .map(|(evaluator, (project, root))| project_frame(evaluator, project, root, time))
                 .transpose()
                 .map_err(ExportError::Evaluation)
                 .map_err(at_frame)?;
             bridge
-                .submit_frame(
-                    time,
-                    project_frame.as_ref().map(|(layers, tracks)| ProjectFrame {
-                        layers: layers.as_slice(),
-                        tracks,
-                    }),
-                )
+                .submit_frame(time, project_frame.as_ref().map(ProjectLayers::as_frame))
                 .map_err(ExportError::React)
                 .map_err(at_frame)
         };

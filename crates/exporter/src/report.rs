@@ -836,6 +836,7 @@ pub(crate) fn classify(
                 "put {lang} in the subtitle path to write one file per language, or set the same lang on every <Subtitles>",
             ),
         ),
+        ExportError::DuplicateSubtitleOutput(_) => ("duplicate_subtitle_output", None),
         ExportError::NoOutput => (
             "no_output",
             fixed(if cli {

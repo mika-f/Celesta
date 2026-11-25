@@ -375,18 +375,10 @@ impl SourceArgs {
         };
         let start = timecode("start", &self.start)?;
         let end = timecode("end", &self.end)?;
-        if let (Some(start), Some(end)) = (start, end)
-            && end
-                .cmp_exact(start)
-                .map_err(|error| error.to_string())?
-                .is_le()
-        {
-            return Err("end must be after start".into());
-        }
-        let range = (start.is_some() || end.is_some()).then(|| ExportRange {
-            start: start.unwrap_or(celesta_composition::Time::ZERO),
-            end,
-        });
+        let range = ExportRange::from_bounds(start, end).map_err(|error| match error {
+            celesta_exporter::ExportError::EmptyRange => "end must be after start".into(),
+            error => error.to_string(),
+        })?;
         Ok(Source {
             path: absolute(&self.source),
             composition: self.composition.clone(),
@@ -469,25 +461,6 @@ fn still_choice(
     })
 }
 
-/// `quality`, checked against the still format it would encode; a named
-/// encoder is left to say what it takes.
-fn still_quality(
-    format: StillFormat,
-    quality: Option<u8>,
-    named_encoder: bool,
-) -> Result<Option<u8>, String> {
-    match quality {
-        Some(_) if !format.is_lossy() && !named_encoder => {
-            Err("quality applies to JPEG and WebP output; PNG is lossless".into())
-        }
-        Some(quality) if !(1..=StillExport::MAX_QUALITY).contains(&quality) => Err(format!(
-            "quality must be 1 to {}, not {quality}",
-            StillExport::MAX_QUALITY
-        )),
-        quality => Ok(quality),
-    }
-}
-
 fn job(
     source: Source,
     output: Option<PathBuf>,
@@ -516,13 +489,14 @@ impl RenderFramesArgs {
         let source = self.source.check(debug_guides)?;
         let frames = selection(&self.frames, self.every, source.range.as_ref())?;
         let format = StillFormat::from(self.format.unwrap_or_default());
-        let quality = still_quality(
-            format,
+        StillExport::validate_quality(
             self.quality,
+            Some(format),
             self.video_encoder
                 .as_ref()
                 .is_some_and(|encoder| encoder.id.is_some()),
-        )?;
+        )
+        .map_err(|error| error.to_string())?;
         let dir = match &self.output_dir {
             Some(dir) => {
                 let dir = absolute(dir);
@@ -542,7 +516,7 @@ impl RenderFramesArgs {
             frames,
             contact_sheet: None,
             debug_guides,
-            quality,
+            quality: self.quality,
         };
         let output = dir.join(format!("frame.{format}"));
         Ok(job(source, Some(output), Some(stills), options))
@@ -555,14 +529,11 @@ impl ContactSheetArgs {
         let debug_guides = self.debug_guides.unwrap_or(false);
         let source = self.source.check(debug_guides)?;
         let frames = selection(&self.frames, self.every, source.range.as_ref())?;
-        let columns = self.columns.unwrap_or(ContactSheet::DEFAULT_COLUMNS);
-        let tile_width = self.tile_width.unwrap_or(ContactSheet::DEFAULT_TILE_WIDTH);
-        if columns == 0 {
-            return Err("columns must be at least 1".into());
-        }
-        if tile_width == 0 {
-            return Err("tileWidth must be at least 1".into());
-        }
+        let sheet = ContactSheet {
+            columns: self.columns.unwrap_or(ContactSheet::DEFAULT_COLUMNS),
+            tile_width: self.tile_width.unwrap_or(ContactSheet::DEFAULT_TILE_WIDTH),
+        };
+        sheet.validate().map_err(|error| error.to_string())?;
         let (output, format) = match &self.output {
             Some(output) => {
                 let (output, format) = still_path(output)?;
@@ -582,13 +553,14 @@ impl ContactSheetArgs {
                 (dir.join(format!("sheet.{format}")), format)
             }
         };
-        let quality = still_quality(
-            format,
+        StillExport::validate_quality(
             self.quality,
+            Some(format),
             self.video_encoder
                 .as_ref()
                 .is_some_and(|encoder| encoder.id.is_some()),
-        )?;
+        )
+        .map_err(|error| error.to_string())?;
         let options = ExportOptions {
             overwrite: self.overwrite.unwrap_or(false),
             range: source.range,
@@ -597,12 +569,9 @@ impl ContactSheetArgs {
         };
         let stills = StillExport {
             frames,
-            contact_sheet: Some(ContactSheet {
-                columns,
-                tile_width,
-            }),
+            contact_sheet: Some(sheet),
             debug_guides,
-            quality,
+            quality: self.quality,
         };
         Ok(job(source, Some(output), Some(stills), options))
     }
@@ -635,6 +604,8 @@ impl ExportVideoArgs {
                 ("loop", self.looping.is_some()),
                 ("final", self.final_cut == Some(true)),
                 ("loudness", self.loudness.is_some()),
+                ("truePeak", self.true_peak.is_some()),
+                ("peakHandling", self.peak_handling.is_some()),
             ];
             if let Some((field, _)) = given.into_iter().find(|(_, given)| *given) {
                 return Err(format!(
@@ -692,7 +663,6 @@ impl ExportVideoArgs {
     }
 
     fn loudness(&self) -> Result<Option<LoudnessTarget>, String> {
-        let in_range = |value: f64, (low, high): (f64, f64)| (low..=high).contains(&value);
         let target = match &self.loudness {
             None => {
                 let given = [
@@ -704,22 +674,15 @@ impl ExportVideoArgs {
                 }
                 return Ok(None);
             }
-            Some(LoudnessArg::Lufs(lufs)) if in_range(*lufs, LoudnessTarget::INTEGRATED_RANGE) => {
-                LoudnessTarget::new(*lufs)
-            }
-            Some(LoudnessArg::Preset(name)) if name == "streaming" => LoudnessTarget::STREAMING,
-            Some(LoudnessArg::Preset(name)) if name == "broadcast" => LoudnessTarget::BROADCAST,
-            Some(_) => {
-                return Err(
-                    "loudness must be -70 to -5 LUFS, \"streaming\" or \"broadcast\"".into(),
-                );
-            }
-        };
+            Some(LoudnessArg::Lufs(lufs)) => LoudnessTarget::parse(&lufs.to_string()),
+            Some(LoudnessArg::Preset(name)) => LoudnessTarget::preset(name).ok_or_else(|| {
+                format!("unknown loudness preset {name:?}; expected streaming or broadcast")
+            }),
+        }
+        .map_err(|error| format!("loudness: {error}"))?;
         let true_peak_dbtp = match self.true_peak {
-            Some(dbtp) if !in_range(dbtp, LoudnessTarget::TRUE_PEAK_RANGE) => {
-                return Err(format!("truePeak must be -9 to 0 dBTP, not {dbtp}"));
-            }
-            Some(dbtp) => dbtp,
+            Some(dbtp) => LoudnessTarget::parse_true_peak(&dbtp.to_string())
+                .map_err(|error| format!("truePeak: {error}, not {dbtp}"))?,
             None => target.true_peak_dbtp,
         };
         let peak_handling = match &self.peak_handling {
@@ -1112,6 +1075,16 @@ mod tests {
     }
 
     #[test]
+    fn subtitles_only_rejects_peak_options() {
+        for (field, value) in [("truePeak", json!(-2)), ("peakHandling", json!("limit"))] {
+            rejects(
+                video_job(json!({ "source": "a.tsx", "subtitles": "a.srt", field: value })),
+                field,
+            );
+        }
+    }
+
+    #[test]
     fn loudness_takes_lufs_or_a_preset() {
         let loudness = |args: Value| video_job(args).map(|job| job.options.loudness);
         assert_eq!(
@@ -1144,6 +1117,10 @@ mod tests {
             ),
             (
                 json!({ "source": "a.tsx", "output": "a.mp4", "loudness": "loud" }),
+                "loudness",
+            ),
+            (
+                json!({ "source": "a.tsx", "output": "a.mp4", "loudness": "-14" }),
                 "loudness",
             ),
             (

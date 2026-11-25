@@ -734,7 +734,19 @@ fn export_still_with(source: &Path, output: &Path, options: &[(&str, &str)]) {
         output: choice,
         ..ExportOptions::default()
     })
-    .export_project_stills(&project, source.parent().unwrap(), &[0], output, |_| {})
+    .export_project_stills_with(
+        &project,
+        source.parent().unwrap(),
+        &StillExport {
+            frames: FrameSelection::Frames(vec![0]),
+            contact_sheet: None,
+            debug_guides: false,
+            quality: None,
+        },
+        output,
+        &ExportCancellation::default(),
+        |_| {},
+    )
     .unwrap();
 }
 

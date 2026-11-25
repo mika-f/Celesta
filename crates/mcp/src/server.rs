@@ -37,7 +37,7 @@ use crate::inspect::{self, Halt, InspectArgs};
 pub struct CelestaServer {
     tool_router: ToolRouter<Self>,
     /// Held by every tool that renders, so they take turns on the GPU.
-    render_lock: Arc<Mutex<()>>,
+    pub(crate) render_lock: Arc<Mutex<()>>,
     outputs: Arc<OutputDirs>,
     media: Arc<SharedMedia>,
 }

@@ -223,11 +223,13 @@ Celesta-export --json --react film.tsx film.mp4 --subtitles film.srt --subtitles
   Blank lines inside a cue are dropped; WebVTT escapes `&`, `<`, and `>`.
 - With a still-image selection (`--frame`, `--every`) `--subtitles` is a usage error. Without
   `--overwrite` an existing subtitle file is `output_exists`, checked before
-  anything renders (a `{lang}` path's files only when they are written);
+  anything renders (a `{lang}` path's files once the cues are known, before
+  publishing any outputs);
   another extension is `unsupported_subtitles`.
-- The JSON result lists each file in `outputs` as `{"type": "subtitles",
-  "path", "format": "srt" | "vtt", "cues", "lang"?}`; `lang` is there when
-  the subtitles have a language.
+- The CLI and MCP JSON results list each subtitle file in `outputs` as
+  `{"type": "subtitles", "path", "format": "srt" | "vtt", "cues", "lang"?}`.
+  Even without `{lang}` in the path, `lang` is trimmed and lowercase
+  (`ja-JP` becomes `ja-jp`), and is omitted for a missing, empty, or `und` tag.
 - The MCP `export_video` tool takes the same as `subtitles`: one path or a
   list of them.
 
@@ -253,13 +255,15 @@ Celesta-export --json --react film.tsx film.mp4 \
   `<Subtitles>` whose language differs from the composition's: in a
   `<Composition lang="ja-JP">`, an English `<Subtitles>` without `lang` is
   `ja-JP` too.
-- Languages are compared as written: `ja` and `ja-JP` are two files.
-  Subtitles with no language at all go to `und` (`film.und.srt`). Characters
-  other than letters, digits, `-`, and `_` become `_` in the file name.
+- Tags are trimmed and lowercased for both kinds of paths: `ja` and `ja-JP`
+  are different languages, but `EN` and `en` are the same. Empty or missing
+  tags count as `und`. For `{lang}`, characters other than ASCII letters, digits, `-`, and
+  `_` become `_` in the file name. A filename collision fails with
+  `duplicate_subtitle_output` before any output is published.
 - A `{lang}` path with no subtitles writes nothing and warns.
 - A path without `{lang}` takes subtitles of one language only; subtitles in
-  several languages there fail with `mixed_subtitle_languages`, after the
-  video is written, and no subtitle file is written.
+  several languages there fail with `mixed_subtitle_languages` before
+  publishing the video or subtitles.
 - Quote the path in the shell so `{lang}` reaches the exporter as written.
 
 ## Subtitles without the video
@@ -279,7 +283,8 @@ Celesta-export --json --react film.tsx --subtitles 'film.{lang}.vtt'
 - Progress counts the evaluated frames; the JSON result has `composition`
   and the subtitle files in `outputs`, and no video.
 - A JSON project writes its dialogue items without evaluating anything.
-- MCP: call `export_video` with `subtitles` and no `output`.
+- MCP: call `export_video` with `subtitles` and no `output`; omit
+  `loudness`, `truePeak`, and `peakHandling`.
 
 ## Write a file from data
 

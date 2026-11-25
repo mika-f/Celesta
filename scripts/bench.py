@@ -44,10 +44,10 @@ def git(*arguments, cwd=ROOT):
     ).stdout.strip()
 
 
-def build(revision, label, target_dir, worktrees, react):
+def build(revision, label, target_dir, worktrees, workloads):
     """Builds celesta-bench at `revision` (None: the working tree) and returns
-    a copy of the binary, or None if that revision has no benchmark. With
-    `react`, also builds that revision's React runtime for `nebula`."""
+    a copy of the binary, or None if that revision has no benchmark.
+    Also builds that revision's React runtime when a selected workload needs it."""
     if revision is None:
         source = ROOT
     else:
@@ -89,11 +89,13 @@ def build(revision, label, target_dir, worktrees, react):
         ["cargo", "build", "--release", "--locked", "--quiet", "-p", "celesta-bench"],
         check=True, cwd=source, env=env,
     )
-    if react:
+    suffix = ".exe" if os.name == "nt" else ""
+    built = cargo_target / "release" / f"celesta-bench{suffix}"
+    if needs_react(built, workloads):
         # As in CI: the bridge spawns the compiled packages/cli/dist/cli.js.
         # Revisions from before the package split build packages/react alone,
         # whose dist/cli.js their bridge spawns instead.
-        pnpm = shutil.which("pnpm") or sys.exit("the nebula workload needs pnpm")
+        pnpm = shutil.which("pnpm") or sys.exit("the selected React workloads need pnpm")
         build = (["run", "--silent", "build:runtime"] if (source / "packages/cli").is_dir()
                  else ["--dir", "packages/react", "run", "--silent", "build"])
         for arguments in (["install", "--frozen-lockfile", "--silent"],
@@ -101,10 +103,9 @@ def build(revision, label, target_dir, worktrees, react):
                           build):
             subprocess.run([pnpm, *arguments],
                            check=True, cwd=source, env=env, stdout=subprocess.DEVNULL)
-    suffix = ".exe" if os.name == "nt" else ""
     binary = target_dir / "bench-bin" / f"celesta-bench-{label}{suffix}"
     binary.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(cargo_target / "release" / f"celesta-bench{suffix}", binary)
+    shutil.copy2(built, binary)
     return binary
 
 
@@ -123,10 +124,25 @@ def run_bench(binary, arguments, env=None):
     return [json.loads(line) for line in output.splitlines() if line.startswith("{")]
 
 
-def listed_workloads(binary):
-    return [line.split("\t")[0] for line in subprocess.run(
+def workload_rows(binary):
+    return [line.split("\t") for line in subprocess.run(
         [str(binary), "list"], check=True, text=True, stdout=subprocess.PIPE,
     ).stdout.splitlines()]
+
+
+def listed_workloads(binary):
+    return [row[0] for row in workload_rows(binary)]
+
+
+def needs_react(binary, workloads):
+    for name, description, *kind in workload_rows(binary):
+        # Older revisions have only the name and description columns.
+        react = kind[0] == "react" if kind else (
+            "(React" in description or name in ("nebula", "spectra", "supernova")
+        )
+        if react and (not workloads or name in workloads):
+            return True
+    return False
 
 
 def workloads_of(binary, options):
@@ -350,7 +366,7 @@ def main():
     options = parser.parse_args()
     target_dir = (options.target_dir or ROOT / "target").resolve()
     if options.command == "build":
-        build(None, "head", target_dir, None, react=True)
+        build(None, "head", target_dir, None, ())
         return
 
     instructions = options.mode == "instructions"
@@ -371,9 +387,8 @@ def main():
         sys.exit("instructions mode needs valgrind (3.22 or later)")
     worktrees = (options.worktrees or target_dir / "bench-worktrees").resolve()
     revisions = {"base": describe(base), "head": describe(options.head)}
-    react = not options.workloads or any(name in options.workloads for name in ("nebula", "spectra", "supernova"))
-    binaries = {"base": build(base, "base", target_dir, worktrees, react),
-                "head": build(options.head, "head", target_dir, worktrees, react)}
+    binaries = {"base": build(base, "base", target_dir, worktrees, options.workloads),
+                "head": build(options.head, "head", target_dir, worktrees, options.workloads)}
     if binaries["head"] is None:
         sys.exit("the head revision has no crates/bench")
     binaries = {label: binary for label, binary in binaries.items() if binary is not None}

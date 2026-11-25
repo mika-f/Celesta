@@ -3,20 +3,20 @@
 //! [`ExportProgress::Quality`] events, writing no file. See
 //! [`crate::quality`].
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
 use celesta_composition::{Rational, ResolvedAsset, Scene, Time};
-use celesta_evaluator::{EvaluationError, Evaluator};
+use celesta_evaluator::Evaluator;
 use celesta_gpu_renderer::{GpuFrame, GpuRenderer};
 use celesta_project::Project;
-use celesta_react_bridge::{ProjectFrame, ReactBridge};
+use celesta_react_bridge::ReactBridge;
 
 use crate::control::{CompositionInfo, ExportCancellation, ExportProgress};
 use crate::error::ExportError;
 use crate::exporter::Exporter;
-use crate::project::{absolutize_fonts, absolutize_layers};
+use crate::project::{ProjectLayers, project_fonts, project_frame};
 use crate::quality::{
     self, PROBE_FILLS, PixelLint, QualityCode, SceneLint, TextContrast, TextSample,
     with_probe_fill, without_layer,
@@ -53,13 +53,8 @@ impl<'a> ReactScenes<'a> {
             .map_err(ExportError::Evaluation)?;
         let fonts = evaluator
             .as_ref()
-            .map(|evaluator| -> Result<_, EvaluationError> {
-                let mut fonts = evaluator.scene_at(Time::ZERO)?.fonts;
-                if let Some((_, asset_root)) = project {
-                    absolutize_fonts(&mut fonts, asset_root);
-                }
-                Ok(fonts)
-            })
+            .zip(project)
+            .map(|(evaluator, (_, root))| project_fonts(evaluator, root))
             .transpose()
             .map_err(ExportError::Evaluation)?
             .unwrap_or_default();
@@ -83,30 +78,12 @@ impl<'a> ReactScenes<'a> {
             .evaluator
             .as_ref()
             .zip(self.project)
-            .map(
-                |(evaluator, (project, asset_root))| -> Result<_, EvaluationError> {
-                    let mut scene = evaluator.scene_at(time)?;
-                    let mut tracks = BTreeMap::new();
-                    for track in &project.tracks {
-                        let mut layers = evaluator.layers_for_track(&track.id, time)?;
-                        absolutize_layers(&mut layers, asset_root);
-                        tracks.insert(track.id.clone(), layers);
-                    }
-                    absolutize_layers(&mut scene.layers, asset_root);
-                    Ok((scene.layers, tracks))
-                },
-            )
+            .map(|(evaluator, (project, root))| project_frame(evaluator, project, root, time))
             .transpose()
             .map_err(ExportError::Evaluation)?;
         let evaluation = self
             .bridge
-            .evaluate_at(
-                time,
-                project_frame.as_ref().map(|(layers, tracks)| ProjectFrame {
-                    layers: layers.as_slice(),
-                    tracks,
-                }),
-            )
+            .evaluate_at(time, project_frame.as_ref().map(ProjectLayers::as_frame))
             .map_err(ExportError::React)?;
         let mut scene = evaluation.scene;
         scene.fonts.extend(self.fonts.iter().cloned());
@@ -233,13 +210,9 @@ impl Exporter {
     ) -> Result<(), ExportError> {
         let asset_root = crate::project::folder_of(entry);
         let asset_root = &fs::canonicalize(asset_root).unwrap_or_else(|_| asset_root.to_owned());
-        let project_owned = companion.map(|companion| {
-            (
-                companion.project,
-                fs::canonicalize(companion.project_asset_root)
-                    .unwrap_or_else(|_| companion.project_asset_root.to_owned()),
-            )
-        });
+        let project_owned = crate::react_entry::canonical_project(
+            companion.map(|c| (c.project, c.project_asset_root)),
+        );
         let project = project_owned
             .as_ref()
             .map(|(project, root)| (*project, root.as_path()));

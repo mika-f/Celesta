@@ -120,6 +120,8 @@ const cues = parseSubtitles(captions, { fps: 30 });
 
 `--subtitles` を付けると、動画と一緒に字幕ファイルを書き出します。拡張子が `.srt` なら SRT、`.vtt` なら WebVTT です。`<Subtitles>` で宣言した字幕と `<Dialogue>` の台詞が、表示されている間の時刻で入ります。`--from` / `--to` と組み合わせると、字幕の時刻も区間の開始を 0 として詰め、区間の外にはみ出す部分は切ります。
 
+`'film.{lang}.srt'` のようなパスを指定すると、言語ごとに字幕ファイルを書き出します。`{lang}` のないパスに書き出せるのは 1 言語だけです。どちらの場合も、言語タグは前後の空白を除いて小文字にし、未指定または空のタグは `und` として扱います。字幕ファイルの出力先が重複する場合は、動画を公開したり既存の字幕を置き換えたりする前に失敗します。MCP の `export_video` で字幕だけを書き出す場合は `output` を省略し、`loudness`、`truePeak`、`peakHandling` は指定できません。
+
 ::::tabs[書き出しを行う OS]{default="macOS"}
 :::tab[macOS]
 
@@ -559,6 +561,8 @@ Celesta は[メディアプラグイン](/ja/docs/plugins/#メディアプラグ
 スクリプトが対応したい警告は `"codedWarnings"` にも入ります。各項目は変わらない `"code"` と `"message"` を持ちます（該当がなければキーはありません）。`nondeterministic_render` は、コンポジションが描画中に `Math.random()` や `Date.now()` などの時計を呼んだことを表します（[アニメーション](/ja/docs/animation/)を参照）。`rough_scenes` は、書き出した範囲にラフカットのシーン（`<Composition chapters>` で `status: 'rough'` のもの。[シーン・キュー・拍](/ja/docs/motion-toolkit/)を参照）があり、仮のカードのまま動画に入ったことを表します。代わりに書き出しを止めるには `--final` を付けます。このとき何も書き出さず、エラーコード `rough_scenes` で失敗します。MCP の `export_video` ツールと `@celesta.studio/exporter` も `final` を受け付け、`codedWarnings` を返します。
 
 描画を初期化すると、テキスト出力の `graphics:` 行に、実際に選ばれたバックエンドとアダプター名、ソフトウェア描画かハードウェア描画かが表示されます。最終的な `--json` の結果では、同じ情報が `graphics` に入ります（例：`{"backend":"vulkan","adapter":"llvmpipe","software":true}`）。`--info` など、描画を初期化しないコマンドでは省略されます。
+
+CLI の `--json` と MCP の `export_video` のどちらでも、`outputs` の字幕項目の `lang` は、出力パスに `{lang}` がなくても、前後の空白を取り除いた小文字のタグになります（例：`ja-JP` は `ja-jp`）。タグが未指定、空、または `und` のときは `lang` を省略しますが、ファイル名の `{lang}` には `und` が入ります。
 
 ソースビルドを使う場合は、[開発者向け手順](/ja/docs/build-from-source/)に対応する Cargo コマンドがあります。
 

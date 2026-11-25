@@ -36,10 +36,11 @@ export default function Root() {
         loudness: Some(LoudnessTarget::STREAMING),
         ..ExportOptions::default()
     })
-    .export_react_entry_with_progress(
+    .export_react_entry_cancellable(
         &entry,
         &ReactRuntimeOptions::new("node", runtime_path),
         &output,
+        &ExportCancellation::default(),
         |event| match event {
             ExportProgress::Wrote(file) => written.push(file),
             ExportProgress::Warning(warning) => warnings.push(warning),
@@ -106,10 +107,11 @@ fn a_silent_react_entry_with_loop_has_no_audio_track() {
         looping: true,
         ..ExportOptions::default()
     })
-    .export_react_entry_with_progress(
+    .export_react_entry_cancellable(
         &entry,
         &ReactRuntimeOptions::new("node", runtime_path),
         &output,
+        &ExportCancellation::default(),
         |event| {
             if let ExportProgress::Wrote(file) = event {
                 written.push(file);
@@ -166,10 +168,11 @@ export default function Root() {
         subtitles: vec![subtitles.clone()],
         ..ExportOptions::default()
     })
-    .export_react_entry_with_progress(
+    .export_react_entry_cancellable(
         &entry,
         &ReactRuntimeOptions::new("node", runtime_path),
         &output,
+        &ExportCancellation::default(),
         |event| {
             if let ExportProgress::Wrote(file) = event {
                 written.push(file);
@@ -204,6 +207,54 @@ export default function Root() {
         ),
         "{written:?}"
     );
+}
+
+#[test]
+fn an_existing_language_subtitle_blocks_video_publication() {
+    let runtime_path = crate::runtime();
+    let directory = tempfile::tempdir_in(root().join("packages/cli")).unwrap();
+    let entry = directory.path().join("film.tsx");
+    std::fs::write(
+        &entry,
+        r#"
+import { Composition, Subtitles } from '@celesta.studio/react';
+export default function Root() {
+  return <Composition width={64} height={64} fps={2} durationInFrames={2}>
+    <Subtitles lang="en" cues={[{ from: 0, durationInFrames: 2, text: "Hello" }]} />
+  </Composition>;
+}
+"#,
+    )
+    .unwrap();
+    let output = directory.path().join("film.mp4");
+    let existing = directory.path().join("film.en.srt");
+    std::fs::write(&existing, "keep").unwrap();
+    let result = crate::exporter(ExportOptions {
+        subtitles: vec![
+            directory.path().join("other.{lang}.srt"),
+            directory.path().join("film.{lang}.srt"),
+        ],
+        ..ExportOptions::default()
+    })
+    .export_react_entry_cancellable(
+        &entry,
+        &ReactRuntimeOptions::new("node", runtime_path),
+        &output,
+        &ExportCancellation::default(),
+        |_| {},
+    );
+    if let Err(ExportError::Render(GpuRenderError::RequestAdapter(error))) = &result {
+        skip_without_gpu(error);
+        return;
+    }
+    assert!(
+        matches!(&result, Err(ExportError::OutputExists(path)) if path == &existing),
+        "{result:?}"
+    );
+    assert_eq!(std::fs::read_to_string(&existing).unwrap(), "keep");
+    assert!(!output.exists());
+    assert!(!directory.path().join("other.en.srt").exists());
+    assert!(crate::common::staging_in(directory.path()).is_empty());
 }
 
 #[test]

@@ -1,27 +1,31 @@
 use crate::DEFAULT_REACT_AUDIO_SAMPLE_RATE;
-use crate::encode::{LOOP_LEAD_IN_FRAMES, loop_lead_in};
+use crate::encode::{ExportSession, LOOP_LEAD_IN_FRAMES, loop_lead_in};
 use crate::error::ExportError;
 use crate::project::absolutize_layers;
 use crate::project::build_audio_graph;
 use crate::range::{ExportRange, resolve_window, shifted_audio_graph};
-use crate::render::{frame_count, validate_dimensions, validate_output};
+use crate::render::{frame_count, open_video_output, validate_dimensions, validate_output};
 use crate::timecode::{TimecodeError, parse_timecode};
+use crate::{ExportCancellation, ExportOptions, ExportProgress, Exporter};
 use celesta_composition::{
     AssetLocation, EvaluatedTransform, F32Column, GroupMask, InstanceShape, Layer, LayerContent,
     MaskMode, Rational, ResolvedAsset, Time,
 };
 use celesta_composition::{AudioDuck, DuckGroups, DuckLevel};
 use celesta_evaluator::Evaluator;
+use celesta_gpu_renderer::GpuRenderError;
+use celesta_media::MediaRegistry;
 use celesta_project::Project;
 use celesta_react_bridge::{ReactAudioClipDescriptor, ReactDuck, merge_react_audio_clips};
+use std::cell::Cell;
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 
 use celesta_composition::{Animatable, Keyframe, KeyframeAnimation, KeyframeAnimationType};
 
 #[test]
 fn nv12_and_p010_are_offered_after_the_planar_formats() {
-    use crate::encode::ExportSession;
     use celesta_gpu_renderer::{GpuRenderOptions, GpuRenderer};
     use celesta_media::PixelFormat::{Nv12, P010, Rgba8, Rgba16, Yuv420p, Yuv420p10};
 
@@ -49,7 +53,6 @@ fn nv12_and_p010_are_offered_after_the_planar_formats() {
 
 #[test]
 fn export_yuv_offers_require_hardware_support_and_no_opt_out() {
-    use crate::encode::ExportSession;
     use celesta_media::PixelFormat::{Nv12, P010, Rgba8, Rgba16, Yuv420p, Yuv420p10};
     use std::ffi::OsStr;
 
@@ -78,6 +81,69 @@ fn export_yuv_offers_require_hardware_support_and_no_opt_out() {
             [Rgba16, Rgba8]
         );
     }
+}
+
+#[test]
+fn a_mix_failure_after_the_frame_poll_stops_rendering_and_skips_drain() {
+    let mut project =
+        Project::from_json(include_str!("../../../examples/minimal.celesta.json")).unwrap();
+    project.settings.width = 64;
+    project.settings.height = 64;
+    let rate = project.settings.frame_rate;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("out.mp4");
+    let options = ExportOptions::default();
+    let media = Arc::new(MediaRegistry::new(vec![celesta_codec_test::registered()]));
+    let exporter = Exporter::with_media(options.clone(), media.clone());
+    let cancellation = ExportCancellation::default();
+    let mut observed = Vec::new();
+    for frames in [2, 1] {
+        let duration = Time::frames(frames, rate).unwrap();
+        let window = resolve_window(&ExportRange::from(Time::ZERO), duration, rate).unwrap();
+        let mut renderer =
+            match exporter.export_renderer(dir.path(), rate, &cancellation, &mut |_| {}) {
+                Ok(renderer) => renderer,
+                Err(ExportError::Render(GpuRenderError::RequestAdapter(error))) => {
+                    assert!(
+                        std::env::var("CELESTA_REQUIRE_GPU").as_deref() != Ok("1"),
+                        "GPU tests require an adapter: {error}"
+                    );
+                    eprintln!("skipping: no GPU adapter is available: {error}");
+                    return;
+                }
+                Err(error) => panic!("failed to open the renderer: {error}"),
+            };
+        let mut session = ExportSession::start(media.clone(), &cancellation);
+        session
+            .resolve(&options.output, &options.presets, &path, (64, 64))
+            .unwrap();
+        open_video_output(&mut session, &mut renderer, 64, 64, rate, &path).unwrap();
+        let audio_failed = Cell::new(false);
+        let mut started = Vec::new();
+        exporter
+            .render_video(
+                &project,
+                window,
+                &mut renderer,
+                &mut session,
+                &cancellation,
+                &mut |event| {
+                    if let ExportProgress::Rendering { frame, .. } = event {
+                        started.push(frame);
+                    }
+                },
+                || audio_failed.get(),
+                &mut |_| {
+                    // The poll saw no result, then the mix failed before rendering resumed.
+                    audio_failed.set(true);
+                    Ok(())
+                },
+            )
+            .unwrap();
+        observed.push((started, session.frames_sent()));
+        session.abort();
+    }
+    assert_eq!(observed, [(vec![1], 0), (vec![1], 0)]);
 }
 
 fn static_clip(src: &str, start: f64, duration: f64, volume: f64) -> ReactAudioClipDescriptor {

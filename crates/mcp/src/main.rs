@@ -11,6 +11,7 @@ mod server;
 mod summary;
 
 use rmcp::ServiceExt;
+use std::time::Duration;
 
 fn main() {
     let mut args = std::env::args_os().skip(1);
@@ -53,16 +54,17 @@ async fn start_server() {
 async fn run() -> anyhow::Result<()> {
     // The registry the tools share until one discovers other plugins.
     let media = celesta_exporter::use_installed_media();
-    let service = server::CelestaServer::new(media)?
-        .serve(rmcp::transport::stdio())
-        .await?;
+    let server = server::CelestaServer::new(media)?;
+    let service = server.clone().serve(rmcp::transport::stdio()).await?;
     let stop = service.cancellation_token();
     tokio::spawn(async move {
         terminated().await;
         stop.cancel();
     });
-    // Returning drops the server, which removes its temporary outputs.
-    service.waiting().await?;
+    let result = service.waiting().await;
+    // Let a cancelled export unwind before process::exit skips its destructors.
+    let _ = tokio::time::timeout(Duration::from_secs(10), server.render_lock.lock()).await;
+    result?;
     Ok(())
 }
 

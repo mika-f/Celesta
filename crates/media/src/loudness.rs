@@ -42,6 +42,39 @@ impl LoudnessTarget {
     /// EBU R128 broadcast loudness.
     pub const BROADCAST: Self = Self::new(-23.0);
 
+    /// Parses a named preset or a numeric target in LUFS.
+    pub fn parse(value: &str) -> Result<Self, String> {
+        if let Some(preset) = Self::preset(value) {
+            return Ok(preset);
+        }
+        let (low, high) = Self::INTEGRATED_RANGE;
+        value
+            .parse::<f64>()
+            .ok()
+            .filter(|value| (low..=high).contains(value))
+            .map(Self::new)
+            .ok_or_else(|| format!("expected {low} to {high} LUFS, streaming or broadcast"))
+    }
+
+    /// Resolves a named loudness preset.
+    pub fn preset(name: &str) -> Option<Self> {
+        match name {
+            "streaming" => Some(Self::STREAMING),
+            "broadcast" => Some(Self::BROADCAST),
+            _ => None,
+        }
+    }
+
+    /// Parses a numeric true-peak ceiling in dBTP.
+    pub fn parse_true_peak(value: &str) -> Result<f64, String> {
+        let (low, high) = Self::TRUE_PEAK_RANGE;
+        value
+            .parse::<f64>()
+            .ok()
+            .filter(|value| (low..=high).contains(value))
+            .ok_or_else(|| format!("expected {low} to {high} dBTP"))
+    }
+
     /// `integrated_lufs` with a -1 dBTP ceiling held by the limiter.
     pub const fn new(integrated_lufs: f64) -> Self {
         Self {
