@@ -586,6 +586,14 @@ fn variable_weight_changes_shaped_advances_and_pixels() {
 }
 
 #[test]
+fn variable_weight_changes_measured_x_height() {
+    let mut rasterizer = variable_weight_rasterizer();
+    let regular = rasterizer.measure("A", &variable_weight_style(400), None);
+    let bold = rasterizer.measure("A", &variable_weight_style(700), None);
+    assert!(bold.x_height > regular.x_height);
+}
+
+#[test]
 fn variable_weights_clamp_to_the_axis_endpoints() {
     let mut rasterizer = variable_weight_rasterizer();
     for (asked, endpoint) in [(100, 200), (900, 800)] {
