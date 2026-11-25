@@ -283,10 +283,15 @@ mod tests {
     /// The synthetic avatar with `clips` (asset name, clip) as files of a
     /// fresh directory, opened with a fresh texture cache.
     fn open(clips: &[(&str, &SyntheticVrma)]) -> (VrmModel, TempDir) {
+        open_avatar(&SyntheticVrm::avatar().glb(), clips)
+    }
+
+    /// [`open`] with the avatar `avatar` (a `.vrm`'s bytes).
+    fn open_avatar(avatar: &[u8], clips: &[(&str, &SyntheticVrma)]) -> (VrmModel, TempDir) {
         let directory = TempDir::new().unwrap();
         let mut assets = BTreeMap::new();
         let path = directory.path().join("avatar.vrm");
-        std::fs::write(&path, SyntheticVrm::avatar().glb()).unwrap();
+        std::fs::write(&path, avatar).unwrap();
         assets.insert("model".to_owned(), path);
         for (name, clip) in clips {
             let path = directory.path().join(format!("{name}.vrma"));
@@ -540,13 +545,18 @@ mod tests {
 
     #[test]
     fn hips_past_f32_are_refused() {
-        // The clip's hips 3e38 m out, and a hips track 3e38 m further: each
-        // finite, their sum not.
+        // A clip's keys stay within 1e6, but its 1e6 m of travel scales by
+        // the avatar's hips height over the clip's (3e32 over 1) to 3e38 m,
+        // and a hips track moves them 3e38 m further: each finite, their
+        // sum not.
+        let avatar = SyntheticVrm::avatar().glb_with(|root| {
+            root["nodes"][node::HIPS]["translation"][1] = json!(3e32);
+        });
         let far = SyntheticVrma {
-            hips: vec![(0.0, Vec3::new(3e38, 1.0, 0.0))],
+            hips: vec![(0.0, Vec3::new(1e6, 1.0, 0.0))],
             ..SyntheticVrma::clip()
         };
-        let (model, _files) = open(&[("motion0", &far)]);
+        let (model, _files) = open_avatar(&avatar, &[("motion0", &far)]);
         let x = json!({
             "type": "keyframes",
             "keyframes": [{ "time": { "value": 0, "timescale": 30 }, "value": 3e38 }],
