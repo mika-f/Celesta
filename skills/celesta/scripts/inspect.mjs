@@ -100,6 +100,8 @@ function fail(message) {
 
 // ---------------------------------------------------------------- runtime
 
+const linuxPath = process.platform === 'linux' ? (process.env.PATH ?? '').split(path.delimiter).filter(Boolean) : [];
+
 function findRuntime(options, startDirs) {
   const explicit = options.runtime ?? process.env.CELESTA_REACT_CLI;
   const candidates = [];
@@ -119,6 +121,10 @@ function findRuntime(options, startDirs) {
   if (process.platform === 'win32' && process.env.LOCALAPPDATA) {
     candidates.push(path.join(process.env.LOCALAPPDATA, 'Programs/Celesta/runtime/react/dist/cli.js'));
   }
+  if (process.platform === 'linux') {
+    candidates.push(path.join(path.dirname(process.execPath), 'react/dist/cli.js'));
+    for (const bin of linuxPath) candidates.push(path.resolve(bin, 'runtime/react/dist/cli.js'));
+  }
   const cli = candidates.find((candidate) => existsSync(candidate));
   if (!cli) {
     fail(
@@ -126,6 +132,7 @@ function findRuntime(options, startDirs) {
         'Pass --runtime <path to cli.js>, for example:\n' +
         '  macOS:   /Applications/Celesta.app/Contents/Resources/react/dist/cli.js\n' +
         '  Windows: <Celesta folder>\\runtime\\react\\dist\\cli.js\n' +
+        '  Linux:   <Celesta folder>/bin/runtime/react/dist/cli.js\n' +
         '  source:  <repo>/packages/cli/dist/cli.js (run pnpm install, codegen, build:runtime first)',
     );
   }
@@ -171,6 +178,7 @@ function findExporter(startDirs, loop) {
   if (process.platform === 'win32' && process.env.LOCALAPPDATA) {
     candidates.push(path.join(process.env.LOCALAPPDATA, 'Programs/Celesta/Celesta-export.exe'));
   }
+  for (const bin of linuxPath) candidates.push(path.resolve(bin, 'celesta-exporter'));
   // Exporters from before --inspect are skipped, and for --loop those from
   // before openEnd, which Node-only inspection handles.
   const supportsInspect = (exporter) => {

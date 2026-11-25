@@ -8,9 +8,9 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import type { SpawnSyncReturns } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { test } from 'vitest';
 
@@ -63,6 +63,35 @@ const measuring = `
     return <Composition width={1920} height={1080} fps={30} durationInFrames={30}><Title /></Composition>;
   }
 `;
+
+test.skipIf(process.platform !== 'linux')('finds the Linux archive exporter and runtime on PATH', () => {
+  withEntry('celesta-inspect-linux-', ({ dir, entry, write }) => {
+    write(`
+      import { Composition } from '@celesta.studio/react';
+      export default function Root() {
+        return <Composition width={64} height={64} fps={1} durationInFrames={1} />;
+      }
+    `);
+    const bin = join(dir, 'install', 'bin');
+    const react = join(bin, 'runtime', 'react');
+    mkdirSync(react, { recursive: true });
+    symlinkSync(dirname(runtime), join(react, 'dist'));
+    const exporter = join(bin, 'celesta-exporter');
+    writeFileSync(exporter, '#!/bin/sh\nif [ "$1" = --help ]; then echo --inspect; exit 0; fi\necho "called with $1" >&2\nexit 1\n', { mode: 0o755 });
+    const env: NodeJS.ProcessEnv = { ...process.env, PATH: bin };
+    delete env.CELESTA_REACT_CLI;
+    delete env.CELESTA_NODE;
+    const inspect = (...args: string[]) => spawnSync(process.execPath, [inspector, entry, ...args], {
+      cwd: dir, env, encoding: 'utf8', timeout: 15000,
+    });
+    const native = inspect();
+    assert.ok(native.stdout.includes(`native:  ${exporter} (found)`), native.stderr);
+    assert.match(native.stderr, /called with --inspect/);
+    const node = inspect('--no-native', '--json');
+    assert.equal(node.status, 0, node.stderr);
+    assert.equal(reportOf(node.stdout).frames.length, 1);
+  });
+});
 
 test('measuring frames are unsupported, not errors, and scene errors still win', () => {
   withEntry('celesta-inspect-', ({ write, inspect }) => {

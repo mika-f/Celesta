@@ -51,7 +51,8 @@ node <skill>/scripts/inspect.mjs loop.tsx --loop            # frame N against fr
 ```
 
 It finds the runtime automatically (a source checkout above the entry or the
-current directory, then the default macOS and Windows install locations).
+current directory, the default macOS and Windows install locations, or the
+Linux archive if run with its bundled Node or its `bin` is on PATH).
 Override with `--runtime <cli.js>` and `--node <node>` (or `CELESTA_REACT_CLI`
 / `CELESTA_NODE`). With no Node.js on PATH, run the script with Celesta's
 bundled Node:
@@ -59,6 +60,9 @@ bundled Node:
 ```sh
 "/Applications/Celesta.app/Contents/Helpers/node" <skill>/scripts/inspect.mjs scene.tsx
 ```
+
+On Linux, use `<Celesta folder>/bin/runtime/node` in the same command and add
+`<Celesta folder>/bin` to PATH to discover the native exporter.
 
 The script stops `--timeout` seconds (default 180) after it starts the
 runtime, so the entry's `prepare()` counts toward it; give a larger one for
@@ -142,7 +146,7 @@ The first line of the output then reads `native: <path> (found)`.
 
 It looks for a source checkout's build (`target/release` or
 `target/debug`, the newer first) above the entry or the current directory,
-then the default macOS and Windows installs
+then the default macOS and Windows installs or `celesta-exporter` on PATH on Linux
 ([setup.md](setup.md#find-the-celesta-tools)), and skips exporters too old
 to support `--inspect` (with `--loop`, too old to evaluate past the end). Pass `--native <Celesta-export>` to choose one
 yourself, or `--no-native` to evaluate in Node only. `--props`/
