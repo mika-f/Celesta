@@ -983,10 +983,6 @@ fn tangents(
     warnings: &mut Warnings,
 ) -> Vec<[f32; 4]> {
     let fallback = || vec![DEFAULT_TANGENT; positions.len()];
-    if let Err(reason) = check_tangent_work(positions, indices, remaining) {
-        warnings.push(|| format!("{at} uses default tangents: {reason}"));
-        return fallback();
-    }
     let finite = |values: &[f32]| values.iter().all(|value| value.is_finite());
     if !(finite(positions.as_flattened())
         && finite(normals.as_flattened())
@@ -1000,6 +996,10 @@ fn tangents(
         u[0] * v[1] - u[1] * v[0] == 0.0
     });
     if flat {
+        return fallback();
+    }
+    if let Err(reason) = check_tangent_work(positions, indices, remaining) {
+        warnings.push(|| format!("{at} uses default tangents: {reason}"));
         return fallback();
     }
 
@@ -1743,10 +1743,11 @@ mod tests {
 
     #[test]
     fn flat_uvs_give_finite_tangents() {
-        let cube = &body(&SyntheticVrm {
+        let avatar = SyntheticVrm {
             flat_uvs: true,
             ..SyntheticVrm::avatar()
-        })[0];
+        };
+        let cube = &body(&avatar)[0];
         let tangents = cube.tangents.as_ref().unwrap();
         assert_eq!(tangents.len(), 8);
         assert!(
@@ -1754,6 +1755,11 @@ mod tests {
                 .iter()
                 .all(|&tangent| tangent == [1.0, 0.0, 0.0, 1.0])
         );
+
+        let document = parse(&avatar.glb());
+        let (cube, notices) = read_normal_mapped(&document, 0, 1024);
+        assert_eq!(cube.tangents.as_ref().unwrap(), tangents);
+        assert!(notices.is_empty(), "{notices:?}");
     }
 
     #[test]

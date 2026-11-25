@@ -20,6 +20,9 @@ Repeated positions within one triangle also identify degenerate faces.
 MikkTSpace can search every other corner for each degenerate corner when
 recovering tangents, so the product of degenerate and non-degenerate
 corner counts is capped at 16,777,216 comparisons.
+If every triangle has zero UV area, MikkTSpace would not run anyway:
+the primitive uses default tangents without checking or warning about
+the scratch or work limits.
 
 Checks from the repository root:
 
@@ -28,6 +31,7 @@ Checks from the repository root:
 - `cargo fmt --manifest-path plugins/Cargo.toml -p celesta-plugin-vrm -- --check`
 
 The geometry tests cover a normal-mapped primitive that fits its output
-budget but cannot reserve scratch, and a triangle fan on both sides of
-the face-group limit. The model test checks that the warning reaches the
-model's open notices under a tight geometry budget.
+budget but cannot reserve scratch, a triangle fan on both sides of the
+face-group limit, excessive degenerate-face recovery, and flat UVs under
+a tight budget without a warning. The model test checks that the warning
+reaches the model's open notices under a tight geometry budget.
