@@ -562,6 +562,8 @@ Celesta は[メディアプラグイン](/ja/docs/plugins/#メディアプラグ
 
 描画を初期化すると、テキスト出力の `graphics:` 行に、実際に選ばれたバックエンドとアダプター名、ソフトウェア描画かハードウェア描画かが表示されます。最終的な `--json` の結果では、同じ情報が `graphics` に入ります（例：`{"backend":"vulkan","adapter":"llvmpipe","software":true}`）。`--info` など、描画を初期化しないコマンドでは省略されます。
 
+CLI の `--json` と MCP の `export_video` のどちらでも、`outputs` の字幕項目の `lang` は、出力パスに `{lang}` がなくても、前後の空白を取り除いた小文字のタグになります（例：`ja-JP` は `ja-jp`）。タグが未指定、空、または `und` のときは `lang` を省略しますが、ファイル名の `{lang}` には `und` が入ります。
+
 ソースビルドを使う場合は、[開発者向け手順](/ja/docs/build-from-source/)に対応する Cargo コマンドがあります。
 
 コマンドラインでの書き出しオプションは、`celesta-exporter --help`（デスクトップ版では `Celesta-export --help`）で確認できます。`celesta-react-render` は Celesta が React コンポジションを評価するための補助コマンドで、`celesta-mcp` は標準入出力を通じて MCP クライアントと通信するサーバーです。どちらも `--help` と `--version` ではプロトコル通信を開始しません。React の補助コマンドでこれらのオプションを使えるのは npm パッケージの `celesta-react-render` ラッパーだけです。デスクトップアプリが直接起動する内部用の `dist/cli.js` では使えません。

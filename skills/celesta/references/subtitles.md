@@ -226,9 +226,10 @@ Celesta-export --json --react film.tsx film.mp4 --subtitles film.srt --subtitles
   anything renders (a `{lang}` path's files once the cues are known, before
   publishing any outputs);
   another extension is `unsupported_subtitles`.
-- The JSON result lists each file in `outputs` as `{"type": "subtitles",
-  "path", "format": "srt" | "vtt", "cues", "lang"?}`; `lang` is there when
-  the subtitles have a language.
+- The CLI and MCP JSON results list each subtitle file in `outputs` as
+  `{"type": "subtitles", "path", "format": "srt" | "vtt", "cues", "lang"?}`.
+  Even without `{lang}` in the path, `lang` is trimmed and lowercase
+  (`ja-JP` becomes `ja-jp`), and is omitted for a missing, empty, or `und` tag.
 - The MCP `export_video` tool takes the same as `subtitles`: one path or a
   list of them.
 

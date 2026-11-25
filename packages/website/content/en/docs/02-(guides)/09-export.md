@@ -563,6 +563,8 @@ Warnings that scripts may want to act on also appear in `"codedWarnings"`, each 
 
 When the exporter initializes a renderer, human output includes a `graphics:` line with the actual backend, adapter name, and whether it's software or hardware. The final `--json` result includes the same information as `graphics`, for example `{"backend":"vulkan","adapter":"llvmpipe","software":true}`. Commands that don't initialize a renderer, such as `--info`, omit it.
 
+In both the CLI's `--json` report and the MCP `export_video` result, subtitle entries in `outputs` report a trimmed, lowercase `lang` (for example, `ja-jp` for `ja-JP`), even for paths without `{lang}`. If the tag is missing, empty, or `und`, the entry omits `lang`; a `{lang}` filename still uses `und`.
+
 Using a source build? The [developer instructions](/en/docs/build-from-source/) include the equivalent Cargo command.
 
 Use `celesta-exporter --help` for command-line rendering options (`Celesta-export --help` in the desktop packages). The `celesta-react-render` helper evaluates React compositions for Celesta, and `celesta-mcp` serves MCP clients over standard input and output. Their `--help` and `--version` flags do not start either protocol. For the React helper, these flags are available only through the npm package's `celesta-react-render` wrapper, not the internal `dist/cli.js` that the desktop apps launch directly.

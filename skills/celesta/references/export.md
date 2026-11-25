@@ -637,7 +637,8 @@ props file, the result also has `propsFile` (its path) and `propsFileAuto`
   - `frame`: one still image, with `frame` and `time`;
   - `subtitles`: one `--subtitles` file (a `{lang}` path lists one per
     language), with `format` (`"srt"` or `"vtt"`), the number of `cues`,
-    and `lang` when the subtitles have a language;
+    and a trimmed, lowercase `lang` (omitted for missing, empty, and `und`
+    tags). This is the same in MCP and with or without `{lang}`;
   - `contactSheet`: one image, with `columns` and the tile `frames` in
     reading order.
 - `codedWarnings` lists the warnings that have a stable code, as
