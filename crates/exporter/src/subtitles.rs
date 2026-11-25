@@ -361,16 +361,7 @@ pub(crate) fn stage_outputs(
             result.empty.push(path.clone());
         }
         for file in files {
-            let absolute = std::path::absolute(&file.path).map_err(|source| ExportError::Io {
-                operation: "resolve subtitle output",
-                source,
-            })?;
-            let key = absolute
-                .parent()
-                .zip(absolute.file_name())
-                .and_then(|(parent, name)| parent.canonicalize().ok().map(|dir| dir.join(name)))
-                .unwrap_or(absolute);
-            if !seen.insert(key) {
+            if !seen.insert(destination_key(&file.path)?) {
                 return Err(ExportError::DuplicateSubtitleOutput(file.path));
             }
             if !overwrite && file.path.exists() {
@@ -392,6 +383,23 @@ pub(crate) fn stage_outputs(
         ));
     }
     Ok(result)
+}
+
+fn destination_key(path: &Path) -> Result<PathBuf, ExportError> {
+    let absolute = std::path::absolute(path).map_err(|source| ExportError::Io {
+        operation: "resolve subtitle output",
+        source,
+    })?;
+    // The destination and some of its directories may not exist until staging.
+    for ancestor in absolute.ancestors().skip(1) {
+        if let Ok(canonical) = ancestor.canonicalize() {
+            let suffix = absolute
+                .strip_prefix(ancestor)
+                .expect("ancestor is a prefix");
+            return Ok(canonical.join(suffix));
+        }
+    }
+    Ok(absolute)
 }
 
 #[cfg(test)]
@@ -702,6 +710,24 @@ mod tests {
             Err(ExportError::DuplicateSubtitleOutput(path)) if path == absolute
         ));
         assert_eq!(dir.path().read_dir().unwrap().count(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn subtitle_destinations_collide_under_an_aliased_parent_not_yet_created() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        let alias = dir.path().join("alias");
+        std::os::unix::fs::symlink(&real, &alias).unwrap();
+        let template = alias.join("new/nested/film.{lang}.srt");
+        let explicit = real.join("new/nested/film.en.srt");
+        let cues = [in_lang("en", cue("Hello", 0.0, 1.0))];
+        assert!(matches!(
+            stage_outputs(&[template, explicit.clone()], &cues, false),
+            Err(ExportError::DuplicateSubtitleOutput(path)) if path == explicit
+        ));
+        assert!(!real.join("new").exists());
     }
 
     #[test]
