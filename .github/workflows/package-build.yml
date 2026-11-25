@@ -241,10 +241,8 @@ jobs:
             sudo ca-certificates curl git build-essential pkg-config python3 xz-utils zstd file
       - uses: actions/checkout@v7.0.1
       - uses: $/.github/actions/setup-ffmpeg
-      - name: Install ELF packaging tools and headless export dependencies
-        run: |
-          sudo apt-get install -y --no-install-recommends \
-            patchelf libatomic1 libvulkan1 mesa-vulkan-drivers fonts-dejavu-core
+      - name: Install ELF packaging tools
+        run: sudo apt-get install -y --no-install-recommends patchelf libatomic1
       - name: Isolate Rust toolchain
         run: echo "RUSTUP_HOME=$RUNNER_TEMP/celesta-rustup" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@v1
@@ -287,17 +285,36 @@ jobs:
           optional=()
           if [[ "$RELEASE" == "true" ]]; then optional=(--version "$VERSION"); fi
           python3 -B scripts/package-linux.py "${optional[@]}"
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: celesta-linux-x64
+          path: target/packages/Celesta-*-linux-x64.tar.gz
+          if-no-files-found: error
+
+  linux-cli-smoke:
+    name: Linux x64 CLI clean-install smoke test
+    needs: linux-plugins
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: celesta-linux-x64
+          path: ${{ runner.temp }}/linux-cli
       - name: Check doctor and export from a moved Linux installation
         run: |
+          inputs="$RUNNER_TEMP/linux-cli"
+          cp packages/cli/examples/title.tsx "$inputs/title.tsx"
+          docker run --rm -i -v "$inputs:/inputs:ro" ubuntu:22.04 bash -se <<'EOF'
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates libatomic1 zlib1g libvulkan1 mesa-vulkan-drivers fonts-dejavu-core
           work="$(mktemp -d)"
-          archive=("$GITHUB_WORKSPACE"/target/packages/Celesta-*-linux-x64.tar.gz)
           mkdir "$work/unpacked" "$work/project" "$work/xdg-runtime"
           chmod 700 "$work/xdg-runtime"
-          tar -xzf "${archive[0]}" -C "$work/unpacked"
+          tar --no-same-owner -xzf /inputs/Celesta-*-linux-x64.tar.gz -C "$work/unpacked"
           mv "$work/unpacked"/Celesta-* "$work/moved-install"
-          cp packages/cli/examples/title.tsx "$work/project/title.tsx"
-          mv packages/cli/dist "$work/source-dist"
-          trap 'mv "$work/source-dist" "$GITHUB_WORKSPACE/packages/cli/dist"; rm -rf "$work"' EXIT
+          cp /inputs/title.tsx "$work/project/title.tsx"
           cd "$work/project"
           export XDG_RUNTIME_DIR="$work/xdg-runtime"
           export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
@@ -305,9 +322,4 @@ jobs:
           celesta doctor --json
           celesta export --react title.tsx --to 0.1 title.mov --json
           test -s title.mov
-      - if: inputs.release || github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: celesta-linux-x64
-          path: target/packages/Celesta-*-linux-x64.tar.gz
-          if-no-files-found: error
+          EOF

@@ -10,8 +10,8 @@ The compatibility baseline is Ubuntu 22.04 (glibc 2.35).
 
 - Runtime discovery prefers `runtime/` beside the executable, as in the
   existing Windows and Linux container builds. For a Linux Cargo build, it
-  next checks the source tree relative to `target/` before trying the original
-  build tree (which still supports external Cargo target directories).
+  checks the original build tree first (including builds with a shared Cargo
+  target directory), then looks for the source tree relative to `target/`.
 - The archive contains `bin/{celesta,celesta-exporter,runtime/}` and the
   standard LGPL FFmpeg plugin under `lib/celesta/plugins/ffmpeg/`, the
   normal Linux executable-relative plugin location. It ships the plugin's
@@ -24,8 +24,9 @@ The compatibility baseline is Ubuntu 22.04 (glibc 2.35).
 
 ## Checks
 
-The Linux packaging job extracts and moves the archive, hides the build
-tree's original React runtime, then runs `celesta doctor --json` and exports
+The smoke test extracts and moves the archive in a fresh Ubuntu 22.04
+container with only the documented runtime dependencies, then runs
+`celesta doctor --json` and exports
 the opening frames of `packages/cli/examples/title.tsx` to MOV with lavapipe.
 The React bridge unit test exercises the moved Cargo workspace and verifies
 that a staged runtime still takes precedence.
