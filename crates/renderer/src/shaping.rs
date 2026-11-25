@@ -489,12 +489,12 @@ impl TextRasterizer {
         let Some(font) = self.font_system.get_font(glyph.font_id, glyph.font_weight) else {
             return (0.0, 0.0);
         };
-        let metrics = font.as_swash().metrics(&[]);
+        let metrics = font.metrics();
         let units = f64::from(metrics.units_per_em).max(1.0);
         let scale = f64::from(glyph.font_size) / units;
         (
-            f64::from(metrics.cap_height) * scale,
-            f64::from(metrics.x_height) * scale,
+            f64::from(metrics.cap_height.unwrap_or(0.0)) * scale,
+            f64::from(metrics.x_height.unwrap_or(0.0)) * scale,
         )
     }
 
