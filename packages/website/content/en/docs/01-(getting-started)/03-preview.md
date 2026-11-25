@@ -610,6 +610,8 @@ Celesta starts with the topmost layer under the pointer and looks for a writable
 
 Files outside the entry folder are copied to `assets/`. Press Escape while the editor is importing to cancel the source edit. One **Undo** removes the added JSX and any new import, but leaves the copied file. Timeline audio drops, multiple files at once, and drops into JSON projects aren't supported.
 
+When you drop an SVG from outside the project, only the SVG is copied; files it references by relative path are not copied.
+
 ## Leave review comments
 
 Review a video in Celesta and leave comments where something should change; an agent (or you, later) picks each one up at exactly that place. Comments are in the **Comments** tab beside **Problems**, which counts the open ones.
