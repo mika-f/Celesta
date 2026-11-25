@@ -13,6 +13,14 @@
 //!     <video.mp4> [frames]
 //! ```
 //!
+//! The direct `cargo run` command needs libx264, which the standard build
+//! does not provide. On Unix, point `PKG_CONFIG_PATH` at the x264 build's
+//! `lib/pkgconfig` directory. On Windows, point `VCPKG_ROOT` at the x264
+//! vcpkg root and set `VCPKGRS_TRIPLET` to its installed triplet
+//! (`x64-windows-static-md-release` for the CI package). Use a separate
+//! `CARGO_TARGET_DIR` on Windows, such as `plugins/target/codec-bench-x264`,
+//! so Cargo does not reuse artifacts linked against the standard build.
+//!
 //! The first two arguments are the standard and x264 programs. Each line gives the
 //! wall-clock time a frame took and, on Unix, the CPU time (user and
 //! system) it cost this process and the plugin's, which a busy machine

@@ -454,16 +454,17 @@ pub(crate) fn ffmpeg_error(error: ez_ffmpeg::error::Error) -> MediaError {
     MediaError::Codec(format!("FFmpeg operation failed: {error}"))
 }
 
-/// Checks the libraries loaded by a distribution-validation command.
-/// Local startup does not invoke this check.
+/// Checks the linked FFmpeg libraries against the standard plugin's LGPL-only
+/// policy. The x264 tests use this to verify that the standard policy rejects
+/// a GPL build.
 pub fn check_lgpl() -> Result<(), String> {
     check_license(PLUGIN_ID, false)
 }
 
-/// Whether a library reporting `license` may ship with the licence texts
-/// the plugins carry: `LICENSE-LGPL-2.1` in `ffmpeg`, and in `ffmpeg-x264`
-/// (`gpl`) `LICENSE-GPL-2.0` too. A `version3` build (LGPL or GPL 3) or a
-/// nonfree one is refused rather than shipped beside the wrong text.
+/// Whether a library reporting `license` may ship with the plugin. `ffmpeg`
+/// accepts only LGPL 2.1 or later. `ffmpeg-x264` (`gpl`) also accepts GPL 2
+/// or later, and its LGPL parts are covered by the `LICENSE-GPL-2.0` it
+/// carries. Neither plugin accepts `version3` or nonfree builds.
 fn license_carried(license: &str, gpl: bool) -> bool {
     license == "LGPL version 2.1 or later" || (gpl && license == "GPL version 2 or later")
 }

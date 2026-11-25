@@ -298,7 +298,7 @@ MCP の `export_video` ツールと `@celesta.studio/exporter` も同じ名前�
 
 ## Windows の Media Foundation コンポーネント
 
-Windows のアプリには `mediafoundation` メディアプラグインも入っています。Windows 自身の Media Foundation で（Windows が GPU の動画エンコーダーを使えるときはそれを使って）H.264、HEVC、AAC をエンコードします。マルチプレクサーは持たず、エンコーダーはほかのプラグインのコンテナーに書きます。コンテナーはいつもどおり出力の拡張子で決まり（`.mp4` なら `ffmpeg/mp4`、`.mov` なら `ffmpeg/mov`）、`--muxer` でも指定できます。H.264 は MP4 の既定エンコーダーになり、ユーザーが追加した x264 より優先されます。muxer と AAC の既定は FFmpeg のままです。それ以外のコンポーネントは、`--video-encoder` と `--audio-encoder` や書き出しプリセット（`"video": { "component": "mediafoundation/hevc" }`）で名前を指定したときだけ使われます。`--video-encoder mediafoundation/h264` だけを指定すると、Media Foundation の H.264 を `ffmpeg/mp4` に `ffmpeg/aac` と一緒に書きます。アプリの書き出しページでも、映像と音声のエンコーダーの中に表示されます。このプラグインは Windows 専用で、macOS と Linux にはありません。
+Windows のアプリには `mediafoundation` メディアプラグインも入っています。Windows 自身の Media Foundation で（Windows が GPU の動画エンコーダーを使えるときはそれを使って）H.264、HEVC、AAC をエンコードします。マルチプレクサーは持たず、エンコーダーはほかのプラグインのコンテナーに書きます。コンテナーはいつもどおり出力の拡張子で決まり（`.mp4` なら `ffmpeg/mp4`、`.mov` なら `ffmpeg/mov`）、`--muxer` でも指定できます。H.264 は MP4 の既定エンコーダーになり、ユーザーが追加した x264 より優先されます。muxer と AAC の既定は FFmpeg のままです。それ以外のコンポーネントは、`--video-encoder` と `--audio-encoder` や書き出しプリセット（`"video": { "component": "mediafoundation/hevc" }`）で名前を指定したときだけ使われます。`--video-encoder mediafoundation/hevc` だけを指定すると、Media Foundation の HEVC を `ffmpeg/mp4` に `ffmpeg/aac` と一緒に書きます。アプリの書き出しページでも、映像と音声のエンコーダーの中に表示されます。このプラグインは Windows 専用で、macOS と Linux にはありません。
 
 | コンポーネント | 種類 | 書き出すもの |
 | --- | --- | --- |
