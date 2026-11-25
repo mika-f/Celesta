@@ -1442,9 +1442,8 @@ impl EditorView {
 
     /// Switches the React preview between its plain mode and the
     /// interactive mode that picks layers. The bridge respawns with or
-    /// without source positions; entering interactive mode sweeps the
-    /// composition for scenes, and leaving it drops the selection and the
-    /// sweep's index.
+    /// without source positions; the first selection sweeps the
+    /// composition for scenes, and leaving drops the selection.
     ///
     /// Leaving is a click on nothing first: the rows' typed text is
     /// submitted, and when their commits are held the mode stays until they
@@ -1649,6 +1648,7 @@ impl EditorView {
         self.pending_instance = pending;
         self.add_restore_confirm(confirm);
         if self.selected_layer.is_some() {
+            self.ensure_occurrences();
             self.source_lookup = Some(SourceLookup::Pending);
             self.refresh_preview();
         } else {

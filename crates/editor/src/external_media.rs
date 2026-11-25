@@ -450,6 +450,7 @@ impl EditorView {
         let Ok((hit, _)) = self.drop_hit(window.mouse_position()) else {
             return;
         };
+        self.ensure_occurrences();
         if self
             .add
             .external

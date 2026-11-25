@@ -809,8 +809,6 @@ impl EditorView {
             self.refresh_scene_sources(cx);
         }
         self.watch_comments(cx);
-        // The constructor's sweep ran before Select layers carried over.
-        self.refresh_occurrences(false);
         self.sync_plugin_page(cx);
         // The registry moved over with what it fetched.
         self.sync_registry_notices(cx);

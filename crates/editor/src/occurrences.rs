@@ -193,10 +193,20 @@ fn sweeping(slot: Option<&(u64, OccurrenceState)>) -> bool {
     slot.is_some_and(|(_, state)| state.is_sweeping())
 }
 
+fn needs_occurrences(is_react: bool, selected: bool, drop_target: bool) -> bool {
+    is_react && (selected || drop_target)
+}
+
 impl EditorView {
+    pub(crate) fn ensure_occurrences(&mut self) {
+        if self.occurrences.is_none() && !self.react_reloads.is_running() {
+            self.refresh_occurrences(false);
+        }
+    }
+
     /// Starts sweeping the React entry for where each element renders,
-    /// tagged with the current reload. Standalone React previews use it
-    /// for both layer edits and file drops. `keep` (the editor's own write)
+    /// tagged with the current reload, when a layer edit or drop needs it.
+    /// `keep` (the editor's own write)
     /// keeps the last index in use, and holds the sweep back until the
     /// preview draws the reloaded code, so the two do not compete while the
     /// written values are on their way to the screen.
@@ -204,7 +214,11 @@ impl EditorView {
         // Called with `refresh_preview`: both carry the current mode.
         self.interactive_refresh_due = false;
         self.occurrence_generation += 1;
-        if self.react_preview.is_none() {
+        if !needs_occurrences(
+            self.react_preview.is_some(),
+            self.selected_layer.is_some(),
+            self.tracking_external_media(),
+        ) {
             self.occurrences = None;
             self.occurrence_sweep_after = None;
             // No sweep will answer commits held for one.
@@ -308,6 +322,14 @@ impl EditorView {
 mod tests {
     use super::*;
     use celesta_react_bridge::{ElementOccurrences, InstanceOccurrences, SourcePos};
+
+    #[test]
+    fn idle_react_previews_do_not_need_an_occurrence_sweep() {
+        assert!(!needs_occurrences(true, false, false));
+        assert!(needs_occurrences(true, true, false));
+        assert!(needs_occurrences(true, false, true));
+        assert!(!needs_occurrences(false, true, true));
+    }
 
     /// An index in which one element renders over `[from, to)`.
     fn rendered(from: u64, to: u64) -> OccurrenceIndex {

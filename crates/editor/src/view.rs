@@ -693,7 +693,6 @@ impl EditorView {
         editor.set_plugins(plugins);
         editor.refresh_preview();
         editor.refresh_audio_preview();
-        editor.refresh_occurrences(false);
         if editor.react_preview.is_none() {
             editor.refresh_media_cache();
             editor.refresh_component_schemas();
