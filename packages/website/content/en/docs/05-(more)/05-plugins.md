@@ -459,6 +459,8 @@ The desktop app reads the `celesta.lock` of a project you trust (saved trust, wi
 
 The same goes for the first-party component plugins `aivis-speech`, `code`, `lottie`, `score`, and `voicevox`, each described on its own page.
 
+If generating tangents for an MToon normal map exceeds the loading limits, the avatar still opens. Celesta warns which mesh primitive uses default tangents instead; its normal-map shading may look different.
+
 To build it from the repository's `plugins/vrm` instead, build it, then install the folder it writes:
 
 ```sh

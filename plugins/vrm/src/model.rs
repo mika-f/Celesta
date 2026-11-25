@@ -57,7 +57,8 @@
 //! - **Notices:** the usage terms (see `meta`), then what loading left out
 //!   or changed: images, PBR materials drawn unlit, primitives that are
 //!   not triangles (a warning each, for meshes a node of the scene draws),
-//!   repeated `firstPerson` annotations, expressions, spring joints'
+//!   primitives using default tangents due to load limits, repeated
+//!   `firstPerson` annotations, expressions, spring joints'
 //!   angle limits (not read), and spring bones whose steps cost too much
 //!   to reach four hours of a layer (see `stepping`). Warnings of one kind are listed up to a limit and the
 //!   rest counted (see `notices`).
@@ -75,8 +76,8 @@ use crate::document::{Document, LoadError, read_file};
 use crate::expressions::{Applied, ExpressionKey, Expressions, read_expressions};
 use crate::first_person::hidden_nodes;
 use crate::geometry::{
-    Accessors, At, GEOMETRY_BUDGET, draws_triangles, geometry_bytes, inverse_binds,
-    primitive_geometry,
+    Accessors, At, DEFAULT_TANGENT_WARNINGS, GEOMETRY_BUDGET, draws_triangles, geometry_bytes,
+    inverse_binds, primitive_geometry,
 };
 use crate::humanoid::Humanoid;
 use crate::look_at::LookAt;
@@ -226,7 +227,7 @@ struct Draws {
     centres: Vec<Vec3>,
     /// A primitive has no material, so glTF's default one is appended.
     default_material: bool,
-    /// A warning for each primitive of a drawn mesh that is not triangles
+    /// Warnings for skipped primitives and those using default tangents
     /// (see `notices`).
     notices: Vec<Notice>,
 }
@@ -1178,6 +1179,7 @@ fn read_draws(
     // By (mesh, skin): the geometry of each primitive its `MeshDraws` has.
     let mut read: BTreeMap<(usize, Option<usize>), Vec<Option<usize>>> = BTreeMap::new();
     let mut not_drawn = Warnings::new("primitives that are not drawn");
+    let mut default_tangents = Warnings::new(DEFAULT_TANGENT_WARNINGS);
     let mut draws = Draws {
         sources: Vec::new(),
         infos: Vec::new(),
@@ -1219,6 +1221,7 @@ fn read_draws(
                     skin.clone(),
                     drawn.needs_tangents,
                     budget.left,
+                    &mut default_tangents,
                 )?
                 else {
                     // Not reached: `draws_triangles` kept only those that do.
@@ -1308,6 +1311,7 @@ fn read_draws(
         .collect();
     draws.bounds = bounds;
     not_drawn.finish(&mut draws.notices);
+    default_tangents.finish(&mut draws.notices);
     Ok(draws)
 }
 
@@ -1916,7 +1920,12 @@ mod tests {
         // Each copy's geometry counts, though they share their accessors.
         let one = geometry_bytes(&model.scene_model().geometries[0]);
         assert!(model.bytes > 50 * one, "{} for {one} each", model.bytes);
-        load(model.bytes).unwrap();
+        let tight = load(model.bytes).unwrap();
+        assert!(tight.notices.iter().any(|notice| {
+            notice.level == NoticeLevel::Warning
+                && notice.message.starts_with("mesh \"Body\" primitive ")
+                && notice.message.contains("uses default tangents:")
+        }));
         let message = match load(model.bytes - 1) {
             Ok(_) => panic!("the model opened"),
             Err(error) => error.to_string(),
