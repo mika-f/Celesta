@@ -673,6 +673,14 @@ fn a_weight_run_asks_for_the_family_face_at_that_weight_everywhere() {
         rasterizer.matched_weight("Celesta Weight Test", 700),
         Some(700)
     );
+    assert_eq!(
+        rasterizer.matched_weight("Celesta Weight Test", 500),
+        Some(400)
+    );
+    assert_eq!(
+        rasterizer.matched_weight("Celesta Weight Test", 501),
+        Some(700)
+    );
     let style = TextStyle {
         font_family: Some("Celesta Weight Test".into()),
         font_size: Some(48.0),
