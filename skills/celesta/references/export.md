@@ -36,7 +36,7 @@ celesta export --react scene.tsx --frame 0 frame.png
 celesta export --react scene.tsx out.mov
 ```
 
-With the Linux Docker image, follow the [entry point override instructions](https://github.com/mika-f/Celesta/blob/main/packaging/linux/README.md#unified-cli) to run these subcommands.
+With the Linux Docker image, pass these subcommands directly after the image name. See [using the unified CLI in Docker](https://github.com/mika-f/Celesta/blob/main/packaging/linux/README.md#unified-cli).
 
 For a headless preflight, run `celesta doctor --json` for Node.js, the staged
 runtime, and graphics, or pass a source and output to exercise the plugins,
@@ -808,8 +808,9 @@ Mesa/lavapipe hint and retry with `--driver vulkan`. If you set
 `VK_DRIVER_FILES` or `VK_ICD_FILENAMES`, check that it points to an
 installed driver manifest.
 
-The Linux container image does all of this:
+The Linux container image does all of this and bundles the x264 plugin for
+MP4. Use the unified `export` subcommand (older invocations without it still work):
 
 ```sh
-docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" celesta-exporter --react film.tsx film.mov
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" celesta-exporter export --react film.tsx film.mp4
 ```

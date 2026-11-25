@@ -1,14 +1,16 @@
 # The optional x264 download
 
-The application packages and Linux image include **only the standard `ffmpeg`
+The application packages include **only the standard `ffmpeg`
 plugin among the FFmpeg builds**: the LGPL decoder, ProRes, VP9, AAC, Opus,
 PCM, and the MP4, MOV, and WebM muxers (libopus and libvpx are BSD licensed,
 so the build stays LGPL). libx264 is GPL, so it is an individual ZIP asset on
-the same GitHub release, not inside the app installer or portable ZIP.
+the same GitHub release, not inside the app installer or portable ZIP. The
+[Linux Docker image](../linux/README.md) bundles both plugins and uses the
+same Ubuntu 22.04 build and packaging for x264 as the Linux ZIP.
 
 | Plugin | Use |
 | --- | --- |
-| `ffmpeg-x264` | H.264 via libx264 (GPL); required for default MP4 on Linux |
+| `ffmpeg-x264` | H.264 via libx264 (GPL); download for default MP4 on Linux outside the Docker image |
 
 The base application decodes H.264 and exports MOV/ProRes, WebM (VP9 with
 Opus), and still images without the download. macOS and Windows also encode

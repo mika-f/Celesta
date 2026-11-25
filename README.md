@@ -182,13 +182,14 @@ the media plugin `celesta-codec-ffmpeg`, which Celesta starts and talks to only
 over its documented plugin protocol on standard input and output. The
 executables are distributed under MIT OR Apache-2.0 alone.
 
-Of the FFmpeg builds, app packages and the Linux image ship only `ffmpeg`, a standard LGPL FFmpeg
-build for decoding, ProRes, VP9, AAC, Opus, PCM and muxing (libopus and libvpx
+Of the FFmpeg builds, app packages ship only `ffmpeg`, a standard LGPL build
+for decoding, ProRes, VP9, AAC, Opus, PCM and muxing (libopus and libvpx
 are BSD licensed, so the build stays LGPL). The one optional encoder,
 `ffmpeg-x264`, is a separate ZIP download on the
 [release page](https://github.com/mika-f/Celesta/releases/latest), needed for
-H.264 on Linux. Copy the extracted plugin folder into the user plugin folder
-and allow it in Celesta; see the
+H.264 encoding on Linux outside the [Docker image](packaging/linux/README.md),
+which bundles both plugins. When installing the ZIP, copy the extracted plugin
+folder into the user plugin folder and allow it in Celesta; see the
 [plugin guide](https://celesta.natsuneko.cat/en/docs/plugins/#optional-codec-downloads).
 The standard package can read H.264 files and export ProRes/MOV and WebM
 without it.
