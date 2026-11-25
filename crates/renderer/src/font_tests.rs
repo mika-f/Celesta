@@ -594,6 +594,21 @@ fn variable_weight_changes_measured_x_height() {
 }
 
 #[test]
+fn a_variable_weight_span_changes_only_its_glyphs() {
+    let mut rasterizer = variable_weight_rasterizer();
+    let style = TextStyle {
+        font_runs: vec![crate::font_run_tests::run(1, 3, Some(700), None)],
+        ..variable_weight_style(400)
+    };
+    let buffer = rasterizer.shaped_buffer("EEEE", &style, None, 1.0);
+    let weights: Vec<_> = buffer
+        .layout_runs()
+        .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.font_weight.0))
+        .collect();
+    assert_eq!(weights, [400, 700, 700, 400]);
+}
+
+#[test]
 fn variable_weights_clamp_to_the_axis_endpoints() {
     let mut rasterizer = variable_weight_rasterizer();
     for (asked, endpoint) in [(100, 200), (900, 800)] {
