@@ -455,6 +455,20 @@ mod tests {
     }
 
     #[test]
+    fn a_bone_look_at_with_one_eye_allows_tracking_that_eye() {
+        let mut avatar = SyntheticVrm::avatar();
+        avatar.omit_bone = Some("rightEye".into());
+        let (mut model, _files) = open_vrm(&avatar);
+        let turn = data(json!({
+            "lookAt": { "yaw": -30.0, "pitch": 0.0 },
+            "tracks": { "leftEye": { "yaw": keys(&[(0.0, 90.0)]) } },
+        }));
+        let (_, worlds) = model.render(0.0, &turn).unwrap();
+        let left = worlds[node::LEFT_EYE].transform_vector3(Vec3::Z);
+        assert!(near(left, Vec3::NEG_X), "{left}");
+    }
+
+    #[test]
     fn bad_tracks_are_refused() {
         let (model, _files) = open();
         let message = refusal(&model, json!({ "tail": { "yaw": keys(&[(0.0, 1.0)]) } }));
