@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 import zipfile
 
 spec = importlib.util.spec_from_file_location("package_media_plugins", Path(__file__).with_name("package-media-plugins.py"))
@@ -216,6 +216,70 @@ class PluginArchives(unittest.TestCase):
                          patch.object(packaging, "debian_copyright", return_value=(Path(__file__), "libopus0")), \
                          patch.object(packaging.shutil, "copy2"):
                         packaging.linux_dependencies(plugin, program, ("libopus.so", "libvpx.so"))
+
+    def test_linux_rejects_an_unresolved_build_dependency(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            plugin = Path(temporary) / "ffmpeg-x264"
+            program = plugin / "bin/linux-x86_64/celesta-codec-ffmpeg-x264"
+            with patch.object(packaging, "run", return_value="\tlibx264.so.164 => not found\n") as run:
+                with self.assertRaisesRegex(RuntimeError, "Unresolved plugin dependencies.*libx264"):
+                    packaging.linux_dependencies(plugin, program, ("libx264.so",))
+            run.assert_called_once_with("ldd", program, capture=True)
+            self.assertFalse(plugin.exists())
+
+    def test_linux_stages_the_x264_soname_and_verifies_its_relocated_path(self):
+        soname = "libx264.so.164"
+        package = "libx264-164"
+        for resolution in ("bundled", "missing", "system"):
+            with self.subTest(resolution=resolution), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                plugin = root / "ffmpeg-x264"
+                program = plugin / "bin/linux-x86_64/celesta-codec-ffmpeg-x264"
+                program.parent.mkdir(parents=True)
+                program.touch()
+                source = root / soname
+                source.write_bytes(b"x264 library")
+                notice = root / "copyright"
+                notice.write_bytes(b"x264 license notice")
+                bundled = plugin / "lib" / soname
+                other_entries = (
+                    "  linux-vdso.so.1 (0x1)\n"
+                    "\tlibc.so.6   =>  /lib/libc.so.6 (0x2)\n"
+                    "\t/lib64/ld-linux-x86-64.so.2 (0x3)\n"
+                )
+                listing = f"{other_entries}\t{soname}  =>  {source} (0x4)\n"
+                resolved = {
+                    "bundled": f"{bundled} (0x4)",
+                    "missing": "not found",
+                    "system": f"{source} (0x4)",
+                }[resolution]
+                entry = dict(library=soname, package=f"{package}:amd64", source_package="x264")
+                with (patch.object(packaging, "run", side_effect=[
+                          listing, None, f"{other_entries}\t{soname} => {resolved}\n",
+                      ]) as run,
+                      patch.object(packaging, "debian_package", return_value=entry.copy()) as owner,
+                      patch.object(packaging, "debian_copyright", return_value=(notice, package)),
+                      patch.object(Path, "read_text", return_value='ID=ubuntu\nVERSION_ID="26.04"\n')):
+                    if resolution == "bundled":
+                        packaging.linux_dependencies(plugin, program, ("libx264.so",))
+                    else:
+                        reason = ("Bundled plugin dependencies do not resolve" if resolution == "missing"
+                                  else "Codec dependency was not bundled")
+                        with self.assertRaisesRegex(RuntimeError, reason):
+                            packaging.linux_dependencies(plugin, program, ("libx264.so",))
+                self.assertEqual(run.call_args_list, [
+                    call("ldd", program, capture=True),
+                    call("patchelf", "--set-rpath", "$ORIGIN/../../lib", program),
+                    call("ldd", program, capture=True),
+                ])
+                owner.assert_called_once_with(soname, str(source))
+                self.assertEqual(list((plugin / "lib").iterdir()), [bundled])
+                self.assertEqual(bundled.read_bytes(), source.read_bytes())
+                native = plugin / "licenses/native"
+                self.assertEqual((native / package / "copyright").read_bytes(), notice.read_bytes())
+                provenance = json.loads((native / "debian-packages.json").read_text())
+                self.assertEqual(provenance["distribution"], "ubuntu 26.04")
+                self.assertEqual(provenance["packages"], [dict(entry, copyright_from=package)])
 
 
 if __name__ == "__main__":

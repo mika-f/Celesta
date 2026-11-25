@@ -110,6 +110,7 @@ export default function Root() {
   const webm = readFileSync(webmOutput);
   assert.deepEqual([...webm.subarray(0, 4)], [0x1a, 0x45, 0xdf, 0xa3], 'The WebM output must start with an EBML header');
   assert.ok(webm.length > 100);
+  let defaultMp4Available = true;
   if (mac) {
     // The AVFoundation plugin links system frameworks only, so it ships no
     // Frameworks/ and carries MIT/Apache-2.0 alone.
@@ -174,15 +175,20 @@ export default function Root() {
     const listing = JSON.parse(run(exporter, ['--list-components', '--check', '--json']));
     const h264 = listing.components.find((component) => component.id === 'mediafoundation/h264');
     assert.ok(h264, 'The exporter must list mediafoundation/h264');
-    if (h264.available) {
-      const output3 = join(directory, 'test-mediafoundation.mp4');
-      run(exporter, ['--react', entry, '--video-encoder', 'mediafoundation/h264', output3]);
-      const nativeMp4 = readFileSync(output3);
-      assert.equal(nativeMp4.toString('ascii', 4, 8), 'ftyp');
-      assert.ok(nativeMp4.length > 100);
-    } else {
-      console.log(`skipping the Media Foundation export: ${h264.reason ?? 'mediafoundation/h264 is unavailable'}`);
+    defaultMp4Available = h264.available;
+    if (!defaultMp4Available) {
+      console.log(`skipping the default MP4 export: ${h264.reason ?? 'mediafoundation/h264 is unavailable'}`);
     }
+  }
+  if (defaultMp4Available) {
+    const mp4Output = join(directory, 'test.mp4');
+    const report = JSON.parse(run(exporter, ['--react', entry, mp4Output, '--json']));
+    const video = report.outputs?.[0]?.video;
+    assert.equal(video?.component, mac ? 'avfoundation/h264' : 'mediafoundation/h264');
+    assert.ok(video.codec.startsWith('avc1'), `Expected H.264, got ${video.codec}`);
+    const mp4 = readFileSync(mp4Output);
+    assert.equal(mp4.toString('ascii', 4, 8), 'ftyp');
+    assert.ok(mp4.length > 100);
   }
   assert.ok(!existsSync(join(runtime, 'react/.tmp')), 'Runtime must not write into the install directory');
   assert.ok(

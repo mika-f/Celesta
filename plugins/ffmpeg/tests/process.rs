@@ -2,7 +2,7 @@
 //! `celesta_media::MediaProcess` as Celesta drives it: it exposes LGPL
 //! components only (everything but libx264, with VP9 and Opus through the
 //! BSD-licensed libvpx and libopus), its answers equal the in-process
-//! codec's, and its errors keep their kind.
+//! codec's, its errors keep their kind, and it encodes and muxes exports.
 
 #[path = "support/encoding.rs"]
 mod encoding;
@@ -12,11 +12,12 @@ mod files;
 use celesta_codec_ffmpeg::{DECODER_ID, FfmpegCodec, registered};
 use celesta_composition::Rational;
 use celesta_media::{
-    AudioDecoder, Color, Decoder, MediaBackend, MediaError, MediaProcess, MediaProvider,
-    MediaRegistry, PixelFormat, ProviderFactory, ProviderUse, RegisteredPlugin, Settings,
-    VideoEncoder, VideoEncoderRequest, VideoFrameDecoder,
+    AudioDecoder, AudioEncoderRequest, Color, DecodedPixelFormat, Decoder, FrameTransport,
+    MediaBackend, MediaError, MediaProcess, MediaProvider, MediaRegistry, MuxerRequest,
+    PixelFormat, ProviderFactory, ProviderUse, RegisteredPlugin, Settings, Track, TrackPacket,
+    VideoEncoder, VideoEncoderRequest, VideoFrameDecoder, ring_layout,
 };
-use encoding::{settings, text};
+use encoding::{FRAMES, HEIGHT, WIDTH, encode_frames, little_endian, open, settings, text};
 use ez_ffmpeg::{FfmpegContext, Input, Output};
 use files::generate;
 use std::path::PathBuf;
@@ -51,6 +52,138 @@ fn program_backend() -> MediaBackend {
     let executable = executable();
     let directory = executable.parent().unwrap().to_path_buf();
     backend(MediaProcess::factory(executable, directory))
+}
+
+fn assert_ring_export(muxer: &str, video: &str, with_opus: bool) {
+    let directory = tempfile::tempdir().unwrap();
+    let output = directory.path().join("clip").with_extension(muxer);
+    let executable = executable();
+    let format = PixelFormat::Rgba16;
+    let mut program = MediaProcess::start_with(
+        &executable,
+        executable.parent().unwrap(),
+        &Default::default(),
+        FrameTransport::SharedMemory,
+        ProviderUse::Export {
+            ring: ring_layout(&[format], WIDTH, HEIGHT),
+        },
+    )
+    .unwrap();
+    let opened = open(&mut program, video, &Settings::new(), &[format]).unwrap();
+    assert_eq!(opened.input, format);
+    assert_eq!(
+        program.pipeline().unwrap().frames_in_ring(),
+        cfg!(any(unix, windows)),
+        "{video} RGBA16 ring"
+    );
+    let alpha = opened.alpha;
+    let frames = (0..FRAMES).map(|index| {
+        let step = index as u8 * 20;
+        let pixel = [step, 64, 255 - step, 128].map(|high| u16::from_be_bytes([high, 85]));
+        little_endian(pixel).repeat((WIDTH * HEIGHT) as usize)
+    });
+    let (video_packets, config) = encode_frames(&mut program, opened.session, frames);
+    let mut tracks = vec![Track::Video {
+        config,
+        timescale: 10,
+        width: WIDTH,
+        height: HEIGHT,
+        frame_rate: Rational::new(10, 1),
+        color: Color::bt709_limited(),
+        alpha,
+    }];
+    let mut packets: Vec<_> = video_packets
+        .into_iter()
+        .map(|packet| TrackPacket { track: 0, packet })
+        .collect();
+    if with_opus {
+        let encoder = program.audio_encoder().unwrap();
+        let opened = encoder
+            .open_audio(&AudioEncoderRequest {
+                component: "opus",
+                settings: &Settings::new(),
+                sample_rate: 48_000,
+                channels: 1,
+            })
+            .unwrap();
+        let samples: Vec<_> = (0..48_000)
+            .map(|index| (index as f32 * 0.05).sin() * 0.5)
+            .collect();
+        let encoded = encoder.encode_audio(opened.session, 0, &samples).unwrap();
+        let finished = encoder.finish_audio(opened.session).unwrap();
+        tracks.push(Track::Audio {
+            config: encoded
+                .config
+                .or(finished.config)
+                .expect("Opus track config"),
+            timescale: opened.sample_rate,
+            sample_rate: opened.sample_rate,
+            channels: opened.channels,
+            delay: opened.delay,
+        });
+        packets.extend(
+            encoded
+                .packets
+                .into_iter()
+                .chain(finished.packets)
+                .map(|packet| TrackPacket { track: 1, packet }),
+        );
+    }
+    let program_muxer = program.muxer().unwrap();
+    let session = program_muxer
+        .open_muxer(&MuxerRequest {
+            component: muxer,
+            settings: &Settings::new(),
+            output: &output,
+            tracks: &tracks,
+            leading_audio: 0,
+        })
+        .unwrap();
+    program_muxer.write_packets(session, &packets).unwrap();
+    assert_eq!(
+        program_muxer.finish_muxer(session).unwrap(),
+        std::slice::from_ref(&output)
+    );
+    drop(program);
+
+    let mut reader = program_backend();
+    let probe = reader.probe(&output).unwrap();
+    let stream = probe.video.as_ref().unwrap();
+    assert_eq!(stream.codec.as_deref(), Some(video));
+    assert_eq!((stream.width, stream.height), (WIDTH, HEIGHT));
+    if with_opus {
+        assert_eq!(probe.audio.len(), 1);
+        assert_eq!(probe.audio[0].codec.as_deref(), Some("opus"));
+        assert_eq!(probe.audio[0].sample_rate, Some(48_000));
+        let audio = reader.decode_audio(&output, 48_000, 1).unwrap();
+        assert!(audio.frame_count().abs_diff(48_000) < 960);
+    } else {
+        assert!(probe.audio.is_empty());
+    }
+    let first = reader.decode_frame(&output, 0.0).unwrap();
+    let last = reader.decode_frame(&output, 0.9).unwrap();
+    assert_eq!(first.pixel_format, DecodedPixelFormat::Rgba8);
+    assert_eq!(last.pixel_format, DecodedPixelFormat::Rgba8);
+    assert!(
+        first.pixels[0] < 60 && first.pixels[2] > 190,
+        "{video}: first pixel {:?}",
+        &first.pixels[..4]
+    );
+    assert!(
+        last.pixels[0] > 130 && last.pixels[2] < 120,
+        "{video}: last pixel {:?}",
+        &last.pixels[..4]
+    );
+}
+
+#[test]
+fn the_standard_program_encodes_prores_and_muxes_mov_through_the_ring() {
+    assert_ring_export("mov", "prores", false);
+}
+
+#[test]
+fn the_standard_program_encodes_vp9_and_opus_and_muxes_webm_through_the_ring() {
+    assert_ring_export("webm", "vp9", true);
 }
 
 #[test]

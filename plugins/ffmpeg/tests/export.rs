@@ -184,7 +184,9 @@ fn assert_transparent_quadrant(pixels: &[u16], tolerance: u16, blended_rows: usi
                     "({x}, {y}): {sample:?}"
                 );
                 let color = if y < 32 - blended_rows {
-                    sample[0].abs_diff(65535) <= tolerance && sample[1] <= tolerance
+                    sample[0].abs_diff(u16::MAX) <= tolerance
+                        && sample[1] <= tolerance
+                        && sample[2] <= tolerance
                 } else {
                     sample[0] > 4 * sample[1].max(sample[2])
                 };

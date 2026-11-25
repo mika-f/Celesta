@@ -2005,6 +2005,19 @@ mod tests {
         MediaRegistry::new(vec![standard, native])
     }
 
+    fn registry_with_native_and_x264(origin: MediaOrigin) -> MediaRegistry {
+        let mut plugins = registry_with_native_h264().plugins().to_vec();
+        plugins.push(plugin(
+            "ffmpeg-x264",
+            origin,
+            MediaManifest {
+                video_encoders: vec![video_encoder("libx264", "H.264 (x264)", "avc1")],
+                ..MediaManifest::default()
+            },
+        ));
+        MediaRegistry::new(plugins)
+    }
+
     /// The first of `outputs` that resolves over `registry` with
     /// `unavailable`'s components described as unavailable.
     fn first_available(
@@ -2058,13 +2071,32 @@ mod tests {
     }
 
     #[test]
-    fn an_available_native_h264_still_opens_on_mp4() {
-        let registry = registry_with_native_h264();
+    fn an_available_native_h264_wins_over_an_x264_sibling() {
+        // Discovery appends siblings after the packaged plugins; both H.264
+        // encoders are bundled at the same priority.
+        let registry = registry_with_native_and_x264(MediaOrigin::Bundled);
         let outputs = model(&registry).first_outputs(None);
         let (resolved, output, warning) = first_available(&registry, &outputs, &[]).unwrap();
         assert_eq!(output, PathBuf::from("export.mp4"));
         assert_eq!(resolved.video.reference, reference("mediafoundation/h264"));
         assert_eq!(warning, None);
+    }
+
+    #[test]
+    fn windows_without_native_h264_opens_on_mp4_with_installed_x264() {
+        let registry = registry_with_native_and_x264(MediaOrigin::User);
+        let mut dialog = model(&registry);
+        let outputs = dialog.first_outputs(None);
+        let (resolved, output, warning) =
+            first_available(&registry, &outputs, &[NO_FEATURE_PACK]).unwrap();
+        assert_eq!(output, PathBuf::from("export.mp4"));
+        dialog.apply(&resolved, None, Asked::Defaults);
+        dialog.warnings.extend(warning);
+        assert_eq!(dialog.error, None);
+        assert!(dialog.warnings.is_empty(), "{:?}", dialog.warnings);
+        let choice = dialog.choice().unwrap();
+        assert_eq!(choice.muxer, reference("b/mp4"));
+        assert_eq!(choice.video.component, reference("ffmpeg-x264/libx264"));
     }
 
     #[test]

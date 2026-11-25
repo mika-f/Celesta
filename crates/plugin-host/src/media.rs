@@ -1503,6 +1503,71 @@ mod tests {
             )
         }
 
+        fn x264_sibling(directory: &Path) -> (PathBuf, PathBuf) {
+            let mut manifest = media_manifest("ffmpeg-x264", serde_json::json!([]));
+            manifest["media"]["videoEncoders"] = serde_json::json!([
+                {"id": "libx264", "name": "H.264 (x264)", "codecs": ["avc1"]}
+            ]);
+            fake_named_sibling(
+                directory,
+                &format!("{CODEC_PROGRAM_PREFIX}ffmpeg-x264"),
+                &format!("[ \"$1\" = {MANIFEST_FLAG} ] || exit 2\nprintf '%s\\n' '{manifest}'"),
+            )
+        }
+
+        #[test]
+        fn x264_is_discovered_without_the_standard_sibling() {
+            let root = tempfile::tempdir().unwrap();
+            let (program, executable) = x264_sibling(root.path());
+            let discovery = InstalledPlugins::default().discovery_with_sibling(Some(&executable));
+            assert_eq!(ids(&discovery.plugins), ["ffmpeg-x264"]);
+            let sibling = &discovery.plugins[0];
+            assert_eq!(sibling.executable, program);
+            assert_eq!(sibling.origin, MediaOrigin::Bundled);
+            assert_eq!(sibling.media.video_encoders[0].id, "libx264");
+            assert!(discovery.skipped.is_empty(), "{:?}", discovery.skipped);
+        }
+
+        #[test]
+        fn an_installed_native_plugin_is_listed_before_the_x264_sibling() {
+            let root = tempfile::tempdir().unwrap();
+            let (program, executable) = x264_sibling(root.path());
+            let plugins = root.path().join("bundled");
+            write_manifest(
+                &plugins.join("mediafoundation"),
+                media_manifest("mediafoundation", serde_json::json!([])),
+            );
+            let (found, errors) = discover_in(&[SearchPath {
+                path: plugins,
+                source: PluginSource::Bundled,
+            }]);
+            assert!(errors.is_empty(), "{errors:?}");
+            let listed = installed(found).media_with_sibling(Some(&executable));
+            assert_eq!(ids(&listed), ["mediafoundation", "ffmpeg-x264"]);
+            assert!(
+                listed
+                    .iter()
+                    .all(|plugin| plugin.origin == MediaOrigin::Bundled)
+            );
+            assert_eq!(listed[1].executable, program);
+        }
+
+        #[test]
+        fn a_user_x264_wins_over_a_working_x264_sibling() {
+            let root = tempfile::tempdir().unwrap();
+            let (_, executable) = x264_sibling(root.path());
+            let plugins = root.path().join("plugins");
+            let user = plugins.join("ffmpeg-x264");
+            write_manifest(&user, media_manifest("ffmpeg-x264", serde_json::json!([])));
+            let (found, errors) = discover(std::slice::from_ref(&plugins));
+            assert!(errors.is_empty(), "{errors:?}");
+            let discovery = installed(found).discovery_with_sibling(Some(&executable));
+            assert_eq!(ids(&discovery.plugins), ["ffmpeg-x264"]);
+            assert_eq!(discovery.plugins[0].executable, user.join("bin/media"));
+            assert_eq!(discovery.plugins[0].origin, MediaOrigin::User);
+            assert!(discovery.skipped.is_empty(), "{:?}", discovery.skipped);
+        }
+
         #[test]
         fn every_codec_program_is_discovered_in_name_order() {
             let root = tempfile::tempdir().unwrap();
@@ -1725,13 +1790,11 @@ mod tests {
             // components, with the id it would have served.
             let root = tempfile::tempdir().unwrap();
             let (_, executable) = printing_its_manifest(root.path());
-            let scratch = tempfile::tempdir().unwrap();
-            let (program, _) = fake_sibling(
-                scratch.path(),
+            let (x264, _) = fake_named_sibling(
+                root.path(),
+                &format!("{CODEC_PROGRAM_PREFIX}ffmpeg-x264"),
                 "echo 'ffmpeg-x264: this FFmpeg build has no libx264' >&2\nexit 1",
             );
-            let x264 = root.path().join("celesta-codec-ffmpeg-x264");
-            std::fs::rename(program, &x264).unwrap();
             let discovery = InstalledPlugins::default().discovery_with_sibling(Some(&executable));
             assert_eq!(ids(&discovery.plugins), ["ffmpeg"]);
             let [skipped] = &discovery.skipped[..] else {

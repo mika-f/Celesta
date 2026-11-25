@@ -986,6 +986,97 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn an_rgba16_frame_is_sent_as_a_slot_without_a_pipe_payload() {
+        use crate::{Color, PixelFormat};
+        use celesta_composition::Rational;
+        use celesta_plugin::protocol::{read_message, write_message};
+        use serde_json::json;
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::Instant;
+
+        let directory = tempfile::tempdir().unwrap();
+        let mut answers = std::fs::File::create(directory.path().join("answers.bin")).unwrap();
+        for header in [
+            json!({
+                "type": "hello", "protocol": MEDIA_PROTOCOL_VERSION, "roles": ["media"],
+                "frames": "sharedMemory",
+            }),
+            json!({
+                "type": "videoEncoderOpened", "session": 1, "input": PixelFormat::Rgba16,
+                "alpha": true,
+            }),
+        ] {
+            write_message(&mut answers, &Message::new(header)).unwrap();
+        }
+        let script = directory.path().join("plugin.sh");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\ncat answers.bin\nexec cat > requests.bin\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut process = MediaProcess::start_with(
+            &script,
+            directory.path(),
+            &PluginKillSwitch::default(),
+            FrameTransport::SharedMemory,
+            ProviderUse::Export {
+                ring: Some(TWO_SLOTS),
+            },
+        )
+        .unwrap();
+        let encoder = process
+            .open_video(&VideoEncoderRequest {
+                component: "prores",
+                settings: &Default::default(),
+                width: 2,
+                height: 1,
+                frame_rate: Rational::new(1, 1),
+                timescale: 1,
+                offered: &[PixelFormat::Rgba16],
+                color: &Color::bt709_limited(),
+            })
+            .unwrap();
+        let frame = vec![42; TWO_SLOTS.slot_bytes];
+        process
+            .send_video_frame(encoder.session, 0, frame.clone())
+            .unwrap();
+        let ring = process.ring.as_ref().unwrap();
+        assert_eq!(
+            ring.memory
+                .ring(TWO_SLOTS)
+                .unwrap()
+                .read_slot(0, frame.len(), 2),
+            Some(frame)
+        );
+        let captured_frame = || {
+            let mut requests = std::fs::File::open(directory.path().join("requests.bin")).ok()?;
+            for _ in 0..2 {
+                read_message(&mut requests).ok()??;
+            }
+            read_message(&mut requests).ok()?
+        };
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let request = loop {
+            if let Some(request) = captured_frame() {
+                break request;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "plugin did not capture the video request"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert_eq!(request.kind(), "encodeVideoFrame");
+        assert_eq!(
+            request.header["slot"],
+            json!({"index": 0, "generation": 2, "bytes": TWO_SLOTS.slot_bytes})
+        );
+        assert!(request.payload.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn a_media_process_needs_the_media_role() {
         use celesta_plugin::protocol::write_message;
         use serde_json::json;
