@@ -40,8 +40,51 @@ fn an_unknown_argument_is_a_usage_error() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
             stderr.contains("unknown arguments")
-                && stderr.contains("--manifest | --check-build | --check-license"),
+                && stderr
+                    .contains("--manifest | --check-build | --check-license | --help | --version"),
             "{stderr}"
+        );
+    }
+}
+
+#[test]
+fn help_says_what_the_program_is_and_what_to_run_instead() {
+    for flag in ["--help", "-h"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_celesta-codec-ffmpeg"))
+            .arg(flag)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{flag}: {output:?}");
+        assert!(output.stderr.is_empty(), "{output:?}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for expected in [
+            concat!("celesta-codec-ffmpeg ", env!("CARGO_PKG_VERSION")),
+            "starts it as a subprocess",
+            "celesta doctor",
+            "celesta export",
+            "--check-build",
+        ] {
+            assert!(
+                stdout.contains(expected),
+                "{flag} lacks {expected:?}: {stdout}"
+            );
+        }
+    }
+}
+
+#[test]
+fn version_prints_the_program_and_its_version() {
+    for flag in ["--version", "-V"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_celesta-codec-ffmpeg"))
+            .arg(flag)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{flag}: {output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            concat!("celesta-codec-ffmpeg ", env!("CARGO_PKG_VERSION"), "\n")
         );
     }
 }

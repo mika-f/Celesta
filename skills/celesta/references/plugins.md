@@ -225,6 +225,11 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   `target/release`. One that fails `--manifest` is left out, and the
   components of the plugin `<name>` then read as
   `skipped at discovery (<program>): <reason>` rather than `not installed`.
+  Each of these FFmpeg programs also takes `--help` (`-h`), which says it is
+  a plugin Celesta starts as a subprocess and points to `celesta doctor` and
+  `celesta export --list-components --check`, or `--version` (`-V`); both
+  exit 0 without checking FFmpeg's components. Any other argument prints the
+  usage and exits 2.
 - A plugin with the older `"roles": ["codec"]` is ignored: rebuild
   `plugins/ffmpeg`, or have the user install a release for their Celesta.
 - They are not imported and have no content components. Every media plugin that
