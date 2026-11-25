@@ -12,6 +12,14 @@ const CHECKING: &str = "Checking the dropped media…";
 const PREPARING: &str = "Preparing the drop target…";
 const CANCELLED: &str = "Media not added because the preview changed";
 
+fn drop_point(
+    bounds: gpui_kit::Bounds<Pixels>,
+    frame: (f32, f32),
+    position: gpui_kit::Point<Pixels>,
+) -> Option<Point> {
+    scene_point(bounds, frame, position)
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct Hit {
     layer: String,
@@ -304,7 +312,9 @@ impl EditorView {
     fn drop_hit(&self, position: gpui_kit::Point<Pixels>) -> Result<(Hit, Point), String> {
         self.drop_allowed()?;
         let point = self
-            .scene_position(position)
+            .viewer_bounds
+            .get()
+            .and_then(|bounds| drop_point(bounds, self.frame_size(), position))
             .ok_or_else(|| PREVIEW_ONLY.to_owned())?;
         if self.preview_worker.generation() != self.preview_shown_generation {
             return Err(PREPARING.to_owned());
@@ -651,6 +661,14 @@ impl EditorView {
 mod tests {
     use super::*;
     use celesta_gpu_renderer::HitRegion;
+    use gpui_kit::{Bounds, point, px, size};
+
+    #[test]
+    fn letterbox_margins_are_not_drop_targets() {
+        let bounds = Bounds::new(point(px(0.), px(0.)), size(px(100.), px(100.)));
+        assert!(drop_point(bounds, (100., 50.), point(px(40.), px(10.))).is_none());
+        assert!(drop_point(bounds, (100., 50.), point(px(40.), px(30.))).is_some());
+    }
 
     #[test]
     fn the_topmost_hit_does_not_fall_back_to_another_branch() {
