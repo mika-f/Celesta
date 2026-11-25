@@ -15,6 +15,10 @@
       "types": "./dist/internal.d.ts",
       "default": "./dist/internal.js"
     },
+    "./internal/animated-number": {
+      "types": "./dist/animated-number.d.ts",
+      "default": "./dist/animated-number.js"
+    },
     "./jsx-dev-runtime": {
       "types": "./dist/jsx-dev-runtime.d.ts",
       "default": "./dist/jsx-dev-runtime.js"

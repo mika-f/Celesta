@@ -67,6 +67,33 @@ test('nested sequences retain default durations, clipped audio, and conditional 
   ]);
 });
 
+test('a Sequence that clips the head of Audio accounts for the playback rate over the clipped time', () => {
+  const playbackRate = {
+    type: 'keyframes' as const,
+    keyframes: [
+      { time: { value: 0, timescale: 1 }, value: 1 },
+      { time: { value: 2, timescale: 1 }, value: 2, easing: 'linear' as const },
+    ],
+  };
+  const composition = mount(() => h(Composition, { width: 10, height: 10, fps: 30, durationInFrames: 60 },
+    h(Sequence, { from: -30 },
+      h(Audio, { src: 'animated.wav', playbackRate }),
+      h(Audio, { src: 'static.wav', startFrom: 0.5, playbackRate: 2 }),
+    ),
+  ));
+
+  const { audio: [animated, fixed] } = at(composition, 0);
+  assert.equal(animated.sourceStart, 1.25);
+  assert.equal(fixed.sourceStart, 2.5);
+  assert.deepEqual(animated.playbackRate, {
+    type: 'keyframes',
+    keyframes: [
+      { time: { value: -1_000_000, timescale: 1_000_000 }, value: 1 },
+      { time: { value: 1_000_000, timescale: 1_000_000 }, value: 2, easing: 'linear' },
+    ],
+  });
+});
+
 test('Series evaluates only active scenes and keeps audio at overlapping boundaries', () => {
   const seen: string[] = [];
   function Scene({ name }: { name: string }) {

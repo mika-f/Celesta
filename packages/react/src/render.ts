@@ -22,7 +22,8 @@ import { type StaticsFrame, StaticSubtrees } from './static';
 import { resolveComponent } from './registry';
 import { type HostNode, type RootContainer, createRoot } from './reconciler';
 import { type SceneErrorReport, type SceneErrorSink, SceneErrorSinkContext, sceneBoundariesOf } from './scene-boundary';
-import { cutAudioClip } from './audio-cut';
+import { cutAudioClip, moveEarlier } from './audio-cut';
+import { integrateAnimated } from './animated-number';
 import { type LayerSourceReport, type SourcePos, layerSourceReport, occurrenceKeys } from './source-chain';
 import { checkCue } from './subtitles';
 import { evaluateDeterministically } from './determinism';
@@ -661,29 +662,6 @@ function finiteNumber(value: unknown, fallback: number, element: string, name: s
     throw new Error(`${element} ${name} must be a finite number`);
   }
   return value;
-}
-
-/** Leading value of an animation — used to map clip-head clipping onto the source clock. */
-function firstAnimatedValue(value: AnimatedNumber): number {
-  return typeof value === 'number'
-    ? value
-    : (value.keyframes[0]?.value ?? 0);
-}
-
-function shiftAnimated(value: AnimatedNumber, deltaSeconds: number): AnimatedNumber {
-  if (typeof value === 'number' || deltaSeconds === 0) {
-    return value;
-  }
-  return {
-    ...value,
-    keyframes: value.keyframes.map((keyframe) => ({
-      ...keyframe,
-      time: {
-        value: keyframe.time.value - Math.round(deltaSeconds * keyframe.time.timescale),
-        timescale: keyframe.time.timescale,
-      },
-    })),
-  };
 }
 
 /**
@@ -1326,14 +1304,14 @@ function collectAudioClip(
   const clipped = startSec - context.originSec;
   const clip: AudioClipDescriptor = {
     src: source.location.type === 'file' ? source.location.path : source.location.url,
-    sourceStart: startFrom + clipped * firstAnimatedValue(playbackRate),
-    playbackRate: shiftAnimated(playbackRate, -clipped),
-    volume: shiftAnimated(volume, -clipped),
+    sourceStart: startFrom + integrateAnimated(playbackRate, clipped),
+    playbackRate: moveEarlier(playbackRate, clipped),
+    volume: moveEarlier(volume, clipped),
     muted: props.muted === true,
     start: startSec,
     duration: endSec - startSec,
     ...(props.loop === true ? { loop: true } : {}),
-    ...(pitch !== 0 ? { pitch: shiftAnimated(pitch, -clipped) } : {}),
+    ...(pitch !== 0 ? { pitch: moveEarlier(pitch, clipped) } : {}),
     ...(!video && props.preservePitch === true ? { preservePitch: true } : {}),
     // Fades are timed from the edges of the window heard, not shifted by
     // `clipped` like keyframes, so cutting the clip keeps them at its ends.

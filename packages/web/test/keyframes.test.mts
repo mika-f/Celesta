@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'vitest';
-import { MAX_POINTS_PER_SEGMENT, automationEvents, evaluateAnimated, integrateAnimated } from '../src/keyframes.js';
+import { evaluateAnimated, integrateAnimated } from '@celesta.studio/react/internal/animated-number';
+import { MAX_POINTS_PER_SEGMENT, automationEvents } from '../src/keyframes.js';
 import type { AutomationEvent } from '../src/keyframes.js';
 import type { AnimatedNumber, Keyframe, KeyframeEasing } from '../src/types.js';
 

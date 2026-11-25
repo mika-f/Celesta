@@ -1001,6 +1001,10 @@ not a number, or keyframes with a non-finite time or value throws an error
 naming the component and the prop (see errors.md) instead of playing at the
 default.
 
+When a `<Sequence>` clips the head of an `<Audio>` clip, playback begins at
+the source position the clip would have reached at the cut, accounting for
+any `playbackRate` keyframes in the clipped span.
+
 `pitch` and `preservePitch` apply to `<Audio>` only, not to a `<Video>`'s
 soundtrack or `<Dialogue>` voices. Preview and export sound the same;
 `@celesta.studio/web`'s `exportMp4` rejects a clip that uses them ("Audio pitch and
