@@ -110,3 +110,48 @@ fn unified_and_standalone_export_write_identical_react_stills() {
         "the two entry points rendered different PNGs"
     );
 }
+
+#[cfg(feature = "runtime-tests")]
+#[test]
+fn a_new_project_exports_without_warnings() {
+    let cli = env!("CARGO_BIN_EXE_celesta");
+    let scratch = tempfile::tempdir().unwrap();
+    let init = Command::new(cli)
+        .args(["init", "film"])
+        .current_dir(scratch.path())
+        .output()
+        .unwrap();
+    assert!(init.status.success(), "{init:?}");
+    let project = scratch.path().join("film");
+    let output = Command::new(cli)
+        .args([
+            "export",
+            "--react",
+            "--frame",
+            "0",
+            "--json",
+            "film.tsx",
+            "frame.png",
+        ])
+        .current_dir(&project)
+        .output()
+        .unwrap();
+    let report: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid export report: {error}; {output:?}"));
+    if report["error"]["code"] == "render"
+        && report["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("adapter"))
+    {
+        assert_ne!(
+            std::env::var("CELESTA_REQUIRE_GPU").as_deref(),
+            Ok("1"),
+            "{report}"
+        );
+        eprintln!("skipping live export test: no GPU adapter is available: {report}");
+        return;
+    }
+    assert!(output.status.success(), "{report}");
+    assert_eq!(report["warnings"], serde_json::json!([]), "{report}");
+    assert!(project.join("frame.png").is_file());
+}

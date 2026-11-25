@@ -12,7 +12,7 @@ With `celesta` on PATH, use `init` to create a project without opening a window 
 celesta init my-video
 cd my-video
 celesta-editor film.tsx
-celesta-exporter --react film.tsx output.mov
+celesta export --react film.tsx output.mov
 ```
 
 ```sh title="Initialize the current directory"
@@ -49,7 +49,8 @@ For a [source build](/en/docs/build-from-source/), build the React runtime first
 ## What initialization creates
 
 - `film.tsx`: a five-second, 1920 × 1080 composition at 30 fps. The background and title sit in a `<Group>`, which is the parent the editor's Add menu inserts new layers into.
-- `package.json`: a private project with preview, export, and typecheck scripts, and TypeScript `^7.0.2` as a development dependency.
+- `fonts/`: the Inter font the title uses (`Inter-Regular.woff2`), its license (`OFL.txt`), and `inter.css`, which declares it as the `Inter` family. `film.tsx` loads the stylesheet with `<Font>`, so the title uses this file even where another version of Inter is installed, and looks the same on every computer, including a Linux server with no fonts installed.
+- `package.json`: a private project with TypeScript `^7.0.2` as a development dependency and three scripts: `preview` opens the editor (`celesta-editor film.tsx`), `export` writes `output.mov` (`celesta export --react --overwrite film.tsx output.mov`), and `typecheck` runs `tsc`.
 - `tsconfig.json` and `.celesta/`: configuration and declarations matching Celesta’s bundled runtime.
 - `.gitignore`: ignores `node_modules/` and `output.mov`. The generated `.celesta/` directory ignores itself.
 - `celesta.config.json`: marks the folder as the project root, so the editor remembers that you trust the project. It can also list [plugins that come with the project](/en/docs/plugins/#plugins-that-come-with-a-project).

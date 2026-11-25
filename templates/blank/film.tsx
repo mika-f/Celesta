@@ -1,8 +1,11 @@
-import { Composition, Group, Rect, Text } from '@celesta.studio/react';
+import { Assets, Composition, Font, Group, Rect, Text } from '@celesta.studio/react';
 
 export default function Film() {
   return (
     <Composition width={1920} height={1080} fps={30} durationInFrames={150}>
+      <Assets>
+        <Font src="./fonts/inter.css" />
+      </Assets>
       <Group>
         <Rect width={1920} height={1080} fill="#18181b" />
         <Text
@@ -11,7 +14,7 @@ export default function Film() {
           anchorX={0.5}
           anchorY={0.5}
           style={{
-            fontFamily: 'sans-serif',
+            fontFamily: 'Inter',
             fontSize: 96,
             fill: { type: 'solid', color: '#ffffff' },
             align: 'center',
