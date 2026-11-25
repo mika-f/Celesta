@@ -366,7 +366,16 @@ pub(crate) fn stage_outputs(
             result.empty.push(path.clone());
         }
         for file in files {
-            if !seen.insert(file.path.clone()) {
+            let absolute = std::path::absolute(&file.path).map_err(|source| ExportError::Io {
+                operation: "resolve subtitle output",
+                source,
+            })?;
+            let key = absolute
+                .parent()
+                .zip(absolute.file_name())
+                .and_then(|(parent, name)| parent.canonicalize().ok().map(|dir| dir.join(name)))
+                .unwrap_or(absolute);
+            if !seen.insert(key) {
                 return Err(ExportError::DuplicateSubtitleOutput(file.path));
             }
             if !overwrite && file.path.exists() {
@@ -669,6 +678,20 @@ mod tests {
             }
             other => panic!("expected mixed languages, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn relative_and_absolute_subtitle_destinations_collide() {
+        let dir = tempfile::tempdir_in(".").unwrap();
+        let relative = PathBuf::from(dir.path().file_name().unwrap());
+        let template = relative.join("film.{lang}.srt");
+        let absolute = std::path::absolute(relative.join("film.en.srt")).unwrap();
+        let cues = [in_lang("en", cue("Hello", 0.0, 1.0))];
+        assert!(matches!(
+            stage_outputs(&[template, absolute.clone()], &cues, false),
+            Err(ExportError::DuplicateSubtitleOutput(path)) if path == absolute
+        ));
+        assert_eq!(dir.path().read_dir().unwrap().count(), 0);
     }
 
     #[test]
