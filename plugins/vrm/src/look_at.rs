@@ -206,6 +206,11 @@ impl LookAt {
         })
     }
 
+    pub(crate) fn turns_bone(&self, bone: HumanBone) -> bool {
+        matches!(self.applies, Applies::Bones { .. })
+            && matches!(bone, HumanBone::LeftEye | HumanBone::RightEye)
+    }
+
     /// The origin's model-space matrix for nodes at `worlds`.
     pub(crate) fn origin(&self, worlds: &[Mat4]) -> Mat4 {
         let head = worlds.get(self.head).copied().unwrap_or(Mat4::IDENTITY);

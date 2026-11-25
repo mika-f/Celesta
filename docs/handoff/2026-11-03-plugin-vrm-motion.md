@@ -126,7 +126,9 @@ Ported from `VrmAnimationImporter.cs`, `InitialRotationPoseProvider.cs`,
   axis a `KeyframeAnimation` on the layer's clock, read at the frame's time
   to the microsecond (`Time::new((seconds × 1e6).round(), 1_000_000)`), as
   the Live2D plugin reads its tracks. Keys are VRM humanoid bone names; a
-  bone the avatar lacks is skipped.
+  bone the avatar lacks is skipped. Tracks targeting eye bones are
+  refused when the avatar's lookAt turns them, even without a `lookAt`
+  prop.
 - **Rotations** are degrees, applied after the motion in the bone's
   normalized frame (its turn from rest in the model's axes, as a clip's):
   `q ← q · Ry(−yaw) · Rx(−pitch) · Rz(roll)` in glTF's axes (Unity's
@@ -239,8 +241,9 @@ Ported from UniVRM's FastSpringBone (`UpdateFastSpringBoneJob.cs`,
 - **What a step sees:** the pose at `k / 60` from the motions, tracks, and
   constraints alone, never the step before's turned pose. The lookAt and
   expressions are a frame's own values, which earlier steps cannot be
-  given; in a VRM 1.0 avatar they turn no bone but the eyes, so a spring
-  hanging from an eye bone swings as if the eye rested (tested). A step
+  given. When lookAt turns the eye bones, tracks on them are refused,
+  so a spring hanging from an eye bone ignores the gaze (tested).
+  With expression-based lookAt, springs still see eye tracks. A step
   samples and blends only the clips' bones and hips (`Sampling::Motion`):
   a clip's expressions, however many or long-named, cost a step nothing
   (tested by counting the expression channels sampled), and the bones and
@@ -358,8 +361,8 @@ without motions).
 - **The VRMA `lookAt` animation** is not read, nor glTF animations other
   than a clip's first.
 - **Springs ignore the gaze and expressions:** a step sees no lookAt and
-  no expression, so a spring hanging from an eye bone swings as if the eye
-  rested.
+  no expression. Eye tracks are refused when lookAt turns the eye bones;
+  otherwise the steps see eye tracks like any other bone tracks.
 - **Spring recordings against UniVRM** (a reference Unity scene stepping
   the same clip at 60 Hz) have not been compared.
 - **IK and arbitrary-skeleton retargeting** are non-goals: clips are VRM

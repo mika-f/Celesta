@@ -402,7 +402,9 @@ import { Vrm } from '@celesta-plugin/vrm';
   up, `roll` top to the avatar's right (negative `yaw` turns left,
   negative `pitch` nods down). `x`, `y`, `z`: metres, `hips` only (moves the avatar).
   An unknown bone or axis, `x`/`y`/`z` off the hips, an empty axis, or a
-  non-finite frame or value throws.
+  non-finite frame or value throws. Eye tracks are rejected if the
+  avatar's lookAt turns the eye bones, even when the `lookAt` prop is
+  omitted. Expression-based lookAt does not block eye tracks.
 - Node constraints follow every frame, in UniVRM's order. Spring bones
   (hair, skirts) step on a fixed 60 Hz clock from the layer's start, so
   any frame is the same however it is reached: scrubbed, played, or

@@ -117,10 +117,6 @@ pub const CANVAS: [f32; 2] = [1920.0, 1080.0];
 /// once however many draw it, and the geometry budget bounds those walks.
 const FRAMING_VISITS: u64 = 50_000_000;
 
-/// How the base pose applies the tracks: checking them, or reading tracks
-/// already checked.
-type TrackStage = fn(&BTreeMap<String, TrackData>, f64, &mut ClipPose) -> Result<(), FrameError>;
-
 /// Why a frame could not be made.
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
@@ -705,7 +701,6 @@ impl VrmModel {
         })
     }
 
-    #[cfg(test)]
     pub(crate) fn look_at(&self) -> &LookAt {
         &self.look_at
     }
@@ -719,18 +714,20 @@ impl VrmModel {
         time: f64,
         data: &PerformanceData,
     ) -> Result<(Pose, BTreeMap<ExpressionKey, f32>), FrameError> {
-        self.base_pose_with(time, data, Sampling::All, apply_tracks)
+        self.base_pose_with(time, data, Sampling::All, |tracks, time, pose| {
+            apply_tracks(tracks, time, pose, self.look_at())
+        })
     }
 
     /// [`Self::base_pose`], its clips read as `sampling` asks (with
     /// [`Sampling::Motion`], no expression weights), and the tracks applied
-    /// by `tracks`.
+    /// by `tracks`, with or without validation.
     fn base_pose_with(
         &self,
         time: f64,
         data: &PerformanceData,
         sampling: Sampling,
-        tracks: TrackStage,
+        tracks: impl FnOnce(&BTreeMap<String, TrackData>, f64, &mut ClipPose) -> Result<(), FrameError>,
     ) -> Result<(Pose, BTreeMap<ExpressionKey, f32>), FrameError> {
         let mut pose = self.tree.rest_pose();
         let motion = motion_pose(&self.clips, &data.motions, time, sampling)?;

@@ -4,7 +4,8 @@
 //! - **Keys** are VRM humanoid bone names (`head`, `leftUpperArm`, …),
 //!   each with up to six axes, each a [`KeyframeAnimation`] on the layer's
 //!   clock read at the frame's time to the microsecond, as the Live2D
-//!   plugin reads its tracks. A bone the avatar lacks is skipped.
+//!   plugin reads its tracks. A bone the avatar lacks is skipped, and
+//!   the eyes cannot be tracked if the avatar's lookAt turns them.
 //! - **Rotations** are in degrees, in the bone's normalized frame (its turn
 //!   from rest in the model's axes, as a clip's): `q ← q · Ry(−yaw) ·
 //!   Rx(−pitch) · Rz(roll)`, after the motion, in glTF's axes (Unity's
@@ -22,6 +23,7 @@
 //!   costs only the reading.
 
 use crate::humanoid::HumanBone;
+use crate::look_at::LookAt;
 use crate::model::FrameError;
 use crate::vrma::ClipPose;
 use celesta_composition::{KeyframeAnimation, Time, keyframe_segment};
@@ -76,13 +78,17 @@ pub(crate) fn apply_tracks(
     tracks: &BTreeMap<String, TrackData>,
     time: f64,
     pose: &mut ClipPose,
+    look_at: &LookAt,
 ) -> Result<(), FrameError> {
-    check_tracks(tracks)?;
+    check_tracks(tracks, look_at)?;
     apply_checked_tracks(tracks, time, pose)
 }
 
-/// Checks `tracks` whatever the time: bone names, axes, and keyframes.
-pub(crate) fn check_tracks(tracks: &BTreeMap<String, TrackData>) -> Result<(), FrameError> {
+/// Checks `tracks` whatever the time: bones, axes, and keyframes.
+pub(crate) fn check_tracks(
+    tracks: &BTreeMap<String, TrackData>,
+    look_at: &LookAt,
+) -> Result<(), FrameError> {
     for (name, track) in tracks {
         let Some(bone) = HumanBone::from_name(name) else {
             return Err(FrameError(format!(
@@ -99,6 +105,11 @@ pub(crate) fn check_tracks(tracks: &BTreeMap<String, TrackData>) -> Result<(), F
                 )));
             }
             check_keyframes(&format!("tracks.{name}.{axis}"), animation)?;
+            if look_at.turns_bone(bone) {
+                return Err(FrameError(format!(
+                    "tracks.{name}: the avatar's lookAt turns this bone"
+                )));
+            }
         }
     }
     Ok(())
@@ -215,9 +226,13 @@ mod tests {
     /// The synthetic avatar, and the reference clip as `motion0`, opened
     /// from a fresh directory with a fresh texture cache.
     fn open() -> (VrmModel, TempDir) {
+        open_vrm(&SyntheticVrm::avatar())
+    }
+
+    fn open_vrm(avatar: &SyntheticVrm) -> (VrmModel, TempDir) {
         let directory = TempDir::new().unwrap();
         let model = directory.path().join("avatar.vrm");
-        std::fs::write(&model, SyntheticVrm::avatar().glb()).unwrap();
+        std::fs::write(&model, avatar.glb()).unwrap();
         let clip = directory.path().join("clip.vrma");
         std::fs::write(&clip, SyntheticVrma::clip().glb()).unwrap();
         let assets: BTreeMap<String, PathBuf> =
@@ -398,6 +413,62 @@ mod tests {
     }
 
     #[test]
+    fn eye_tracks_are_refused_when_look_at_turns_the_eyes() {
+        let (mut model, _files) = open();
+        for name in ["leftEye", "rightEye"] {
+            let turn = data(json!({ "tracks": { (name): { "yaw": keys(&[(0.0, 30.0)]) } } }));
+            let error = model.frame(0.0, &turn).unwrap_err();
+            assert_eq!(
+                error.0,
+                format!("tracks.{name}: the avatar's lookAt turns this bone")
+            );
+        }
+    }
+
+    #[test]
+    fn axisless_eye_tracks_are_accepted_with_bone_look_at() {
+        let (mut model, _files) = open();
+        let empty = data(json!({ "tracks": { "leftEye": {}, "rightEye": {} } }));
+        model.frame(0.0, &empty).unwrap();
+
+        let message = refusal(&model, json!({ "leftEye": { "yaw": keys(&[]) } }));
+        assert_eq!(message, "tracks.leftEye.yaw has no keyframes");
+    }
+
+    #[test]
+    fn eye_tracks_turn_the_eyes_with_expression_look_at() {
+        let mut avatar = SyntheticVrm::avatar();
+        avatar.look_at["type"] = json!("expression");
+        let (mut model, _files) = open_vrm(&avatar);
+        let turn = data(json!({
+            "lookAt": { "yaw": 30.0, "pitch": 0.0 },
+            "tracks": {
+                "leftEye": { "yaw": keys(&[(0.0, 90.0)]) },
+                "rightEye": { "yaw": keys(&[(0.0, -90.0)]) },
+            },
+        }));
+        let (_, worlds) = model.render(0.0, &turn).unwrap();
+        let left = worlds[node::LEFT_EYE].transform_vector3(Vec3::Z);
+        let right = worlds[node::RIGHT_EYE].transform_vector3(Vec3::Z);
+        assert!(near(left, Vec3::NEG_X), "{left}");
+        assert!(near(right, Vec3::X), "{right}");
+    }
+
+    #[test]
+    fn a_bone_look_at_with_one_eye_allows_tracking_that_eye() {
+        let mut avatar = SyntheticVrm::avatar();
+        avatar.omit_bone = Some("rightEye".into());
+        let (mut model, _files) = open_vrm(&avatar);
+        let turn = data(json!({
+            "lookAt": { "yaw": -30.0, "pitch": 0.0 },
+            "tracks": { "leftEye": { "yaw": keys(&[(0.0, 90.0)]) } },
+        }));
+        let (_, worlds) = model.render(0.0, &turn).unwrap();
+        let left = worlds[node::LEFT_EYE].transform_vector3(Vec3::Z);
+        assert!(near(left, Vec3::NEG_X), "{left}");
+    }
+
+    #[test]
     fn bad_tracks_are_refused() {
         let (model, _files) = open();
         let message = refusal(&model, json!({ "tail": { "yaw": keys(&[(0.0, 1.0)]) } }));
@@ -479,7 +550,8 @@ mod tests {
         // Times to the microsecond, as at 29.97 fps: half way at 0.5005 s.
         let micro = data_at_micro();
         let mut pose = ClipPose::default();
-        apply_tracks(&micro, 0.5005005, &mut pose).unwrap();
+        let (model, _files) = open();
+        apply_tracks(&micro, 0.5005005, &mut pose, model.look_at()).unwrap();
         // A yaw of 10° to the avatar's right: −10° about glTF's +Y.
         let expected = Quat::from_rotation_y(-10_f32.to_radians());
         let turn = pose.rotations[&HumanBone::Head];
