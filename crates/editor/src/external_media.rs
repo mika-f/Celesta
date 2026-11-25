@@ -1,8 +1,14 @@
 use super::*;
+use crate::element_edit::{
+    ElementTargets, lock_outside_project, resolve_targets, type_component_props,
+};
+use crate::scope::scope_state;
 use crate::source::{PropertyArgs, WatchStamp, watched_stamp};
 use celesta_gpu_renderer::hit_test;
+use celesta_react_bridge::{ComponentPropertySchema, PrimitivePropertyTable};
 use celesta_renderer::image_source::ImageSources;
 use gpui_kit::{DragMoveEvent, ExternalPaths, Window};
+use std::collections::BTreeMap;
 use std::io::Read;
 use std::time::SystemTime;
 
@@ -20,6 +26,13 @@ fn drop_point(
     scene_point(bounds, frame, position)
 }
 
+fn drop_parent_scope(state: Option<&ScopeState>, remembered: Option<Scope>) -> ParentScope {
+    state.map_or_else(
+        || remembered.map_or(ParentScope::NoControl, ParentScope::Chosen),
+        |state| parent_scope(state, remembered),
+    )
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct Hit {
     layer: String,
@@ -32,6 +45,8 @@ pub(crate) struct DropRequest {
     hit: Hit,
     chapters: Vec<ReactChapter>,
     end: u64,
+    primitives: BTreeMap<String, PrimitivePropertyTable>,
+    components: BTreeMap<String, ComponentPropertySchema>,
 }
 
 impl DropRequest {
@@ -51,6 +66,7 @@ struct DropFacts {
     groups: Vec<GroupFacts>,
     spaces: HashMap<String, ChildrenSpace>,
     texts: HashMap<PathBuf, Arc<String>>,
+    scope_targets: Option<ElementTargets>,
 }
 
 pub(crate) fn read_drop_lookup(
@@ -92,11 +108,30 @@ pub(crate) fn read_drop_lookup(
                     .then(|| (id.clone(), children_space(id)))
             })
             .collect();
+        let read = |path: &Path| fs::read_to_string(path).map_err(|error| error.to_string());
+        let primitive = report
+            .chain
+            .first()
+            .and_then(|hit| request.primitives.get(&hit.name));
+        let scope_targets = resolve_targets(read, &report, primitive)
+            .ok()
+            .map(|mut targets| {
+                type_component_props(&mut targets, &request.components, read);
+                lock_outside_project(&mut targets, |file| {
+                    root.as_ref().is_none_or(|root| {
+                        fs::canonicalize(file)
+                            .ok()
+                            .is_none_or(|file| !inside_project(&file, root))
+                    })
+                });
+                targets
+            });
         Ok(DropFacts {
             report,
             groups,
             spaces,
             texts: texts.into_inner(),
+            scope_targets,
         })
     });
     DropLookup {
@@ -339,17 +374,27 @@ impl EditorView {
             .filter(|(of, _)| of == hit)
             .ok_or_else(|| PREPARING.to_owned())?;
         let facts = facts.as_ref().map_err(Clone::clone)?;
-        let scope = facts
+        let remembered = facts
             .report
             .chain
             .first()
-            .and_then(|layer| self.scope_choices.get(&SourcePos::from(layer)))
-            .map_or(ParentScope::NoControl, ParentScope::Chosen);
+            .and_then(|layer| self.scope_choices.get(&SourcePos::from(layer)));
         let occurrences = self.occurrences.as_ref().map(|(_, state)| state);
         if matches!(occurrences, Some(OccurrenceState::Refreshing(_))) {
             return Err("The scene scan is still being updated".to_owned());
         }
         let chapters = self.react_chapters().unwrap_or_default();
+        let scope_state = facts.scope_targets.as_ref().map(|targets| {
+            scope_state(
+                &facts.report,
+                targets,
+                occurrences,
+                None,
+                chapters,
+                u64::try_from(hit.frame).unwrap_or(0),
+            )
+        });
+        let scope = drop_parent_scope(scope_state.as_ref(), remembered);
         facts.target(kind, scope, |entry| {
             is_shared(occurrences, chapters, &SourcePos::from(entry))
         })
@@ -466,10 +511,16 @@ impl EditorView {
         {
             return;
         }
+        let react = self
+            .react_preview
+            .as_ref()
+            .expect("drop hit requires a React preview");
         self.add.external.asked = Some(DropRequest {
             hit,
             chapters: self.react_chapters().unwrap_or_default().to_vec(),
             end: u64::try_from(self.clock.end_frame()).unwrap_or(0),
+            primitives: react.primitive_properties.clone(),
+            components: react.component_schemas.clone(),
         });
         self.reuse_scene = true;
         self.refresh_preview();
@@ -661,6 +712,7 @@ impl EditorView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scope::{ScopeLock, ScopeOptions};
     use celesta_gpu_renderer::HitRegion;
     use gpui_kit::{Bounds, point, px, size};
 
@@ -669,6 +721,27 @@ mod tests {
         let bounds = Bounds::new(point(px(0.), px(0.)), size(px(100.), px(100.)));
         assert!(drop_point(bounds, (100., 50.), point(px(40.), px(10.))).is_none());
         assert!(drop_point(bounds, (100., 50.), point(px(40.), px(30.))).is_some());
+    }
+
+    #[test]
+    fn drops_default_to_shared_when_this_scene_is_unavailable() {
+        let state = ScopeState::Options(ScopeOptions {
+            this_scene: Err(ScopeLock::ReusedCall),
+            shared: Ok(()),
+            shared_reaches: Vec::new(),
+            sets_own: Vec::new(),
+            own_pending: false,
+            called_here: None,
+            drawn_alone: false,
+        });
+        assert_eq!(
+            drop_parent_scope(Some(&state), None),
+            ParentScope::Chosen(Scope::Shared)
+        );
+        assert!(matches!(
+            drop_parent_scope(Some(&state), Some(Scope::ThisScene)),
+            ParentScope::Unknown(_)
+        ));
     }
 
     #[test]
@@ -703,6 +776,7 @@ mod tests {
             groups: Vec::new(),
             spaces: HashMap::new(),
             texts: HashMap::new(),
+            scope_targets: None,
         };
         assert_eq!(
             facts.target(NewKind::Image, ParentScope::NoControl, |_| unreachable!()),

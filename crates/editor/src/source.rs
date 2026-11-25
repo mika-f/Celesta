@@ -365,7 +365,8 @@ fn walk_sources(dir: &Path, visit: &mut dyn FnMut(&Path, &std::fs::Metadata)) {
                         | "srt"
                         | "vtt"
                 )
-            ) && !(path.starts_with(assets) && is_transport_stream_asset(&path)) {
+            ) && !(path.starts_with(assets) && is_transport_stream_asset(&path))
+            {
                 visit(&path, &metadata);
             }
         }
