@@ -501,11 +501,13 @@ When it opens a model, the plugin reports the model's terms of use as notices, o
 
 Meshes the file marks as first-person only (such as a body without a head, for the wearer's own view) are hidden, as UniVRM's third-person camera hides them. When the file marks one node more than once, its first mark counts, as in UniVRM, and each later one is a warning.
 
-Other warnings point out parts of the file the plugin does not use as written: primitives it does not draw, textures a material is drawn without, and morph target binds it ignores. Each of these kinds, and the repeated first-person marks, is listed up to 20 times, then one line counts the rest (`and 12 more primitives that are not drawn`).
+Other warnings point out parts of the file the plugin does not use as written: primitives it does not draw, textures a material is drawn without, and morph target binds it ignores. The plugin also skips and warns about unknown humanoid bone or expression preset names; required humanoid bones must still be present. Each kind of warning, including repeated first-person marks, is listed up to 20 times, then one line counts the rest (`and 12 more primitives that are not drawn`).
 
 A material's emission is brightened by `KHR_materials_emissive_strength` when the material has it, and otherwise by `VRMC_materials_hdr_emissiveMultiplier`, as UniVRM reads them. A multiplier that is not a finite number refuses the model, and the message names the field.
 
 Materials the file gives in plain glTF PBR (often metal or glass parts) are drawn as their flat base color for now, and a note names them. Not supported yet: VRM 0.x files, which the plugin refuses with a message saying how to convert them to VRM 1.0 (with UniVRM or the VRM Add-on for Blender).
+
+Avatars and animation clips may list supported VRM extensions in glTF's `extensionsRequired`. An unsupported required extension still prevents the file from opening.
 
 The plugin refuses a file over 1 GiB, or one whose glTF JSON is over 64 MiB; a `.vrm`'s JSON is a few MB. `src` also opens a glTF JSON file (`.gltf`) whose buffers are embedded as `data:` URIs, but there the buffers are part of the JSON, so the whole file is capped at 64 MiB. A file whose buffers or images are in other files is refused.
 

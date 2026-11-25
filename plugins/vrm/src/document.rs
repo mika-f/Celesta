@@ -2,6 +2,10 @@
 //! extensions, refused with a message the user can act on when it is not a
 //! VRM 1.0 avatar. Images are left encoded; the materials read them.
 
+use crate::expressions::Preset;
+use crate::humanoid::HumanBone;
+use crate::notices::Warnings;
+use celesta_plugin::Notice;
 use serde::Deserialize;
 use serde::de::IgnoredAny;
 use serde_json::Value;
@@ -11,6 +15,16 @@ use std::io::Read;
 use std::path::Path;
 use vrm_spec::vrmc_materials_mtoon_1_0::{VRMC_MATERIALS_MTOON, VrmcMaterialsMtoonSchema};
 use vrm_spec::vrmc_vrm_1_0::{HumanBoneName, VRMCVrmSchema};
+
+const SUPPORTED_VRMC_EXTENSIONS: &[&str] = &[
+    "VRMC_vrm",
+    VRMC_MATERIALS_MTOON,
+    "VRMC_springBone",
+    "VRMC_springBone_extended_collider",
+    "VRMC_node_constraint",
+    "VRMC_materials_hdr_emissiveMultiplier",
+    "VRMC_vrm_animation",
+];
 
 /// Why a file did not open.
 #[derive(Debug, thiserror::Error)]
@@ -98,6 +112,7 @@ pub(crate) struct Document {
     pub vrm: VRMCVrmSchema,
     /// Each material's `VRMC_materials_mtoon`, by glTF material index.
     pub mtoon: Vec<Option<VrmcMaterialsMtoonSchema>>,
+    pub notices: Vec<Notice>,
 }
 
 impl Document {
@@ -113,7 +128,7 @@ impl Document {
         let (vrm, vrm0) = head
             .extensions
             .map_or((None, None), |extensions| (extensions.vrm, extensions.vrm0));
-        let Some(vrm) = vrm else {
+        let Some(mut vrm) = vrm else {
             return Err(LoadError::Invalid(if vrm0.is_none() {
                 "this glTF file has no VRMC_vrm extension: it is not a VRM 1.0 avatar".into()
             } else {
@@ -130,11 +145,12 @@ impl Document {
         if !vrm["specVersion"].is_string() {
             return Err(LoadError::Invalid("VRMC_vrm has no specVersion".into()));
         }
+        let mut notices = Vec::new();
+        ignore_unknown_keys(&mut vrm, &mut notices);
         let vrm = VRMCVrmSchema::deserialize(vrm)
             .map_err(|error| LoadError::Invalid(format!("VRMC_vrm is malformed: {error}")))?;
 
-        let root = gltf::json::Root::from_slice(&json).map_err(gltf::Error::Deserialize)?;
-        let gltf = gltf::Document::from_json(root)?;
+        let gltf = validated_gltf(&json)?;
         check_humanoid(&vrm, gltf.nodes().len())?;
         let buffers = embedded_buffers(&gltf, blob, ".vrm")?;
 
@@ -163,8 +179,51 @@ impl Document {
             buffers,
             vrm,
             mtoon,
+            notices,
         })
     }
+}
+
+fn ignore_unknown_keys(vrm: &mut Value, notices: &mut Vec<Notice>) {
+    for (section, field, kind, known) in [
+        (
+            "humanoid",
+            "humanBones",
+            "unknown humanoid bones ignored",
+            (|name| HumanBone::from_name(name).is_some()) as fn(&str) -> bool,
+        ),
+        (
+            "expressions",
+            "preset",
+            "unknown expression presets ignored",
+            |name| Preset::ALL.into_iter().any(|preset| preset.name() == name),
+        ),
+    ] {
+        if let Some(entries) = vrm
+            .get_mut(section)
+            .and_then(|section| section.get_mut(field))
+            .and_then(Value::as_object_mut)
+        {
+            let mut warnings = Warnings::new(kind);
+            entries.retain(|name, _| {
+                if known(name) {
+                    return true;
+                }
+                warnings.push(|| {
+                    format!("VRMC_vrm: ignoring unknown key {name:?} in {section}.{field}")
+                });
+                false
+            });
+            warnings.finish(notices);
+        }
+    }
+}
+
+pub(crate) fn validated_gltf(json: &[u8]) -> Result<gltf::Document, LoadError> {
+    let mut root = gltf::json::Root::from_slice(json).map_err(gltf::Error::Deserialize)?;
+    root.extensions_required
+        .retain(|name| !SUPPORTED_VRMC_EXTENSIONS.contains(&name.as_str()));
+    Ok(gltf::Document::from_json(root)?)
 }
 
 /// A glTF file's JSON and, for binary glTF, its binary chunk.
@@ -262,7 +321,7 @@ fn bone_name(bone: &HumanBoneName) -> String {
 mod tests {
     use super::*;
     use crate::synthetic::SyntheticVrm;
-    use serde_json::Value;
+    use serde_json::{Value, json};
 
     fn refusal(vrm: &SyntheticVrm) -> String {
         match Document::parse(&vrm.glb()) {
@@ -278,6 +337,25 @@ mod tests {
         assert_eq!(document.gltf.nodes().count(), 25);
         assert_eq!(document.vrm.humanoid.human_bones.0.len(), 19);
         assert_eq!(document.vrm.meta.name, "Synthetic");
+    }
+
+    #[test]
+    fn avatar_can_require_supported_vrm_extensions() {
+        let bytes = SyntheticVrm::avatar().glb_with(|root| {
+            root["extensionsUsed"] = json!(["VRMC_vrm"]);
+            root["extensionsRequired"] = json!(["VRMC_vrm"]);
+        });
+        Document::parse(&bytes).unwrap();
+    }
+
+    #[test]
+    fn avatar_cannot_require_unsupported_gltf_extensions() {
+        let message = edited(|root| {
+            root["extensionsUsed"] = json!(["VRMC_vrm", "KHR_draco_mesh_compression"]);
+            root["extensionsRequired"] = json!(["KHR_draco_mesh_compression"]);
+        });
+        assert!(message.contains("KHR_draco_mesh_compression"), "{message}");
+        assert!(message.contains("Unsupported extension"), "{message}");
     }
 
     #[test]

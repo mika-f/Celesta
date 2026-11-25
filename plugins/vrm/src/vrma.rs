@@ -39,7 +39,7 @@
 //!   [`MAX_CHANNELS`] bones and expressions, and its channels hold at most
 //!   [`CLIP_BUDGET`] bytes of keys.
 
-use crate::document::{LoadError, embedded_buffers, json_and_blob};
+use crate::document::{LoadError, embedded_buffers, json_and_blob, validated_gltf};
 use crate::expressions::{ExpressionKey, Preset};
 use crate::geometry::{Accessors, At, floats};
 use crate::humanoid::{HumanBone, Humanoid};
@@ -258,8 +258,7 @@ impl Clip {
         let vrma = VRMCVrmAnimationSchema::deserialize(extension)
             .map_err(|error| invalid(format_args!("{VRMC_VRM_ANIMATION} is malformed: {error}")))?;
 
-        let root = gltf::json::Root::from_slice(&json).map_err(gltf::Error::Deserialize)?;
-        let gltf = gltf::Document::from_json(root)?;
+        let gltf = validated_gltf(&json)?;
         let tree = NodeTree::from_gltf(&gltf)?;
         let count = tree.parents.len();
         let bones = clip_bones(&vrma, count)?;
@@ -987,6 +986,25 @@ mod tests {
             message.contains("no VRMC_vrm_animation extension"),
             "{message}"
         );
+    }
+
+    #[test]
+    fn clip_can_require_the_vrm_animation_extension() {
+        let bytes = SyntheticVrma::clip().glb_with(|root| {
+            root["extensionsRequired"] = json!(["VRMC_vrm_animation"]);
+        });
+        Clip::load(&bytes).unwrap();
+    }
+
+    #[test]
+    fn clip_cannot_require_unsupported_gltf_extensions() {
+        let bytes = SyntheticVrma::clip().glb_with(|root| {
+            root["extensionsUsed"] = json!(["VRMC_vrm_animation", "KHR_draco_mesh_compression"]);
+            root["extensionsRequired"] = json!(["KHR_draco_mesh_compression"]);
+        });
+        let message = refusal(&bytes);
+        assert!(message.contains("KHR_draco_mesh_compression"), "{message}");
+        assert!(message.contains("Unsupported extension"), "{message}");
     }
 
     #[test]
