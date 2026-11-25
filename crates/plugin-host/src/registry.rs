@@ -8,11 +8,12 @@
 //! install: the lock's for this host, or the one in the user's settings.
 
 use crate::advisories::cached_advisories;
+use crate::child::PluginChild;
 use crate::locations::{PluginSource, SearchPath, registry_store_dir};
 use crate::lock::Lockfile;
 use crate::manifest::{
-    CELESTA_VERSION, DiscoveryError, MANIFEST, PluginEntry, PluginRead, discover_in_with,
-    is_valid_id, read_manifest,
+    CELESTA_VERSION, DiscoveryError, MANIFEST, ManifestFilter, PluginEntry, PluginRead, PluginRole,
+    discover_in_with, is_valid_id, read_manifest,
 };
 use crate::settings::UserSettings;
 use celesta_registry_format::{AdvisoryList, Hash, Target, tree_hash};
@@ -152,6 +153,46 @@ pub fn is_build(directory: &Path, id: &str, version: &semver::Version, tree_hash
         && celesta_registry_format::tree_hash(directory).is_ok_and(|found| found == *tree_hash)
 }
 
+/// Checks whether a verified, enabled store plugin answers the startup handshake.
+/// The caller must exclude plugins blocked by advisories. Missing or changed
+/// builds and plugins without an executable for this platform return `Ok(false)`.
+/// A successful handshake returns `Ok(true)`.
+pub fn probe_registry_plugin(
+    directory: &Path,
+    id: &str,
+    version: &semver::Version,
+    tree_hash: &Hash,
+    settings: &UserSettings,
+) -> Result<bool, String> {
+    if !is_valid_id(id)
+        || !directory.is_absolute()
+        || settings.is_disabled(id, directory)
+        || !is_build(directory, id, version, tree_hash)
+    {
+        return Ok(false);
+    }
+    let Some((entry, _)) = read_manifest(
+        directory,
+        PluginSource::Registry,
+        ManifestFilter::NativeProgram,
+    )
+    .map_err(|error| error.to_string())?
+    else {
+        return Ok(false);
+    };
+    let Some(executable) = entry.executable() else {
+        return Ok(false);
+    };
+    let mut child = PluginChild::start_quiet(&executable, directory)?;
+    let hello = if entry.has_role(PluginRole::Media) {
+        child.hello_media(serde_json::Map::new())
+    } else {
+        child.hello_content(id)
+    };
+    hello.map_err(|error| child.explain_start_error(&error))?;
+    Ok(true)
+}
+
 /// A version in the store, and what its folder must hold to run.
 #[derive(Debug)]
 struct StoreFolder {
@@ -276,7 +317,7 @@ impl StoreSearch {
     /// that); `None` when nothing is.
     pub(crate) fn read(&self, search: &SearchPath) -> Option<PluginRead> {
         let directory = &search.path;
-        let (entry, skipped) = match read_manifest(directory, search.source) {
+        let (entry, skipped) = match read_manifest(directory, search.source, ManifestFilter::Any) {
             Ok(Some(read)) => read,
             Ok(None) => return None,
             Err(error) => return Some(Err(error)),
@@ -442,6 +483,108 @@ pub(crate) mod tests {
             &v("1.2.3"),
             &bare_hash
         ));
+    }
+
+    #[test]
+    fn probe_reports_a_build_incompatible_with_this_celesta() {
+        let folder = tempfile::tempdir().unwrap();
+        let dir = folder.path();
+        let mut manifest = media("acme.codec", "1.2.3");
+        manifest["celesta"] = json!("<0.1");
+        let hash = write(dir, manifest);
+        let error = probe_registry_plugin(
+            dir,
+            "acme.codec",
+            &semver::Version::new(1, 2, 3),
+            &hash,
+            &UserSettings::default(),
+        )
+        .unwrap_err();
+        assert!(error.contains("works with Celesta <0.1"), "{error}");
+    }
+
+    #[test]
+    fn probe_skips_an_incompatible_module_without_a_native_program() {
+        let folder = tempfile::tempdir().unwrap();
+        let dir = folder.path();
+        let mut manifest = content("acme.module", "1.2.3");
+        manifest["celesta"] = json!("<0.1");
+        manifest["module"] = json!("index.js");
+        std::fs::write(dir.join("index.js"), "").unwrap();
+        let hash = write(dir, manifest);
+        assert!(
+            !probe_registry_plugin(
+                dir,
+                "acme.module",
+                &semver::Version::new(1, 2, 3),
+                &hash,
+                &UserSettings::default(),
+            )
+            .unwrap()
+        );
+    }
+
+    #[cfg(unix)]
+    fn probe_answer(mut manifest: Value, answer: Value, script: &str) -> Result<bool, String> {
+        use celesta_plugin::protocol::{Message, write_message};
+        use std::os::unix::fs::PermissionsExt;
+
+        let folder = tempfile::tempdir().unwrap();
+        let dir = folder.path();
+        let program = dir.join("plugin.sh");
+        std::fs::write(&program, format!("#!/bin/sh\n{script}\ncat answer.bin\n")).unwrap();
+        std::fs::set_permissions(program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        write_message(
+            &mut std::fs::File::create(dir.join("answer.bin")).unwrap(),
+            &Message::new(answer),
+        )
+        .unwrap();
+        manifest["executable"] = json!({ (platform().0): "plugin.sh" });
+        let hash = write(dir, manifest);
+        probe_registry_plugin(
+            dir,
+            "acme.codec",
+            &semver::Version::new(1, 2, 3),
+            &hash,
+            &UserSettings::default(),
+        )
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn probe_rejects_the_same_hello_answers_as_the_runtime() {
+        let error = probe_answer(
+            content("acme.codec", "1.2.3"),
+            json!({"type": "hello", "protocol": 1, "plugin": "acme.other"}),
+            "echo 'wrong plugin id' >&2",
+        )
+        .unwrap_err();
+        assert!(error.contains("not acme.codec"), "{error}");
+        assert!(error.contains("wrong plugin id"), "{error}");
+        let error = probe_answer(
+            media("acme.codec", "1.2.3"),
+            json!({"type": "hello", "protocol": 2, "roles": ["content"]}),
+            "echo 'wrong role' >&2",
+        )
+        .unwrap_err();
+        assert!(error.contains("is not a media plugin"), "{error}");
+        assert!(error.contains("wrong role"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_refused_start_includes_the_plugins_stderr() {
+        let error = probe_answer(
+            media("acme.codec", "1.2.3"),
+            json!({"type": "error", "message": "startup refused"}),
+            "echo 'a required library could not be loaded' >&2",
+        )
+        .unwrap_err();
+        assert!(error.contains("startup refused"), "{error}");
+        assert!(
+            error.contains("a required library could not be loaded"),
+            "{error}"
+        );
     }
 
     /// A test's folders: the store, and an explicit, a user, and a bundled

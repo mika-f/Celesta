@@ -53,18 +53,12 @@ impl PluginProcess {
         let mut child =
             PluginChild::start(&executable, &entry.directory).map_err(RequestError::Unavailable)?;
         kill.register(child.kill_handle());
-        let hello = child.hello().map_err(|error| match error {
-            refused @ RequestError::Refused(_) => RequestError::Unavailable(refused.message()),
-            error => error,
-        })?;
-        if hello.header["plugin"] != entry.manifest.id.as_str() {
-            return Err(RequestError::Unavailable(format!(
-                "{} says it is plugin {}, not {}",
-                executable.display(),
-                hello.header["plugin"],
-                entry.manifest.id
-            )));
-        }
+        child
+            .hello_content(&entry.manifest.id)
+            .map_err(|error| match error {
+                refused @ RequestError::Refused(_) => RequestError::Unavailable(refused.message()),
+                error => error,
+            })?;
         Ok(Self(child))
     }
 

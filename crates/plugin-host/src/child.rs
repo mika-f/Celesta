@@ -20,6 +20,7 @@
 use crate::console::without_console_window;
 use crate::kill::{PluginKillHandle, SharedChild, lock, register_everywhere};
 use crate::stderr::{StderrTail, pump};
+use celesta_plugin::MEDIA_PROTOCOL_VERSION;
 use celesta_plugin::protocol::{
     Message, PROTOCOL_VERSION, error_message, read_message, write_message,
 };
@@ -121,6 +122,19 @@ impl PluginChild {
         directory: &Path,
         shared: Option<&SharedMemory>,
     ) -> Result<(Self, Option<io::Result<u64>>), String> {
+        Self::start_with_stderr(executable, directory, shared, io::stderr())
+    }
+
+    pub(crate) fn start_quiet(executable: &Path, directory: &Path) -> Result<Self, String> {
+        Self::start_with_stderr(executable, directory, None, io::sink()).map(|(child, _)| child)
+    }
+
+    fn start_with_stderr(
+        executable: &Path,
+        directory: &Path,
+        shared: Option<&SharedMemory>,
+        stderr_output: impl io::Write + Send + 'static,
+    ) -> Result<(Self, Option<io::Result<u64>>), String> {
         let name = executable.display().to_string();
         let mut command = Command::new(executable);
         command
@@ -174,7 +188,7 @@ impl PluginChild {
                 .name("celesta-plugin-stderr".into())
                 .spawn(move || {
                     let _closed = closed;
-                    pump(stderr_pipe, io::stderr(), &tail);
+                    pump(stderr_pipe, stderr_output, &tail);
                 })?;
             Ok((requests, answers, stderr, stderr_closed))
         })();
@@ -223,6 +237,34 @@ impl PluginChild {
     /// protocol 1 (see [`Self::hello_as`]).
     pub fn hello_with(&mut self, offer: Map<String, Value>) -> Result<Message, RequestError> {
         self.hello_as(PROTOCOL_VERSION, offer)
+    }
+
+    /// Checks that a content plugin names the expected plugin id.
+    pub fn hello_content(&mut self, id: &str) -> Result<Message, RequestError> {
+        let hello = self.hello()?;
+        if hello.header["plugin"] != id {
+            let reason = format!("it says it is plugin {}, not {id}", hello.header["plugin"]);
+            return Err(RequestError::Unavailable(
+                self.finish_rejected_hello(&reason),
+            ));
+        }
+        Ok(hello)
+    }
+
+    /// Checks that a protocol 2 plugin declares the media role.
+    pub fn hello_media(&mut self, offer: Map<String, Value>) -> Result<Message, RequestError> {
+        let hello = self.hello_as(MEDIA_PROTOCOL_VERSION, offer)?;
+        let roles = &hello.header["roles"];
+        if !roles
+            .as_array()
+            .is_some_and(|roles| roles.iter().any(|role| role == "media"))
+        {
+            let reason = format!("it is not a media plugin (its roles are {roles})");
+            return Err(RequestError::Unavailable(
+                self.finish_rejected_hello(&reason),
+            ));
+        }
+        Ok(hello)
     }
 
     /// [`Self::hello_with`] in `protocol`, which the answer must speak too:
@@ -396,6 +438,20 @@ impl PluginChild {
                 self.name
             )
         }
+    }
+
+    pub(crate) fn explain_start_error(&mut self, error: &RequestError) -> String {
+        let reason = error.message();
+        if matches!(error, RequestError::Refused(_)) {
+            self.finish_rejected_hello(&reason)
+        } else {
+            reason
+        }
+    }
+
+    fn finish_rejected_hello(&mut self, reason: &str) -> String {
+        self.stop();
+        self.explain(reason)
     }
 
     /// Kills the process, so the threads that wait on its pipes end.
