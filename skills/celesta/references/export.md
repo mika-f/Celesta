@@ -700,6 +700,7 @@ props file, the result also has `propsFile` (its path) and `propsFileAuto`
 | `rough_scenes` | `--final` (MCP and `@celesta.studio/exporter`: `final`) and the exported span holds rough scenes; `message` names them. Build them and drop their `status: 'rough'`, or export without `--final` to get the placeholder cards with a warning. |
 | `unsupported_subtitles` | The `--subtitles` path is not a `.srt` or `.vtt` file. |
 | `mixed_subtitle_languages` | Subtitles in several languages would share a `--subtitles` path without `{lang}`; see [subtitles.md](subtitles.md#several-languages). |
+| `duplicate_subtitle_output` | Multiple subtitle files would have the same output path. Change the path or use language tags that produce distinct filenames. |
 | `project_io`, `project_json` | The project file could not be read or is not valid JSON. |
 | `project_validation` | The project is invalid; `error.issues` lists each `{path, message}`. |
 | `react` | The React entry failed to load or render; read `message` and look it up in [errors.md](errors.md). |

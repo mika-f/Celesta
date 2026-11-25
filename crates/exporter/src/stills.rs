@@ -60,6 +60,28 @@ impl ContactSheet {
     pub const MAX_SIDE: u32 = 16_384;
     /// Most frames one sheet holds.
     pub const MAX_FRAMES: usize = 400;
+
+    pub fn validate(self) -> Result<(), ExportError> {
+        Self::validate_columns(self.columns)?;
+        Self::validate_tile_width(self.tile_width)?;
+        Ok(())
+    }
+
+    pub(crate) fn validate_columns(columns: u32) -> Result<(), ExportError> {
+        if columns == 0 {
+            return Err(invalid("contact sheet columns must be at least 1"));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn validate_tile_width(tile_width: u32) -> Result<(), ExportError> {
+        if tile_width == 0 {
+            return Err(invalid(
+                "contact sheet tile width (tileWidth) must be at least 1",
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl Default for ContactSheet {
@@ -100,6 +122,27 @@ pub struct StillExport {
 impl StillExport {
     pub const DEFAULT_QUALITY: u8 = 90;
     pub const MAX_QUALITY: u8 = 100;
+
+    pub fn validate_quality(
+        quality: Option<u8>,
+        format: Option<StillFormat>,
+        named_encoder: bool,
+    ) -> Result<(), ExportError> {
+        if let Some(quality) = quality {
+            if format == Some(StillFormat::Png) && !named_encoder {
+                return Err(invalid(
+                    "quality applies to JPEG and WebP output; PNG is lossless",
+                ));
+            }
+            if !(1..=Self::MAX_QUALITY).contains(&quality) {
+                return Err(invalid(format!(
+                    "quality must be 1 to {}, not {quality}",
+                    Self::MAX_QUALITY
+                )));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Most frames one export writes as separate image files.
@@ -341,11 +384,7 @@ impl Destination {
             return Ok((destination, warnings));
         };
         validate(frames, total)?;
-        if contact_sheet.columns == 0 || contact_sheet.tile_width == 0 {
-            return Err(invalid(
-                "contact sheet columns and tile width must be at least 1",
-            ));
-        }
+        contact_sheet.validate()?;
         if !overwrite && output.exists() {
             return Err(ExportError::OutputExists(output.to_owned()));
         }
@@ -673,31 +712,6 @@ impl Exporter {
         Ok(renderer)
     }
 
-    /// Exports exact zero-based project frames without video encoding or audio mixing.
-    /// Multiple selections append `-000090` style frame numbers to the output stem.
-    pub fn export_project_stills(
-        &self,
-        project: &Project,
-        asset_root: &Path,
-        frames: &[u64],
-        output: &Path,
-        progress: impl FnMut(ExportProgress),
-    ) -> Result<(), ExportError> {
-        self.export_project_stills_with(
-            project,
-            asset_root,
-            &StillExport {
-                frames: FrameSelection::Frames(frames.to_vec()),
-                contact_sheet: None,
-                debug_guides: false,
-                quality: None,
-            },
-            output,
-            &ExportCancellation::default(),
-            progress,
-        )
-    }
-
     /// Exports project frames chosen by `request` as separate images or one
     /// contact sheet. An export range is only allowed with
     /// [`FrameSelection::Every`]. `cancellation` is checked before each frame;
@@ -817,13 +831,9 @@ impl Exporter {
     ) -> Result<(), ExportError> {
         let asset_root = crate::project::folder_of(entry);
         let asset_root = &fs::canonicalize(asset_root).unwrap_or_else(|_| asset_root.to_owned());
-        let project_owned = companion.map(|c| {
-            (
-                c.project,
-                fs::canonicalize(c.project_asset_root)
-                    .unwrap_or_else(|_| c.project_asset_root.to_owned()),
-            )
-        });
+        let project_owned = crate::react_entry::canonical_project(
+            companion.map(|c| (c.project, c.project_asset_root)),
+        );
         let project = project_owned.as_ref().map(|(p, root)| (*p, root.as_path()));
         let mut bridge = runtime.spawn(entry, project, self)?;
         bridge.set_debug_guides(request.debug_guides);

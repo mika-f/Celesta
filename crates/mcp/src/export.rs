@@ -33,11 +33,11 @@ pub struct Run {
 /// lock is held until it has.
 pub async fn run(
     job: ExportJob,
-    render_lock: &Mutex<()>,
+    render_lock: &Arc<Mutex<()>>,
     media: &Arc<SharedMedia>,
     context: &RequestContext<RoleServer>,
 ) -> Run {
-    let _guard = render_lock.lock().await;
+    let guard = render_lock.clone().lock_owned().await;
     let cancellation = ExportCancellation::default();
     let watcher = {
         let cancellation = cancellation.clone();
@@ -55,6 +55,7 @@ pub async fn run(
 
     let media = media.clone();
     let joined = tokio::task::spawn_blocking(move || {
+        let _guard = guard;
         let mut job = job;
         let found = media.for_project(&job.source).map(|(plugins, media)| {
             job.options.plugins = Some(plugins);

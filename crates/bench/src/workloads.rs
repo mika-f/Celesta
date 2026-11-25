@@ -18,12 +18,13 @@ use celesta_composition::{
 };
 use celesta_react_bridge::{ReactBridge, runtime_paths};
 
-/// The image the `images` workload draws, relative to the asset root.
+/// The image synthetic workloads may draw, relative to the asset root.
 pub const IMAGE_PATH: &str = "bench.png";
 
 pub struct Workload {
     pub name: &'static str,
     pub description: &'static str,
+    pub needs_image: bool,
     source: Source,
 }
 
@@ -43,16 +44,19 @@ enum Source {
 pub const WORKLOADS: &[Workload] = &[
     Workload {
         name: "supernova",
+        needs_image: false,
         description: "SUPERNOVA from examples/supernova (React; sustained particles, paths, filters and masks)",
         source: Source::React("examples/supernova/film.tsx", &[90, 300, 510, 730, 960]),
     },
     Workload {
         name: "nebula",
+        needs_image: false,
         description: "NEBULA from examples/versus/bench (React; about 1,660 layers)",
         source: Source::React("examples/versus/bench/celesta/nebula.tsx", &[0]),
     },
     Workload {
         name: "spectra",
+        needs_image: false,
         description: "SPECTRA from examples/spectra (React; every chapter and crossfade)",
         // Each chapter once it has settled, and the crossfades into
         // GEOMETRY (frames 135-149) and SOURCE (405-419), where two chapters
@@ -61,66 +65,83 @@ pub const WORKLOADS: &[Workload] = &[
     },
     Workload {
         name: "rings",
+        needs_image: false,
         description: "24 rotating stroked ellipses (NEBULA's rings, PR #113)",
         source: Source::Synthetic(rings),
     },
     Workload {
         name: "blur",
+        needs_image: false,
         description: "six large blurred blobs plus cards with shadows and glows",
         source: Source::Synthetic(blur),
     },
     Workload {
         name: "ribbons",
+        needs_image: false,
         description: "about 3,000 thin rotated rects that change every frame",
         source: Source::Synthetic(ribbons),
     },
     Workload {
         name: "text",
+        needs_image: false,
         description: "scaling text lines, a wrapped paragraph, and a ticking counter",
         source: Source::Synthetic(text),
     },
     Workload {
         name: "shapes",
+        needs_image: false,
         description: "gradient rounded rects in clipped, rotated, blended groups",
         source: Source::Synthetic(shapes),
     },
     Workload {
         name: "masks",
+        needs_image: false,
         description: "text masking moving stripes, and a blurred circular wipe",
         source: Source::Synthetic(masks),
     },
     Workload {
         name: "images",
+        needs_image: true,
         description: "a 512x512 image drawn 16 times, scaled and rotated",
         source: Source::Synthetic(images),
     },
     Workload {
         name: "shaders",
+        needs_image: true,
         description: "a full-screen color grade on an image and a padded ripple on text",
         source: Source::Shaded(shaders, shader_sources),
     },
     Workload {
         name: "shader-chain",
+        needs_image: true,
         description: "`shaders` with the grade split into three shaders chained on the image",
         source: Source::Shaded(shader_chain, shader_sources),
     },
     Workload {
         name: "shader-nest",
+        needs_image: true,
         description: "`shader-chain` with a group nested around each shader instead",
         source: Source::Shaded(shader_nest, shader_sources),
     },
     Workload {
         name: "color-filters",
+        needs_image: true,
         description: "`shader-chain` with the built-in saturation, tint, and vignette filters as the grade",
         source: Source::Shaded(color_filters, shader_sources),
     },
 ];
 
 impl Workload {
+    pub fn source_kind(&self) -> &'static str {
+        match self.source {
+            Source::React(..) => "react",
+            Source::Synthetic(..) | Source::Shaded(..) => "synthetic",
+        }
+    }
+
     /// The scenes of `warmup` frames and then `frames` measured ones, at
     /// `width`x`height`, and the asset root their relative paths resolve
-    /// against. `images` is the directory holding [`IMAGE_PATH`], which only
-    /// the `images` workload needs.
+    /// against. `images` holds [`IMAGE_PATH`] for workloads with `needs_image`.
     pub fn scenes(
         &self,
         width: u32,

@@ -1027,6 +1027,7 @@ dependencies = [
  "celesta-renderer",
  "image",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

@@ -139,6 +139,9 @@ pub enum ExportError {
     /// The subtitle file's extension is neither `.srt` nor `.vtt`.
     #[error("subtitles must use the .srt or .vtt extension: {0}")]
     UnsupportedSubtitles(PathBuf),
+    /// More than one planned subtitle file would use this path.
+    #[error("multiple subtitle files would use the same path: {}", .0.display())]
+    DuplicateSubtitleOutput(PathBuf),
     /// Subtitles in several languages would go to one file, a path without
     /// `{lang}`.
     #[error(

@@ -93,26 +93,6 @@ impl Exporter {
             .expect("Exporter::new discovers the plugins")
     }
 
-    pub fn export_file(
-        &self,
-        project_path: impl AsRef<Path>,
-        output_path: impl AsRef<Path>,
-    ) -> Result<(), ExportError> {
-        self.export_file_with_progress(project_path, output_path, |_| {})
-    }
-
-    pub fn export_file_with_progress(
-        &self,
-        project_path: impl AsRef<Path>,
-        output_path: impl AsRef<Path>,
-        progress: impl FnMut(ExportProgress),
-    ) -> Result<(), ExportError> {
-        let project_path = project_path.as_ref();
-        let project = Project::load(project_path).map_err(ExportError::Project)?;
-        let asset_root = crate::project::folder_of(project_path);
-        self.export_project_with_progress(&project, asset_root, output_path, progress)
-    }
-
     pub fn export_project(
         &self,
         project: &Project,
@@ -173,6 +153,13 @@ impl Exporter {
             .finish()
             .map_err(|error| cancellation.settle(error))?;
         report_timing(&timing.with(tracks.timing));
+        let subtitles = if self.options.subtitles.is_empty() {
+            subtitles::StagedSubtitles::default()
+        } else {
+            let window = subtitles::Window::new(window.start, window.duration)?;
+            let cues = subtitles::project_cues(project, window).map_err(ExportError::Time)?;
+            self.stage_subtitles(&cues)?
+        };
         let staged = staged.expect("an encoded export has its staged output");
         let files = self.publish_video(staged, output_path, tracks.files.clone(), cancellation)?;
         progress(ExportProgress::Wrote(video_file(
@@ -183,12 +170,7 @@ impl Exporter {
             files,
             loudness,
         )));
-        if !self.options.subtitles.is_empty() {
-            let window = subtitles::Window::new(window.start, window.duration)?;
-            let cues = subtitles::project_cues(project, window).map_err(ExportError::Time)?;
-            self.write_subtitles(&cues, &mut progress)?;
-        }
-        Ok(())
+        subtitles.publish(self.options.overwrite, &mut progress)
     }
 
     /// Chooses the components, renders and encodes `project` into a file
@@ -265,6 +247,7 @@ impl Exporter {
                 session,
                 cancellation,
                 progress,
+                || false,
                 &mut |_| Ok(()),
             )?;
             let timing = ExportTiming {
@@ -293,11 +276,12 @@ impl Exporter {
         // done, so the muxer opens then and the frames stop waiting for it.
         // `abandon_audio` stops it early when rendering fails.
         let abandon_audio = AtomicBool::new(false);
+        let audio_failed = AtomicBool::new(false);
         let looping = self.options.looping;
         thread::scope(|scope| {
             // Each mix comes with how long it took.
             let (sender, mixed) = mpsc::channel::<(Mixed, Duration)>();
-            let (graph, abandon_audio) = (&graph, &abandon_audio);
+            let (graph, abandon_audio, audio_failed) = (&graph, &abandon_audio, &audio_failed);
             // The sender moves into the thread, so a panic there disconnects
             // the channel rather than leaving the wait below hanging.
             let mixing = scope.spawn(move || {
@@ -318,6 +302,9 @@ impl Exporter {
                         finish_mix(&mut mix, self.options.loudness.as_ref(), abandoned)?;
                     Ok((mix, loudness, warnings))
                 });
+                if result.is_err() {
+                    audio_failed.store(true, Ordering::Release);
+                }
                 let _ = sender.send((result, started.elapsed()));
             });
             let mut encoded = None;
@@ -331,6 +318,7 @@ impl Exporter {
                 session,
                 cancellation,
                 progress,
+                || audio_failed.load(Ordering::Acquire),
                 &mut |session| match mixed.try_recv() {
                     Ok((result, took)) => {
                         mix_timing = Some((took, session.frames_sent()));
@@ -347,6 +335,15 @@ impl Exporter {
             let render = render_started.elapsed();
             let frames = session.frames_sent();
             ensure_not_cancelled(cancellation)?;
+            if audio_failed.load(Ordering::Acquire) {
+                // A stopped render did not finish the video; recover the
+                // mix error before reporting any more progress.
+                let (result, _) = mixed.recv().expect("the failing mix sends its error");
+                return Err(audio_mix_error(
+                    result.expect_err("the mix failed"),
+                    cancellation,
+                ));
+            }
             progress(ExportProgress::MixingAudio);
             let (loudness, warnings) = match encoded {
                 Some(encoded) => encoded,
@@ -465,38 +462,20 @@ impl Exporter {
         }
     }
 
-    /// Writes `cues` to every subtitle path and reports each file. Every
-    /// path's files are worked out before any is written, so a path that
-    /// cannot take the cues' languages writes nothing.
+    pub(crate) fn stage_subtitles(
+        &self,
+        cues: &[subtitles::Cue],
+    ) -> Result<subtitles::StagedSubtitles, ExportError> {
+        subtitles::stage_outputs(&self.options.subtitles, cues, self.options.overwrite)
+    }
+
     pub(crate) fn write_subtitles(
         &self,
         cues: &[subtitles::Cue],
         progress: &mut impl FnMut(ExportProgress),
     ) -> Result<(), ExportError> {
-        let planned = self
-            .options
-            .subtitles
-            .iter()
-            .map(|path| subtitles::files(path, cues).map(|files| (path, files)))
-            .collect::<Result<Vec<_>, _>>()?;
-        for (path, files) in planned {
-            if files.is_empty() {
-                progress(ExportProgress::Warning(format!(
-                    "no subtitles to write to {}",
-                    path.display()
-                )));
-            }
-            for file in files {
-                let format = subtitles::write(&file.path, &file.cues, self.options.overwrite)?;
-                progress(ExportProgress::Wrote(ExportedFile::Subtitles {
-                    path: file.path,
-                    format,
-                    cues: file.cues.len(),
-                    lang: file.lang,
-                }));
-            }
-        }
-        Ok(())
+        self.stage_subtitles(cues)?
+            .publish(self.options.overwrite, progress)
     }
 }
 
@@ -521,12 +500,16 @@ fn encode_mix(
     looping: bool,
     cancellation: &ExportCancellation,
 ) -> Result<(AudioLoudness, Vec<String>), ExportError> {
-    let (mix, loudness, warnings) = mixed.map_err(|error| match error {
-        AudioMixError::Cancelled => ExportError::Cancelled,
-        error => cancellation.settle(ExportError::Audio(error)),
-    })?;
+    let (mix, loudness, warnings) = mixed.map_err(|error| audio_mix_error(error, cancellation))?;
     session.encode_audio(&mix, looping)?;
     Ok((loudness, warnings))
+}
+
+fn audio_mix_error(error: AudioMixError, cancellation: &ExportCancellation) -> ExportError {
+    match error {
+        AudioMixError::Cancelled => ExportError::Cancelled,
+        error => cancellation.settle(ExportError::Audio(error)),
+    }
 }
 
 /// The video an export wrote at `path`, as its components answered.

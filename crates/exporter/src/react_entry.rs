@@ -28,31 +28,6 @@ impl Exporter {
     /// Exports a React composition entry to a video with
     /// `ExportOptions::output`'s components. When the composition (and any
     /// companion project) declares no audio, the video has no audio track.
-    pub fn export_react_entry(
-        &self,
-        entry: impl AsRef<Path>,
-        react_runtime: &ReactRuntimeOptions,
-        output_path: impl AsRef<Path>,
-    ) -> Result<(), ExportError> {
-        self.export_react_entry_with_progress(entry, react_runtime, output_path, |_| {})
-    }
-
-    pub fn export_react_entry_with_progress(
-        &self,
-        entry: impl AsRef<Path>,
-        react_runtime: &ReactRuntimeOptions,
-        output_path: impl AsRef<Path>,
-        progress: impl FnMut(ExportProgress),
-    ) -> Result<(), ExportError> {
-        self.export_react_entry_cancellable(
-            entry,
-            react_runtime,
-            output_path,
-            &ExportCancellation::default(),
-            progress,
-        )
-    }
-
     pub fn export_react_entry_cancellable(
         &self,
         entry: impl AsRef<Path>,
@@ -71,46 +46,12 @@ impl Exporter {
         )
     }
 
-    /// Same as [`Self::export_react_entry`], but also evaluates a companion
+    /// Same as [`Self::export_react_entry_cancellable`], but also evaluates a companion
     /// project once per frame and gives the entry's `<ProjectTimeline />`
     /// the resulting layers. `companion.project_asset_root` resolves the
     /// project's own relative asset paths and may differ from the entry's
     /// directory. Its `audio` items evaluate to no layer and play only in
     /// the mixdown.
-    pub fn export_react_entry_with_project(
-        &self,
-        entry: impl AsRef<Path>,
-        react_runtime: &ReactRuntimeOptions,
-        companion: CompanionProject<'_>,
-        output_path: impl AsRef<Path>,
-    ) -> Result<(), ExportError> {
-        self.export_react_entry_with_project_and_progress(
-            entry,
-            react_runtime,
-            companion,
-            output_path,
-            |_| {},
-        )
-    }
-
-    pub fn export_react_entry_with_project_and_progress(
-        &self,
-        entry: impl AsRef<Path>,
-        react_runtime: &ReactRuntimeOptions,
-        companion: CompanionProject<'_>,
-        output_path: impl AsRef<Path>,
-        progress: impl FnMut(ExportProgress),
-    ) -> Result<(), ExportError> {
-        self.export_react_entry_with_project_cancellable(
-            entry,
-            react_runtime,
-            companion,
-            output_path,
-            &ExportCancellation::default(),
-            progress,
-        )
-    }
-
     pub fn export_react_entry_with_project_cancellable(
         &self,
         entry: impl AsRef<Path>,
@@ -167,6 +108,12 @@ impl Exporter {
             .finish()
             .map_err(|error| cancellation.settle(error))?;
         report_timing(&encoded.timing.with(tracks.timing));
+        let subtitles = if self.options.subtitles.is_empty() {
+            subtitles::StagedSubtitles::default()
+        } else {
+            let window = subtitles::Window::new(encoded.window_start, encoded.duration)?;
+            self.stage_subtitles(&subtitles::react_cues(&encoded.subtitles, window))?
+        };
         let staged = staged.expect("an encoded export has its staged output");
         let files = self.publish_video(staged, output_path, tracks.files.clone(), cancellation)?;
         progress(ExportProgress::Wrote(video_file(
@@ -177,14 +124,7 @@ impl Exporter {
             files,
             encoded.loudness,
         )));
-        if !self.options.subtitles.is_empty() {
-            let window = subtitles::Window::new(encoded.window_start, encoded.duration)?;
-            self.write_subtitles(
-                &subtitles::react_cues(&encoded.subtitles, window),
-                &mut progress,
-            )?;
-        }
-        Ok(())
+        subtitles.publish(self.options.overwrite, &mut progress)
     }
 
     /// Chooses the components once the entry says its frame size, renders
@@ -505,7 +445,9 @@ struct EncodedReactEntry {
 
 /// The companion project with its asset root made absolute (see
 /// `export_react_entry_impl`).
-fn canonical_project<'a>(project: Option<(&'a Project, &Path)>) -> Option<(&'a Project, PathBuf)> {
+pub(crate) fn canonical_project<'a>(
+    project: Option<(&'a Project, &Path)>,
+) -> Option<(&'a Project, PathBuf)> {
     project.map(|(project, project_asset_root)| {
         let project_asset_root =
             fs::canonicalize(project_asset_root).unwrap_or_else(|_| project_asset_root.to_owned());

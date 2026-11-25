@@ -13,6 +13,24 @@ pub struct ExportRange {
 }
 
 impl ExportRange {
+    /// Interprets explicit bounds, rejecting an end at or before an explicit start.
+    pub fn from_bounds(
+        start: Option<Time>,
+        end: Option<Time>,
+    ) -> Result<Option<Self>, ExportError> {
+        match (start, end) {
+            (None, None) => Ok(None),
+            (Some(start), None) => Ok(Some(Self::from(start))),
+            (None, Some(end)) => Ok(Some(Self::until(end))),
+            (Some(start), Some(end)) => {
+                if end.cmp_exact(start).map_err(ExportError::Time)?.is_le() {
+                    return Err(ExportError::EmptyRange);
+                }
+                Ok(Some(Self::new(start, end)))
+            }
+        }
+    }
+
     /// `[start, end]` with an explicit end.
     pub fn new(start: Time, end: Time) -> Self {
         Self {

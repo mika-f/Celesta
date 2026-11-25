@@ -12,6 +12,7 @@ celesta-composition.workspace = true
 celesta-gpu-renderer.workspace = true
 celesta-react-bridge.workspace = true
 image = { version = "0.25.8", default-features = false, features = ["png"] }
+tempfile = "3"
 
 [dev-dependencies]
 celesta-renderer.workspace = true

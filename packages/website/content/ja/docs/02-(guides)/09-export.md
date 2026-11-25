@@ -120,6 +120,8 @@ const cues = parseSubtitles(captions, { fps: 30 });
 
 `--subtitles` を付けると、動画と一緒に字幕ファイルを書き出します。拡張子が `.srt` なら SRT、`.vtt` なら WebVTT です。`<Subtitles>` で宣言した字幕と `<Dialogue>` の台詞が、表示されている間の時刻で入ります。`--from` / `--to` と組み合わせると、字幕の時刻も区間の開始を 0 として詰め、区間の外にはみ出す部分は切ります。
 
+`'film.{lang}.srt'` のようなパスを指定すると、言語ごとに字幕ファイルを書き出します。言語タグは前後の空白を除いて小文字にし、未指定または空のタグには `und` を使います。字幕ファイルの出力先が重複する場合は、動画を公開したり既存の字幕を置き換えたりする前に失敗します。MCP の `export_video` で字幕だけを書き出す場合は `output` を省略し、`loudness`、`truePeak`、`peakHandling` は指定できません。
+
 ::::tabs[書き出しを行う OS]{default="macOS"}
 :::tab[macOS]
 

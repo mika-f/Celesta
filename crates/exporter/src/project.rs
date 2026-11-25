@@ -1,12 +1,53 @@
 use crate::DEFAULT_REACT_AUDIO_SAMPLE_RATE;
 use crate::error::ExportError;
 use celesta_composition::{
-    AssetLocation, AudioGraph, InstanceShape, Layer, LayerContent, ResolvedAsset,
+    AssetLocation, AudioGraph, InstanceShape, Layer, LayerContent, ResolvedAsset, Time,
 };
-use celesta_evaluator::Evaluator;
+use celesta_evaluator::{EvaluationError, Evaluator};
 use celesta_project::Project;
-use celesta_react_bridge::{ReactAudioClipDescriptor, react_audio_clips};
+use celesta_react_bridge::{ProjectFrame, ReactAudioClipDescriptor, react_audio_clips};
+use std::collections::BTreeMap;
 use std::path::Path;
+
+pub(crate) struct ProjectLayers {
+    layers: Vec<Layer>,
+    tracks: BTreeMap<String, Vec<Layer>>,
+}
+
+impl ProjectLayers {
+    pub(crate) fn as_frame(&self) -> ProjectFrame<'_> {
+        ProjectFrame {
+            layers: &self.layers,
+            tracks: &self.tracks,
+        }
+    }
+}
+
+pub(crate) fn project_frame(
+    evaluator: &Evaluator<'_>,
+    project: &Project,
+    asset_root: &Path,
+    time: Time,
+) -> Result<ProjectLayers, EvaluationError> {
+    let mut layers = evaluator.scene_at(time)?.layers;
+    absolutize_layers(&mut layers, asset_root);
+    let mut tracks = BTreeMap::new();
+    for track in &project.tracks {
+        let mut layers = evaluator.layers_for_track(&track.id, time)?;
+        absolutize_layers(&mut layers, asset_root);
+        tracks.insert(track.id.clone(), layers);
+    }
+    Ok(ProjectLayers { layers, tracks })
+}
+
+pub(crate) fn project_fonts(
+    evaluator: &Evaluator<'_>,
+    asset_root: &Path,
+) -> Result<Vec<ResolvedAsset>, EvaluationError> {
+    let mut fonts = evaluator.scene_at(Time::ZERO)?.fonts;
+    absolutize_fonts(&mut fonts, asset_root);
+    Ok(fonts)
+}
 
 /// Builds the complete `AudioGraph` a React export mixes down: every
 /// `<Audio>` clip the entry's frames reported (`react_audio`, accumulated by

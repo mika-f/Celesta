@@ -416,6 +416,15 @@ mod tests {
     }
 
     #[test]
+    fn dropping_an_unfinished_interleaver_discards_the_spill_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let (il, _) = spilling(dir.path());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+        drop(il);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
     fn a_spilled_queue_keeps_decode_order() {
         let dir = tempfile::tempdir().unwrap();
         let (mut il, _) = spilling(dir.path());

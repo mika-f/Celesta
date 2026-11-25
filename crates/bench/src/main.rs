@@ -19,7 +19,7 @@
 mod cachegrind;
 mod workloads;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Instant;
 
@@ -43,7 +43,12 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("list") => {
             for workload in WORKLOADS {
-                println!("{}\t{}", workload.name, workload.description);
+                println!(
+                    "{}\t{}\t{}",
+                    workload.name,
+                    workload.description,
+                    workload.source_kind()
+                );
             }
             Ok(())
         }
@@ -126,13 +131,14 @@ fn run(options: &Options) -> Result<(), String> {
     let assets = options
         .workloads
         .iter()
-        .any(|workload| {
-            matches!(
-                workload.name,
-                "images" | "shaders" | "shader-chain" | "shader-nest" | "color-filters"
-            )
+        .any(|workload| workload.needs_image)
+        .then(|| -> Result<_, image::ImageError> {
+            let dir = tempfile::Builder::new()
+                .prefix("celesta-bench-")
+                .tempdir()?;
+            workloads::image().save(dir.path().join(IMAGE_PATH))?;
+            Ok(dir)
         })
-        .then(AssetDir::new)
         .transpose()
         .map_err(|error| format!("writing the image asset: {error}"))?;
     for workload in &options.workloads {
@@ -144,7 +150,7 @@ fn run(options: &Options) -> Result<(), String> {
                 options.height,
                 options.warmup,
                 options.frames,
-                assets.as_ref().map(AssetDir::path),
+                assets.as_ref().map(tempfile::TempDir::path),
             )
             .map_err(fail)?;
         let (warmup, measured) = scenes.split_at(options.warmup);
@@ -200,28 +206,4 @@ fn run(options: &Options) -> Result<(), String> {
         );
     }
     Ok(())
-}
-
-/// A temporary asset root holding the `images` workload's image, written
-/// only when that workload runs.
-struct AssetDir(PathBuf);
-
-impl AssetDir {
-    fn new() -> Result<Self, image::ImageError> {
-        let path = std::env::temp_dir().join(format!("celesta-bench-{}", std::process::id()));
-        std::fs::create_dir_all(&path)?;
-        let dir = Self(path);
-        workloads::image().save(dir.0.join(IMAGE_PATH))?;
-        Ok(dir)
-    }
-
-    fn path(&self) -> &Path {
-        &self.0
-    }
-}
-
-impl Drop for AssetDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
 }
