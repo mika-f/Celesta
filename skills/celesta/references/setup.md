@@ -21,6 +21,7 @@ how the user previews your work.
 | Windows installer | `%LOCALAPPDATA%\Programs\Celesta\Celesta.exe` | `…\Celesta-export.exe` | `…\runtime\node.exe` | `…\runtime\react\dist\cli.js` |
 | Windows portable ZIP | `<extracted folder>\Celesta.exe` | `…\Celesta-export.exe` | `…\runtime\node.exe` | `…\runtime\react\dist\cli.js` |
 | Source checkout (video and audio need [the media plugin](plugins.md#media-plugins)) | `cargo run -p celesta-editor --release --` | `cargo run -p celesta-exporter --release --` | `node` on PATH | `packages/cli/dist/cli.js` |
+| Linux x86_64 release archive | — | `<extracted folder>/bin/celesta export` or `…/bin/celesta-exporter` | `…/bin/runtime/node` | `…/bin/runtime/react/dist/cli.js` |
 | Linux container image | — | `docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" celesta-exporter export …` | inside the image | inside the image |
 
 - The packaged apps name the executables `Celesta` and `Celesta-export`;
@@ -34,6 +35,9 @@ how the user previews your work.
   `--init`) rejects the option; tell the user to update Celesta.
 - A source checkout needs the React runtime built once, from the repository
   root: `pnpm install && pnpm --dir packages/react run codegen && pnpm run build:runtime`.
+- For the Linux release archive (glibc 2.35+), keep the whole extracted
+  directory together and use `bin/celesta doctor` to check the runtime and Vulkan.
+  To put it on PATH, add that installation's `bin` directory.
 - The container image (`packaging/linux/Dockerfile` in the repository)
   renders on the CPU, includes the DejaVu and Noto CJK fonts, and mounts the
   project at `/work`.

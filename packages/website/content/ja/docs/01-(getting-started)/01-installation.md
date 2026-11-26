@@ -34,7 +34,23 @@ Linux の H.264／MP4 には追加の **ffmpeg-x264** が必要です。
 :::
 :::tab[Linux]
 
-Linux では[ソースからのビルド手順](/ja/docs/build-from-source/)を使います。リリースに追加のプラットフォーム向けパッケージがあるか、添付ファイルも確認してください。
+x86_64 のヘッドレス Linux（Ubuntu 22.04 以降、glibc 2.35 以上）では、リリースの添付ファイルから
+`Celesta-<version>-linux-x64.tar.gz` をダウンロードします。統合 CLI、単体のエクスポーター、
+Node.js、React ランタイム、標準 FFmpeg プラグインが同梱されます。デスクトップエディターは含まれません。
+
+Ubuntu では、システムライブラリ、ソフトウェア Vulkan ドライバー、フォントをインストールします
+（Vulkan 対応のハードウェアドライバーがある場合はそれも使用できます）。
+
+```sh
+sudo apt-get install ca-certificates libatomic1 zlib1g libvulkan1 mesa-vulkan-drivers fonts-dejavu-core
+tar -xzf Celesta-<version>-linux-x64.tar.gz
+./Celesta-<version>-linux-x64/bin/celesta doctor
+```
+
+`<version>` はリリースのバージョンに置き換えてください。移動する場合は、展開したディレクトリ全体を
+移動してください。`celesta` を PATH から実行するには、その中の `bin` ディレクトリを追加します。
+CLI で始めるには[プロジェクトの作成](/ja/docs/create-project/)、Linux でデスクトップエディターを使うには
+[ソースからビルド](/ja/docs/build-from-source/)をご覧ください。
 
 :::
 ::::

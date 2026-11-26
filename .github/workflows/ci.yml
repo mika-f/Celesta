@@ -514,7 +514,7 @@ jobs:
           DIRECTORIES: ${{ steps.affected.outputs.directories }}
         run: node scripts/plugins/build.mts $DIRECTORIES
 
-  # Packages for Windows and macOS without signing them, so packaging breaks
+  # Builds unsigned packages for Windows, macOS and Linux, so packaging breaks
   # here rather than at release time, and saves the release-profile Rust cache
   # on main for the next release tag to restore. A manual run of CI on a branch
   # builds them too (unsigned, nothing released), to check a packaging change

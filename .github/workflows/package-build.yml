@@ -217,7 +217,7 @@ jobs:
           if-no-files-found: error
 
   linux-plugins:
-    name: Linux x64 x264 download
+    name: Linux x64 CLI and x264 download
     # The ZIP's glibc requirement, its bundled libx264.so.N and the
     # `distribution` in its debian-packages.json all come from this image, so
     # it builds in ubuntu:22.04: the ZIP loads on Ubuntu 22.04 (glibc 2.35)
@@ -242,7 +242,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - uses: $/.github/actions/setup-ffmpeg
       - name: Install ELF packaging tools
-        run: sudo apt-get install -y --no-install-recommends patchelf
+        run: sudo apt-get install -y --no-install-recommends patchelf libatomic1
       - name: Isolate Rust toolchain
         run: echo "RUSTUP_HOME=$RUNNER_TEMP/celesta-rustup" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@v1
@@ -250,7 +250,9 @@ jobs:
           toolchain: 1.99.1
       - uses: Swatinem/rust-cache@v2.9.3
         with:
-          workspaces: plugins -> target
+          workspaces: |
+            . -> target
+            plugins -> target
           env-vars: FFMPEG_VERSION FFMPEG_FEATURES FFMPEG_IMAGE_OS FFMPEG_IMAGE_VERSION FFMPEG_DEPS_HASH
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: jdx/mise-action@v5.2.7
@@ -271,3 +273,56 @@ jobs:
           name: celesta-codecs-linux-x64
           path: target/packages/Celesta-plugin-ffmpeg-x264-*-linux-x64.zip
           if-no-files-found: error
+      - name: Build the Linux CLI archive
+        env:
+          VERSION: ${{ inputs.version }}
+          RELEASE: ${{ inputs.release }}
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --dir packages/react run codegen --locked
+          pnpm run build:runtime
+          cargo build --locked --release -p celesta-cli -p celesta-exporter
+          optional=()
+          if [[ "$RELEASE" == "true" ]]; then optional=(--version "$VERSION"); fi
+          python3 -B scripts/package-linux.py "${optional[@]}"
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: celesta-linux-x64
+          path: target/packages/Celesta-*-linux-x64.tar.gz
+          if-no-files-found: error
+
+  linux-cli-smoke:
+    name: Linux x64 CLI clean-install smoke test
+    needs: linux-plugins
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: celesta-linux-x64
+          path: ${{ runner.temp }}/linux-cli
+      - name: Check doctor, export, and inspection from a moved Linux installation
+        run: |
+          inputs="$RUNNER_TEMP/linux-cli"
+          cp packages/cli/examples/title.tsx "$inputs/title.tsx"
+          cp skills/celesta/scripts/inspect.mjs "$inputs/inspect.mjs"
+          docker run --rm -i -v "$inputs:/inputs:ro" ubuntu:22.04 bash -se <<'EOF'
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates libatomic1 zlib1g libvulkan1 mesa-vulkan-drivers fonts-dejavu-core
+          work="$(mktemp -d)"
+          mkdir "$work/unpacked" "$work/project" "$work/xdg-runtime"
+          chmod 700 "$work/xdg-runtime"
+          tar --no-same-owner -xzf /inputs/Celesta-*-linux-x64.tar.gz -C "$work/unpacked"
+          mv "$work/unpacked"/Celesta-* "$work/moved-install"
+          cp /inputs/title.tsx "$work/project/title.tsx"
+          cd "$work/project"
+          export XDG_RUNTIME_DIR="$work/xdg-runtime"
+          export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+          export PATH="$work/moved-install/bin:$PATH"
+          celesta doctor --json
+          celesta export --react title.tsx --to 0.1 title.mov --json
+          test -s title.mov
+          "$work/moved-install/bin/runtime/node" /inputs/inspect.mjs title.tsx --frames 0 > inspect.txt
+          grep -Fx "native:  $work/moved-install/bin/celesta-exporter (found)" inspect.txt
+          EOF
