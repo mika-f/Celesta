@@ -67,9 +67,10 @@ the components, a video takes:
 - `audioEncoder`: the same shape for audio, or `'none'` for a silent video.
 - `preset`, `presetFile`: an export preset's name, looked up in
   `presetFile` (an `export-presets.json`), then the project's
-  `export-presets.json`, then the user's (`--preset`, `--preset-file`).
-  Without `preset`, the project's default preset applies when no component
-  is chosen.
+  `export-presets.json`, then the user's, then built-in presets
+  (`YouTube 1080p`, `YouTube Shorts`, `TikTok`, `Instagram Reels`,
+  `niconico`) (`--preset`, `--preset-file`). Without `preset`, the
+  project's default preset applies when no component is chosen.
 
 `from` and `to` are seconds (rounded to milliseconds) or timecode
 strings such as `"01:30.5"`. The types in `dist/index.d.ts` document each

@@ -245,7 +245,7 @@ struct Cli {
         default_value_t = ContactSheet::DEFAULT_TILE_WIDTH
     )]
     tile_width: u32,
-    /// An export preset: looked up in --preset-file, then the project's export-presets.json, then yours.
+    /// An export preset: looked up in --preset-file, then the project's export-presets.json, then yours, then built-in presets.
     #[arg(long, value_name = "NAME")]
     preset: Option<String>,
     /// An export-presets.json to look --preset up in first.

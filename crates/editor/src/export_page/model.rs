@@ -310,6 +310,16 @@ impl ExportModel {
                     warnings,
                 );
             }
+            if let Some(preset) = celesta_exporter::find_builtin_preset(name) {
+                return (
+                    InitialBase::Preset(
+                        PresetSource::Builtin,
+                        name.to_owned(),
+                        preset.output.clone(),
+                    ),
+                    warnings,
+                );
+            }
             warnings.push(PageWarning::UnknownDefault {
                 name: name.to_owned(),
             });

@@ -76,6 +76,7 @@ impl ExportModel {
                     PresetSource::File => {
                         "The presets file couldn’t be read, so its presets aren’t listed."
                     }
+                    PresetSource::Builtin => "Built-in presets couldn’t be read.",
                 };
                 format!("{which} {}", plain(message))
             }

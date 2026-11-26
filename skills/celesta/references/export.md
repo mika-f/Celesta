@@ -226,8 +226,16 @@ and remembers its last choice in the user file's `last`.
   defaults. `"audio": "none"` writes no audio. `default` belongs in the
   project file only; `last` in the user's only. `version` is 1.
 - `--preset <name>` looks in `--preset-file`, then the project's file, then
-  the user's; the first match wins, and a project preset that hides a user
-  preset of the same name warns. Names are case-sensitive.
+  the user's, then the built-in presets; the first match wins (so project
+  and user presets can override a built-in), and a project preset that hides
+  a user preset of the same name warns. Names are case-sensitive.
+- **Built-in MP4 presets**: `YouTube 1080p` (8 Mbps video / 384 kbps audio),
+  `YouTube Shorts` (8 Mbps / 384 kbps), `TikTok` (8 Mbps / 192 kbps),
+  `Instagram Reels` (8 Mbps / 128 kbps), and `niconico` (12 Mbps / 320 kbps).
+  Each targets `ffmpeg/mp4` without pinning an encoder component, so it uses
+  the platform's default H.264/AAC encoders and adapts portable average
+  bitrate `rateControl` (`bitrate` on AVFoundation/Media Foundation, `vbr`
+  on x264).
 - Flags go over the preset: `--muxer`, `--video-encoder`, and
   `--audio-encoder` replace its components, and each
   `--video-option`/`--audio-option` key replaces the preset's value. A

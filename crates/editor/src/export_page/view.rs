@@ -415,6 +415,7 @@ impl ExportPage {
             let file = match source {
                 PresetSource::Project => project,
                 PresetSource::User | PresetSource::File => user,
+                PresetSource::Builtin => celesta_exporter::builtin_presets().iter().collect(),
             };
             let preset = file.into_iter().find(|preset| preset.name == *name)?;
             Some((preset_label(name), preset.output.clone()))
@@ -504,6 +505,11 @@ impl ExportPage {
         let mut sections = vec![(None, vec![Choice::new("None", None)])];
         sections.extend(group("This project", PresetSource::Project, project));
         sections.extend(group("My presets", PresetSource::User, user));
+        sections.extend(group(
+            "Built-in",
+            PresetSource::Builtin,
+            celesta_exporter::builtin_presets().iter().collect(),
+        ));
         let selected = self.model.selected.clone();
         self.preset.update(cx, |state, cx| {
             state.set_items(Sections(sections), window, cx);
