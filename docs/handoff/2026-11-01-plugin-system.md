@@ -5,8 +5,12 @@ found (`2026-11-02-plugin-search-paths.md`), project trust and plugin
 approval (`2026-11-02-plugin-trust.md`), the editor's Plugins tab
 (`2026-11-02-plugins-panel.md`), the manifest's `components`
 (`2026-11-02-plugin-add-menu.md`), 3D scene content, notices, and the
-current `ContentProvider` (`2026-11-03-plugin-scene-content.md`), and the
-manifest's `roles` with codec plugins (`2026-11-05-codec-plugin.md`).
+current `ContentProvider` (`2026-11-03-plugin-scene-content.md`), the
+manifest's `roles` with codec plugins (`2026-11-05-codec-plugin.md`), and
+the build script and the plugins workspace
+(`2026-11-05-plugins-workspace.md`). What a plugin kept outside this
+repository builds against as of 0.10 is in
+`2026-11-27-plugin-outside-repo-docs.md`.
 
 The goal: content that needs code Celesta cannot ship (a proprietary
 runtime, or anything whose license must stay apart from the GPL build of
@@ -51,7 +55,7 @@ itself keeps only generic parts and a published protocol.
 - `data` is opaque to Celesta and part of what a frame depends on.
 - The layer's size is the content's canvas, which the plugin reports.
 - Only the GPU renderer draws it. The CPU reference renderer and
-  `@celesta/web` refuse it.
+  `@celesta.studio/web` refuse it.
 
 ## Meshes
 
@@ -165,7 +169,7 @@ as its bytes arrive (`2026-11-07-plugin-host-robustness.md`).
     "id": "example",
     "version": "0.1.0",
     "protocol": 1,
-    "celesta": ">=0.9.0, <0.10.0",
+    "celesta": ">=0.10.0, <0.11.0",
     "executable": {
       "windows-x86_64": "bin/windows-x86_64/celesta-plugin-example.exe",
       "linux-x86_64": "bin/linux-x86_64/celesta-plugin-example"
@@ -215,25 +219,33 @@ as its bytes arrive (`2026-11-07-plugin-host-robustness.md`).
 - A plugin's `module` is the component library entries import as
   `@celesta-plugin/<id>`. The CLI resolves that specifier through the same
   plugin directories and bundles the module into the entry, so its own
-  `react` and `@celesta/*` imports resolve to the runtime's instances. It
-  emits `{ type: 'plugin', plugin: '<id>', … }` through
-  `registerHostElement`.
+  `react` and `@celesta.studio/*` imports resolve to the runtime's
+  instances. It emits `{ type: 'plugin', plugin: '<id>', … }` by rendering
+  `<PluginLayer plugin assets time data>` from `@celesta.studio/react`
+  (at first through `registerHostElement` from the runtime's `internal`
+  entry, which is not stable and not for plugin modules).
 - Project TypeScript support maps `@celesta-plugin/*` to the plugins' `types`,
   copied into `.celesta/plugins/<id>/` with the rest.
 
 ## Building a plugin against a checkout
 
-A plugin lives outside Celesta's workspace and needs only a Celesta
-checkout to build:
+A plugin lives outside Celesta's workspace. Its program builds from
+crates.io, and its JavaScript needs a Celesta checkout:
 
-- Its `Cargo.toml` declares `celesta-plugin = "0.9"` and the like, as if the
-  crates were on crates.io, and has a `[workspace]` table of its own. A
-  `[patch.crates-io]` table in the plugin's `.cargo/config.toml` points those
-  names at the checkout's crates; Cargo accepts patches for crates the
-  registry does not have. Only the versions have to match the checkout.
-- Its JavaScript can take the checkout's built runtime: the staged project
+- Its `Cargo.toml` declares `celesta-plugin = "0.10"` and the like and has a
+  `[workspace]` table of its own. The crates are on crates.io since 0.10
+  (`celesta-plugin`, and for tests `celesta-plugin-host` and
+  `celesta-gpu-renderer`). A `[patch.crates-io]` table in the plugin's
+  `.cargo/config.toml` can still point those names at a checkout's crates,
+  to build against ones not yet published; the versions have to match the
+  checkout. (Before the crates were published, that table was the only way.)
+- Its JavaScript takes the checkout's built runtime: the staged project
   TypeScript support (`packages/cli/dist/project-types`) for `react` and
-  `@celesta/*` declarations, and the CLI's `typescript` and `esbuild`.
+  `@celesta.studio/*` declarations, and the CLI's `typescript` and
+  `esbuild`. The `@celesta.studio/*` packages are not on npm.
+- `scripts/plugins/build.mts <its folder>` builds it from a `plugin.json`,
+  as it builds the repository's own (`examples/plugins/README.md`, "Moving a
+  sample out of this repository").
 - Each platform's executable is built on (or cross-compiled for) that
   platform and added under its `executable` key.
 
@@ -249,7 +261,7 @@ checkout to build:
 | `crates/exporter`, `crates/editor` | Install `PluginHost::discover(&[])`; the exporter's `--plugin-dir` (repeatable) goes before `CELESTA_PLUGIN_PATH` for both the host and the React runtime. |
 | `crates/react-bridge/src/project_types.rs` | Copies installed plugins' declarations to `.celesta/plugins/<id>/index.d.ts` on set-up and on every check; the staged tsconfig maps `@celesta-plugin/*` there. |
 | `packages/cli/src/plugins.ts` | Resolves `@celesta-plugin/<id>` to the plugin's `module` and bundles it into the entry. |
-| `examples/plugins` | Three sample plugins and `build.mjs`, which builds each into `examples/plugins/dist/<id>` (git-ignored). `flag` (a workspace member, `celesta-plugin-flag`) is a program and a component: an image waving as 48 single-sided strips, shaded with multiply and screen colors. `beep-voice` is a module only: a speech channel that voices `planDialogue()` lines with beeps in `prepare()`, as `@celesta/voicevox` does with an engine. `turntable` (`celesta-plugin-turntable`, a workspace member) is a program and a component drawing 3D scene content (`2026-11-03-plugin-scene-content.md`). |
+| `examples/plugins` | Three sample plugins and `build.mjs` (since replaced by `scripts/plugins/build.mts`, `2026-11-05-plugins-workspace.md`), which builds each into `examples/plugins/dist/<id>` (git-ignored). `flag` (a workspace member, `celesta-plugin-flag`) is a program and a component: an image waving as 48 single-sided strips, shaded with multiply and screen colors. `beep-voice` is a module only: a speech channel that voices `planDialogue()` lines with beeps in `prepare()`, as `@celesta/voicevox` does with an engine. `turntable` (`celesta-plugin-turntable`, a workspace member) is a program and a component drawing 3D scene content (`2026-11-03-plugin-scene-content.md`). |
 | `packages/website/content/{en,ja}/docs/05-(more)/05-plugins.md` | The user guide's Content plugins chapter. |
 | `skills/celesta/references/plugins.md` | The skill's page; `inspect.mjs` lists plugin layers with their assets and data. |
 
@@ -264,25 +276,26 @@ Request timeouts, once also not done here, came with
 killing a plugin from another thread with
 `2026-11-06-plugin-kill-switch.md`.
 
-## Publishing an SDK (not done)
+## Publishing an SDK (partly done)
 
 What a plugin author would need from registries instead of a checkout:
 
-- **crates.io: `celesta-plugin`.** It already depends on nothing of
-  Celesta's. Path dependencies on it gain versions; `celesta-plugin-host`
-  stays unpublished (Celesta's side only). Its semver is separate from the
-  protocol version, which the manifest and `hello` carry.
-- **npm: a public API for plugin layers.** Plugin modules now call
-  `registerHostElement` from `@celesta/react/internal`, which says it is not
-  stable. A public `<PluginLayer plugin assets time data>` (or a
-  `definePluginLayer()`) should replace it before any plugin is published.
+- **crates.io: `celesta-plugin`** (done with 0.10). It depends on nothing of
+  Celesta's. `celesta-plugin-host` and `celesta-gpu-renderer` are published
+  too, so a plugin's tests can run its program through the host and draw
+  it. Its semver is separate from the protocol version, which the manifest
+  and `hello` carry.
+- **A public API for plugin layers** (done): `<PluginLayer plugin assets
+  time data>` from `@celesta.studio/react` replaced the call to
+  `registerHostElement` from the runtime's `internal` entry, which says it
+  is not stable. It is not on npm yet, like the rest of the runtime.
 - **npm: declarations for development.** Plugin modules type-check against
   the checkout's staged `packages/cli/dist/project-types`. Either publish the
-  `@celesta/*` packages plugins import (as `peerDependencies`; the CLI keeps
-  them external at run time) or a types-only package made from the same
-  staging. `react` must match the runtime's.
+  `@celesta.studio/*` packages plugins import (as `peerDependencies`; the
+  CLI keeps them external at run time) or a types-only package made from the
+  same staging. `react` must match the runtime's.
 - **npm: a plugin SDK package** with the manifest's type and JSON Schema and
-  a build CLI generalizing `examples/plugins/build.mjs` (per-platform
+  a build CLI generalizing `scripts/plugins/build.mts` (per-platform
   executables merged into one manifest, `--target`, a handshake check).
 - **Language-neutral docs**: the protocol and manifest sections above as a
   versioned specification, and which protocol versions each Celesta accepts.

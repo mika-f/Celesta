@@ -48,8 +48,8 @@ with **Allow** in the Plugins tab.
 
 Each sample's `plugin.json` gives its id, version, and module source. The
 build adds the manifest's `celesta` range, the Celesta versions the plugin
-works with, from the Celesta checkout it builds against (`>=0.9.0, <0.10.0`
-for 0.9.0); Celesta skips a plugin whose range leaves it out, so rebuild
+works with, from the Celesta checkout it builds against (`>=0.10.0, <0.11.0`
+for 0.10.0); Celesta skips a plugin whose range leaves it out, so rebuild
 the samples after updating the checkout to a new minor release.
 flag's and turntable's also name the Cargo package that builds the program,
 whose version must be the same: bump both together, since the build refuses
@@ -58,10 +58,23 @@ app's Add menu offers, which the build copies into the manifest.
 
 ## Moving a sample out of this repository
 
-The samples build inside Celesta's workspace. A plugin kept elsewhere
-depends on the crates by version instead (`celesta-plugin = "0.9"`), has a
-`[workspace]` table of its own, and points those names at a Celesta checkout
-from its `.cargo/config.toml` until the crates are published:
+The samples build inside Celesta's workspace. A plugin kept elsewhere has a
+`[workspace]` table of its own and depends on the crates by version, from
+crates.io:
+
+```toml
+[dependencies]
+celesta-plugin = "0.10"
+
+[dev-dependencies]
+# Only for tests that start the program through the host and draw it.
+celesta-plugin-host = "0.10"
+celesta-gpu-renderer = "0.10"
+```
+
+To build against crates a checkout has and crates.io does not yet, point
+those names at the checkout from the plugin's `.cargo/config.toml`; the
+versions must still match:
 
 ```toml
 [patch.crates-io]
@@ -69,7 +82,22 @@ celesta-plugin = { path = "/path/to/celesta/crates/plugin" }
 ```
 
 Build it with the checkout's script,
-`node /path/to/celesta/scripts/plugins/build.mts <its folder>`. The script
-runs Cargo in the plugin's own folder, so its `.cargo/config.toml` applies,
-and takes the runtime's declarations, `tsc`, and `esbuild` from the
-checkout's `packages/cli`.
+`node /path/to/celesta/scripts/plugins/build.mts <its folder>`, after
+`pnpm install && pnpm run build:runtime` in the checkout. The script runs
+Cargo in the plugin's own folder, so its `.cargo/config.toml` applies, and
+takes the runtime's declarations, `tsc`, and `esbuild` from the checkout's
+`packages/cli`: the `@celesta.studio/*` packages are not on npm. Three
+things it expects of the plugin:
+
+- `plugin.json`'s `cargoPackage` is also the name of the binary: the script
+  runs `cargo build --bin <cargoPackage>`, so a package whose `[[bin]]` has
+  another name fails with `no bin target named …`.
+- `Cargo.lock` is up to date, as the script passes `--locked`.
+- The module imports the runtime as `@celesta.studio/*`. The script keeps
+  only those and `react` as imports, so a module that still imports the
+  older `@celesta/*` names fails with `Could not resolve "@celesta/react"`.
+  It draws its layer with `<PluginLayer>`, not with `registerHostElement`
+  from `@celesta.studio/react/internal`, which is not stable.
+
+The script writes the manifest's `celesta` range from the checkout, as it
+does for the samples.
