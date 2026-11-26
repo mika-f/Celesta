@@ -228,6 +228,7 @@ pub(crate) struct ExportModel {
     chosen: Chosen,
     pub(crate) project: PresetFileState,
     pub(crate) user: PresetFileState,
+    plugin_presets: Vec<Preset>,
     /// The preset the choice came from; `None` ("None" in the list) once
     /// a field or an encoder is changed.
     pub(crate) selected: Option<(PresetSource, String)>,
@@ -265,6 +266,7 @@ impl ExportModel {
             .iter()
             .map(|info| (info.plugin, Described::Checking))
             .collect();
+        let plugin_presets = celesta_exporter::plugin_presets(registry);
         Self {
             components,
             described,
@@ -272,6 +274,7 @@ impl ExportModel {
             chosen: Chosen::default(),
             project,
             user,
+            plugin_presets,
             selected: None,
             warnings: Vec::new(),
             error: None,
@@ -310,10 +313,14 @@ impl ExportModel {
                     warnings,
                 );
             }
-            if let Some(preset) = celesta_exporter::find_builtin_preset(name) {
+            if let Some(preset) = self
+                .plugin_presets
+                .iter()
+                .find(|preset| preset.name == name)
+            {
                 return (
                     InitialBase::Preset(
-                        PresetSource::Builtin,
+                        PresetSource::Plugin,
                         name.to_owned(),
                         preset.output.clone(),
                     ),
@@ -686,6 +693,11 @@ impl ExportModel {
     /// order; none for a file that is missing or could not be read.
     pub(crate) fn presets(&self) -> (Vec<&Preset>, Vec<&Preset>) {
         (listed(&self.project), listed(&self.user))
+    }
+
+    /// The presets declared by registered media plugins, in registry order.
+    pub(crate) fn plugin_presets(&self) -> Vec<&Preset> {
+        self.plugin_presets.iter().collect()
     }
 
     /// The choice as an export takes it: every component named and every
@@ -1139,6 +1151,7 @@ mod tests {
                     codecs: vec!["mp4a".into()],
                 }],
                 muxers: vec![mp4(), ivf()],
+                presets: Vec::new(),
             },
         )
     }
@@ -1154,6 +1167,7 @@ mod tests {
                 video_encoders: vec![video_encoder("h264", "H.264 (project)", "avc1.640028")],
                 audio_encoders: Vec::new(),
                 muxers: vec![mp4()],
+                presets: Vec::new(),
             },
         )
     }
@@ -2010,6 +2024,7 @@ mod tests {
                 video_encoders: vec![video_encoder("h264", "H.264 (Media Foundation)", "avc1")],
                 audio_encoders: Vec::new(),
                 muxers: Vec::new(),
+                presets: Vec::new(),
             },
         );
         MediaRegistry::new(vec![standard, native])
@@ -2150,6 +2165,7 @@ mod tests {
                 video_encoders: vec![video_encoder("hevc", "HEVC", "hvc1")],
                 audio_encoders: Vec::new(),
                 muxers: vec![hevc_mp4],
+                presets: Vec::new(),
             },
         );
         let registry = MediaRegistry::new(vec![standard, third]);

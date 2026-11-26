@@ -737,6 +737,7 @@ mod tests {
             video_encoders: vec![video_encoder("v")],
             audio_encoders: vec![audio_encoder("a")],
             muxers: vec![muxer("m")],
+            presets: Vec::new(),
         }
     }
 
@@ -781,6 +782,7 @@ mod tests {
                 video_encoders: Vec::new(),
                 audio_encoders: Vec::new(),
                 muxers: Vec::new(),
+                presets: Vec::new(),
             },
             ..fake(one_of_each(), None, &Starts::default(), |_| Ok(Vec::new()))
         }

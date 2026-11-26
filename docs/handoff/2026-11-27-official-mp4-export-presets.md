@@ -1,8 +1,8 @@
-# Official Built-in MP4 Export Presets (2026-11-27)
+# Official MP4 Export Presets via Media Plugin Manifest (2026-11-27)
 
 ## Specification
 
-Add five official built-in MP4 export presets for major video platforms so users can export with `--preset "<name>"`, MCP `export_video`, `@celesta.studio/exporter`, or the editor Export page without authoring `export-presets.json` first:
+Provide five official MP4 export presets for major video platforms from the `ffmpeg` media plugin manifest (`plugins/ffmpeg/plugin.json` `media.presets`, emitted by `celesta-codec-ffmpeg --manifest`) rather than hardcoding plugin-specific preset data in the plugin host or exporter. Users can export with `--preset "<name>"`, MCP `export_video`, `@celesta.studio/exporter`, or the editor Export page without authoring `export-presets.json` first:
 
 | Preset | Muxer | Video bitrate (H.264) | Audio bitrate (AAC) | Primary source |
 | --- | --- | --- | --- | --- |
@@ -14,22 +14,27 @@ Add five official built-in MP4 export presets for major video platforms so users
 
 ## Implementation Details
 
+- **`crates/plugin-host/src/media.rs`**:
+  - Added `pub presets: Vec<Value>` to `MediaManifest` and parsed optional `media.presets` in `MediaManifest::from_json` (validating each entry is an object with a non-empty unique `"name"`, reporting problems leniently like component entries).
+- **`plugins/ffmpeg/plugin.json`**:
+  - Declared the five official MP4 presets under `media.presets` in the same JSON shape as `export-presets.json`'s `presets` array. `plugins/ffmpeg/src/lib.rs::printed_manifest()` emits `plugin["media"]` directly, so `celesta-codec-ffmpeg --manifest` includes `media.presets` automatically.
+  - Each preset sets `muxer: "ffmpeg/mp4"`, leaves `video.component` and `audio.component` unset so the platform's default H.264 and AAC encoders are selected, and sets portable `rateControl: "bitrate"` + `bitrate` on video and `bitrate` on audio.
 - **`crates/exporter/src/presets.rs` & `crates/exporter/src/lib.rs`**:
-  - Added `builtin_presets() -> &'static [Preset]` and `find_builtin_preset(name: &str) -> Option<&'static Preset>`.
-  - Added `PresetSource::Builtin` and changed `FoundPreset.path` to `Option<PathBuf>` (`None` for built-ins).
-  - Updated `PresetLookup::find` to fall back to `find_builtin_preset(name)` after `--preset-file`, project `export-presets.json`, and user `export-presets.json`, so file-based presets override built-ins of the same name.
-  - Each built-in preset sets `muxer: "ffmpeg/mp4"`, leaves `video.component` and `audio.component` unset so the platform's default H.264 and AAC encoders are selected, and sets portable `rateControl: "bitrate"` + `bitrate` on video and `bitrate` on audio.
+  - Added `plugin_presets(registry: &MediaRegistry) -> Vec<Preset>` and `find_plugin_preset(registry: &MediaRegistry, name: &str) -> Option<Preset>`, reading presets generically from registered media plugins' `media.presets` in registry search order with zero hardcoded plugin names or preset definitions.
+  - Added `PresetSource::Plugin`, changed `FoundPreset.path` to `Option<PathBuf>` (`None` for plugin-provided presets), and added `PresetLookup::find_with_plugins(name, registry)` falling back to plugin presets after `--preset-file`, project `export-presets.json`, and user `export-presets.json`.
 - **`crates/exporter/src/resolve.rs`**:
-  - Added `adapt_portable_options` for presets that do not pin a specific encoder component: when a portable preset sets `rateControl` to `"bitrate"` (or `"vbr"`) and the selected encoder schema uses the other token for its `bitrate`-gated rate-control mode (e.g., `ffmpeg-x264/libx264` uses `"vbr"`, while `avfoundation/h264` and `mediafoundation/h264` use `"bitrate"`), the resolver adapts `rateControl` to the schema's token before sanitization so no warning is emitted and the target bitrate takes effect on all platforms.
+  - Updated `resolve_output` to resolve presets through `PresetLookup::find_with_plugins(name, registry)`.
+  - Added generic `adapt_portable_options` for presets that do not pin a specific encoder component: when a portable preset sets `rateControl` to `"bitrate"` (or `"vbr"`) and the selected encoder schema uses the other token for its `bitrate`-gated rate-control mode (e.g. `"vbr"` on x264, `"bitrate"` on native encoders), the resolver adapts `rateControl` to the schema's token before sanitization.
 - **`crates/editor/src/export_page/{model,view,wording}.rs`**:
-  - Added a `"Built-in"` section to the Export page preset picker and fell back to built-ins when resolving a project's `default` preset.
+  - Loaded `plugin_presets` from `MediaRegistry` in `ExportModel::new`, listed them under a `"Plugins"` section in the Export page preset picker, and fell back to them when resolving a project's `default` preset.
 - **CLI / MCP / TypeScript / Docs**:
   - Updated `--preset` help text in `crates/exporter/src/cli.rs`, `crates/mcp/src/args.rs`, `packages/exporter/src/types.ts`, and `packages/exporter/README.md`.
-  - Updated EN/JA export guides (`packages/website/content/{en,ja}/docs/02-(guides)/09-export.md`) and `skills/celesta/references/export.md`.
+  - Updated EN/JA export and troubleshooting guides (`packages/website/content/{en,ja}/docs/02-(guides)/09-export.md`, `05-(more)/04-troubleshooting.md`) and Celesta skill references (`skills/celesta/references/{export,errors}.md`).
 
 ## Checks
 
-- `cargo test -p celesta-exporter`
+- `cargo test -p celesta-plugin-host --lib`
+- `cargo test -p celesta-exporter --lib`
 - `cargo test -p celesta-editor export_page`
-- `cargo clippy -p celesta-exporter -p celesta-mcp --all-targets -- -D warnings`
+- `cargo clippy -p celesta-plugin-host -p celesta-exporter --all-targets -- -D warnings`
 - `cargo fmt --check`

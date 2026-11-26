@@ -174,7 +174,7 @@ pub fn resolve_output(
 ) -> Result<ResolvedOutput, ExportError> {
     let find = |name: &str, default_in: Option<PathBuf>| {
         presets
-            .find(name)?
+            .find_with_plugins(name, registry)?
             .ok_or_else(|| ExportError::UnknownPreset {
                 name: name.to_owned(),
                 default_in,
@@ -1025,6 +1025,7 @@ mod tests {
                 ],
                 audio_encoders: vec![audio_encoder("aac", "AAC", "mp4a")],
                 muxers: vec![mp4(), ivf()],
+                presets: Vec::new(),
             },
         )
     }
@@ -1040,6 +1041,7 @@ mod tests {
                 video_encoders: vec![video_encoder("h264", "H.264 (user)", "avc1")],
                 audio_encoders: Vec::new(),
                 muxers: vec![mp4()],
+                presets: Vec::new(),
             },
         )
     }
@@ -1055,6 +1057,7 @@ mod tests {
                 video_encoders: vec![video_encoder("h264", "H.264 (project)", "avc1")],
                 audio_encoders: vec![audio_encoder("aac", "AAC (project)", "mp4a")],
                 muxers: vec![mp4()],
+                presets: Vec::new(),
             },
         )
     }
@@ -1326,6 +1329,7 @@ mod tests {
                     trims_leading_audio: false,
                     sequence: false,
                 }],
+                presets: Vec::new(),
             },
         )
     }
@@ -2223,7 +2227,7 @@ mod tests {
     }
 
     #[test]
-    fn builtin_mp4_presets_resolve_across_x264_and_native_h264_schemas() {
+    fn plugin_mp4_presets_resolve_across_x264_and_native_h264_schemas() {
         let rate_control_field = |mode_a: &str, mode_b: &str| SettingField {
             key: "rateControl".into(),
             label: "Mode".into(),
@@ -2286,6 +2290,12 @@ mod tests {
             ("niconico", 12_000_000.0, 320_000.0),
         ];
 
+        let ffmpeg_plugin: serde_json::Value =
+            serde_json::from_str(include_str!("../../../plugins/ffmpeg/plugin.json")).unwrap();
+        let (ffmpeg_media, problems) = MediaManifest::from_json(ffmpeg_plugin["media"].clone());
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(ffmpeg_media.presets.len(), expected.len());
+
         for (encoder_id, default_mode, bitrate_mode) in
             [("libx264", "crf", "vbr"), ("h264", "quality", "bitrate")]
         {
@@ -2298,6 +2308,7 @@ mod tests {
                     video_encoders: vec![video_encoder(encoder_id, "H.264", "avc1")],
                     audio_encoders: vec![audio_encoder("aac", "AAC", "mp4a")],
                     muxers: vec![mp4()],
+                    presets: ffmpeg_media.presets.clone(),
                 },
             )]);
             let description = Arc::new(PluginDescription {

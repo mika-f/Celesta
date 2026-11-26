@@ -7,7 +7,7 @@ use crate::manifest::{InstalledPlugins, PluginEntry, PluginRole, is_valid_id};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -56,6 +56,9 @@ pub struct MediaManifest {
     pub video_encoders: Vec<MediaVideoEncoderEntry>,
     pub audio_encoders: Vec<MediaAudioEncoderEntry>,
     pub muxers: Vec<MediaMuxerEntry>,
+    /// `media.presets`: export presets this plugin offers, in the same JSON
+    /// entry shape as `export-presets.json`'s `presets` array.
+    pub presets: Vec<Value>,
 }
 
 /// A decoder, as a manifest's `media.decoders` declares it.
@@ -322,9 +325,46 @@ impl MediaManifest {
                 |muxer: &MediaMuxerEntry| &muxer.id,
                 normalize_muxer,
             ),
+            presets: read_presets(&mut media, &mut problems),
         };
         (manifest, problems)
     }
+}
+
+/// The list `media.presets` read entry by entry: each must be a JSON object
+/// with a non-empty string `"name"` unique within this plugin.
+fn read_presets(media: &mut Map<String, Value>, problems: &mut Vec<String>) -> Vec<Value> {
+    let entries = match media.remove("presets") {
+        None | Some(Value::Null) => return Vec::new(),
+        Some(Value::Array(entries)) => entries,
+        Some(_) => {
+            problems.push("its \"media.presets\" is not a list".into());
+            return Vec::new();
+        }
+    };
+    let mut kept: Vec<Value> = Vec::new();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    for (index, entry) in entries.into_iter().enumerate() {
+        let Some(name) = entry
+            .as_object()
+            .and_then(|map| map.get("name"))
+            .and_then(Value::as_str)
+            .filter(|name| !name.is_empty())
+        else {
+            problems.push(format!(
+                "media.presets[{index}] must be an object with a non-empty \"name\""
+            ));
+            continue;
+        };
+        if !seen.insert(name.to_owned()) {
+            problems.push(format!(
+                "media.presets[{index}] repeats the preset name {name:?}"
+            ));
+            continue;
+        }
+        kept.push(entry);
+    }
+    kept
 }
 
 /// The families of `codecs`, which must not be empty.
@@ -1900,5 +1940,22 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn media_presets_are_parsed_and_validated() {
+        let (media, problems) = MediaManifest::from_json(serde_json::json!({
+            "presets": [
+                { "name": "YouTube 1080p", "muxer": "ffmpeg/mp4" },
+                { "name": "" },
+                "not an object",
+                { "name": "YouTube 1080p", "muxer": "ffmpeg/mov" },
+                { "name": "niconico", "muxer": "ffmpeg/mp4" }
+            ]
+        }));
+        assert_eq!(media.presets.len(), 2);
+        assert_eq!(media.presets[0]["name"], "YouTube 1080p");
+        assert_eq!(media.presets[1]["name"], "niconico");
+        assert_eq!(problems.len(), 3, "{problems:?}");
     }
 }

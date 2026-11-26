@@ -74,10 +74,9 @@ export interface VideoOptions extends SourceOptions, RunOptions, RenderOptions {
   subtitles?: string | string[];
   /**
    * An export preset's name (`--preset`), looked up in `presetFile`, then the
-   * project's `export-presets.json`, then the user's, then built-in presets
-   * (`YouTube 1080p`, `YouTube Shorts`, `TikTok`, `Instagram Reels`,
-   * `niconico`). Without it, the project's default preset applies when no
-   * component is chosen.
+   * project's `export-presets.json`, then the user's, then presets declared by
+   * installed media plugins (`media.presets`). Without it, the project's
+   * default preset applies when no component is chosen.
    */
   preset?: string;
   /** An `export-presets.json` to look `preset` up in first (`--preset-file`). */

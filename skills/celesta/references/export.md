@@ -226,10 +226,11 @@ and remembers its last choice in the user file's `last`.
   defaults. `"audio": "none"` writes no audio. `default` belongs in the
   project file only; `last` in the user's only. `version` is 1.
 - `--preset <name>` looks in `--preset-file`, then the project's file, then
-  the user's, then the built-in presets; the first match wins (so project
-  and user presets can override a built-in), and a project preset that hides
-  a user preset of the same name warns. Names are case-sensitive.
-- **Built-in MP4 presets**: `YouTube 1080p` (8 Mbps video / 384 kbps audio),
+  the user's, then presets declared by installed media plugins (`media.presets`
+  in each plugin's manifest); the first match wins (so project and user presets
+  can override a plugin preset), and a project preset that hides a user preset
+  of the same name warns. Names are case-sensitive.
+- **Official MP4 presets (from the `ffmpeg` plugin)**: `YouTube 1080p` (8 Mbps video / 384 kbps audio),
   `YouTube Shorts` (8 Mbps / 384 kbps), `TikTok` (8 Mbps / 192 kbps),
   `Instagram Reels` (8 Mbps / 128 kbps), and `niconico` (12 Mbps / 320 kbps).
   Each targets `ffmpeg/mp4` without pinning an encoder component, so it uses
@@ -706,7 +707,7 @@ props file, the result also has `propsFile` (its path) and `propsFileAuto`
 | `component_unavailable` | A named component is not installed (check `--list-components`), or a chosen one does not work here; `message` has the reason, such as `this FFmpeg build has no libvpx-vp9`. |
 | `incompatible_components` | The named encoder writes no codec the muxer takes (H.264 in `.webm`, for example). |
 | `invalid_option` | A `--video-option`/`--audio-option` key the encoder does not have, a value of the wrong type or out of range, or a hidden field; or the plugin refused the combination. Check with `--describe`. |
-| `unknown_preset` | `--preset` names a preset in no presets file or built-in preset, or the project file's `default` does (`the default preset … is in no presets file`). For an x264 name, the hint says to use `--video-encoder ffmpeg-x264/libx264 --video-option preset=<name>` (the optional `ffmpeg-x264` plugin). See [Export presets](#export-presets). |
+| `unknown_preset` | `--preset` names a preset in no presets file or installed media plugin (`media.presets`), or the project file's `default` does (`the default preset … is in no presets file`). For an x264 name, the hint says to use `--video-encoder ffmpeg-x264/libx264 --video-option preset=<name>` (the optional `ffmpeg-x264` plugin). See [Export presets](#export-presets). |
 | `invalid_presets` | A presets file the lookup reached cannot be read, is not valid JSON, or has a `version` other than 1; `message` starts with its path. Fix the file; do not delete a user's file without asking. |
 | `no_decoder` | No media decoder can run (no media plugin was found, or those found declare no decoder or have no program for this computer), so the entry's video and audio files could not be read (still exports, and video exports whose media plugins have no decoder; a video export with no media plugin at all fails with `unsupported_output` first). Reinstall the app, or in a source build run `node scripts/plugins/build.mts plugins/ffmpeg` and `export CELESTA_PLUGIN_PATH="$PWD/plugins/dist"` at the repository root, in the shell that runs Celesta. A `plugins/dist/ffmpeg` with `"roles": ["codec"]` is from an older checkout and is ignored: build it again. |
 | `unsupported_media` | Media plugins were found, but none of their decoders reads a file the entry uses (`message` names the file and the decoders tried). Convert it to a format the `ffmpeg` plugin reads, such as MP4 or WAV. |

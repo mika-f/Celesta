@@ -8,12 +8,12 @@
 //! rewritten.
 
 use crate::ExportError;
-use celesta_media::{SettingValue, Settings};
+use celesta_media::{MediaRegistry, Settings};
 use celesta_plugin_host::{project_root, user_settings_dir};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
 
 /// The name of a presets file.
 pub const PRESETS_FILE: &str = "export-presets.json";
@@ -249,62 +249,31 @@ pub struct PresetLookup {
     pub user: Option<PathBuf>,
 }
 
-/// Official built-in MP4 export presets for major video platforms.
-///
-/// Each leaves the video and audio encoder components unnamed so it uses
-/// `ffmpeg/mp4`'s default H.264 and AAC encoders on the current platform
-/// (`avfoundation/h264` on macOS, `mediafoundation/h264` on Windows,
-/// `ffmpeg-x264/libx264` on Linux; `ffmpeg/aac` everywhere).
-pub fn builtin_presets() -> &'static [Preset] {
-    static PRESETS: LazyLock<Vec<Preset>> = LazyLock::new(|| {
-        vec![
-            mp4_preset("YouTube 1080p", 8_000_000, 384_000),
-            mp4_preset("YouTube Shorts", 8_000_000, 384_000),
-            mp4_preset("TikTok", 8_000_000, 192_000),
-            mp4_preset("Instagram Reels", 8_000_000, 128_000),
-            mp4_preset("niconico", 12_000_000, 320_000),
-        ]
-    });
-    &PRESETS
-}
-
-/// The built-in preset named `name`, if one exists.
-pub fn find_builtin_preset(name: &str) -> Option<&'static Preset> {
-    builtin_presets().iter().find(|preset| preset.name == name)
-}
-
-fn mp4_preset(name: &str, video_bitrate: u64, audio_bitrate: u64) -> Preset {
-    let mut video_options = Settings::new();
-    video_options.insert(
-        "rateControl".to_owned(),
-        SettingValue::String("bitrate".to_owned()),
-    );
-    video_options.insert(
-        "bitrate".to_owned(),
-        SettingValue::Number(video_bitrate as f64),
-    );
-    let mut audio_options = Settings::new();
-    audio_options.insert(
-        "bitrate".to_owned(),
-        SettingValue::Number(audio_bitrate as f64),
-    );
-    Preset {
-        name: name.to_owned(),
-        output: PresetOutput {
-            muxer: Some("ffmpeg/mp4".to_owned()),
-            video: Some(PresetEncoder {
-                component: None,
-                options: video_options,
-                other: Extra::new(),
-            }),
-            audio: Some(PresetAudio::Encode(PresetEncoder {
-                component: None,
-                options: audio_options,
-                other: Extra::new(),
-            })),
-            other: Extra::new(),
-        },
+/// Export presets declared by registered media plugins (`media.presets` in
+/// each plugin's manifest), in registry search order. When two plugins declare
+/// the same preset name, the earlier plugin wins. Malformed entries are skipped.
+pub fn plugin_presets(registry: &MediaRegistry) -> Vec<Preset> {
+    let mut presets = Vec::new();
+    let mut seen = BTreeSet::new();
+    for plugin in registry.plugins() {
+        for raw in &plugin.media.presets {
+            let Ok(preset) = serde_json::from_value::<Preset>(raw.clone()) else {
+                continue;
+            };
+            if preset.name.is_empty() || !seen.insert(preset.name.clone()) {
+                continue;
+            }
+            presets.push(preset);
+        }
     }
+    presets
+}
+
+/// The preset named `name` from registered media plugins, if one declares it.
+pub fn find_plugin_preset(registry: &MediaRegistry, name: &str) -> Option<Preset> {
+    plugin_presets(registry)
+        .into_iter()
+        .find(|preset| preset.name == name)
 }
 
 /// Where a preset came from.
@@ -313,15 +282,15 @@ pub enum PresetSource {
     File,
     Project,
     User,
-    Builtin,
+    Plugin,
 }
 
-/// A preset found by [`PresetLookup::find`].
+/// A preset found by [`PresetLookup::find`] or [`PresetLookup::find_with_plugins`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct FoundPreset {
     pub preset: Preset,
     pub source: PresetSource,
-    /// The file the preset was read from, or `None` for [`PresetSource::Builtin`].
+    /// The file the preset was read from, or `None` for [`PresetSource::Plugin`].
     pub path: Option<PathBuf>,
     pub warnings: Vec<String>,
 }
@@ -385,10 +354,23 @@ impl PresetLookup {
                 warnings,
             }));
         }
-        if let Some(preset) = find_builtin_preset(name) {
+        Ok(None)
+    }
+
+    /// Like [`Self::find`], falling back to presets declared by registered
+    /// media plugins in `registry` when no file defines `name`.
+    pub fn find_with_plugins(
+        &self,
+        name: &str,
+        registry: &MediaRegistry,
+    ) -> Result<Option<FoundPreset>, ExportError> {
+        if let Some(found) = self.find(name)? {
+            return Ok(Some(found));
+        }
+        if let Some(preset) = find_plugin_preset(registry, name) {
             return Ok(Some(FoundPreset {
-                preset: preset.clone(),
-                source: PresetSource::Builtin,
+                preset,
+                source: PresetSource::Plugin,
                 path: None,
                 warnings: Vec::new(),
             }));
@@ -597,36 +579,58 @@ mod tests {
     }
 
     #[test]
-    fn builtin_presets_are_found_after_files_and_can_be_overridden() {
-        let names: Vec<_> = builtin_presets().iter().map(|p| p.name.as_str()).collect();
-        assert_eq!(
-            names,
-            [
-                "YouTube 1080p",
-                "YouTube Shorts",
-                "TikTok",
-                "Instagram Reels",
-                "niconico",
+    fn plugin_presets_are_found_after_files_and_can_be_overridden() {
+        use celesta_media::RegisteredPlugin;
+        use celesta_plugin_host::{MediaManifest, MediaOrigin};
+        use std::sync::Arc;
+
+        let (media, problems) = MediaManifest::from_json(serde_json::json!({
+            "presets": [
+                { "name": "alpha", "muxer": "sample/mp4" },
+                { "name": "beta", "muxer": "sample/mov" }
             ]
-        );
-        for preset in builtin_presets() {
-            assert_eq!(preset.output.muxer.as_deref(), Some("ffmpeg/mp4"));
-            let found = PresetLookup::default().find(&preset.name).unwrap().unwrap();
-            assert_eq!(found.source, PresetSource::Builtin);
-            assert_eq!(found.path, None);
-            assert!(found.warnings.is_empty());
-        }
+        }));
+        assert!(problems.is_empty(), "{problems:?}");
+        let registry = MediaRegistry::new(vec![RegisteredPlugin {
+            id: "sample".into(),
+            name: "Sample".into(),
+            version: "0.1.0".into(),
+            origin: MediaOrigin::Bundled,
+            directory: PathBuf::new(),
+            executable: None,
+            media,
+            factory: Arc::new(|_, _| unreachable!()),
+        }]);
+
+        let names: Vec<_> = plugin_presets(&registry)
+            .into_iter()
+            .map(|p| p.name)
+            .collect();
+        assert_eq!(names, ["alpha", "beta"]);
+
+        let found = PresetLookup::default()
+            .find_with_plugins("alpha", &registry)
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.source, PresetSource::Plugin);
+        assert_eq!(found.path, None);
+        assert_eq!(found.preset.output.muxer.as_deref(), Some("sample/mp4"));
+        assert!(found.warnings.is_empty());
 
         let dir = tempfile::tempdir().unwrap();
         let user = dir.path().join("user.json");
-        write(&user, &file_with(&["YouTube 1080p"]));
+        write(&user, &file_with(&["alpha"]));
         let lookup = PresetLookup {
             user: Some(user.clone()),
             ..PresetLookup::default()
         };
-        let found = lookup.find("YouTube 1080p").unwrap().unwrap();
+        let found = lookup
+            .find_with_plugins("alpha", &registry)
+            .unwrap()
+            .unwrap();
         assert_eq!(found.source, PresetSource::User);
         assert_eq!(found.path, Some(user));
+        assert_eq!(found.preset.output.muxer, None);
         assert!(found.warnings.is_empty());
     }
 
