@@ -978,6 +978,7 @@ mod tests {
     fn an_rgba16_frame_is_sent_as_a_slot_without_a_pipe_payload() {
         use crate::{Color, PixelFormat};
         use celesta_composition::Rational;
+        use celesta_plugin::MEDIA_PROTOCOL_VERSION;
         use celesta_plugin::protocol::{read_message, write_message};
         use serde_json::json;
         use std::os::unix::fs::PermissionsExt;
