@@ -32,8 +32,13 @@ say:
 | What | Otherwise |
 | --- | --- |
 | `plugin.json`'s `cargoPackage` is also the binary's name: the script runs `cargo build --bin <cargoPackage>`. | `no bin target named …` |
-| `Cargo.lock` is up to date: the script passes `--locked`. | `cannot update the lock file … because --locked was passed` |
-| The module imports `@celesta.studio/*`: the script keeps only those and `react` as imports. | `Could not resolve "@celesta/react"` |
+| `Cargo.lock` is there and up to date: the script passes `--locked`. | `cannot create the lock file … because --locked was passed` (or `cannot update …`) |
+| The module imports `@celesta.studio/*`: the script keeps `react`, `@celesta.studio/*`, and Node's built-in modules as imports, and bundles the rest. | `Could not resolve "@celesta/react"` |
+
+A sample moved out also loses what its `Cargo.toml` inherits from Celesta's
+workspace (`edition.workspace = true`, `celesta-plugin.workspace = true`):
+each such line is written out, or Cargo stops with ``error inheriting
+`edition` from workspace root manifest's `workspace.package.edition` ``.
 
 ## Docs changed
 
@@ -76,4 +81,9 @@ say:
   names equal, and `celesta-plugin = "0.10"` from crates.io with no patch
   table, the script writes the plugin directory, its manifest carrying
   `">=0.10.0, <0.11.0"`.
+- `examples/plugins/flag` copied out of the repository with a `[workspace]`
+  table added: Cargo stops on the inherited `edition`. With the
+  `Cargo.toml` the samples' README gives and `cargo generate-lockfile`, the
+  script builds it from crates.io; without the lock file it stops on
+  `--locked`.
 - `pnpm --filter @celesta.studio/website test`.

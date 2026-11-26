@@ -58,18 +58,43 @@ app's Add menu offers, which the build copies into the manifest.
 
 ## Moving a sample out of this repository
 
-The samples build inside Celesta's workspace. A plugin kept elsewhere has a
-`[workspace]` table of its own and depends on the crates by version, from
-crates.io:
+The samples build inside Celesta's workspace, and flag's and turntable's
+`Cargo.toml` take their `edition`, `license`, `repository`, and
+`rust-version`, and the versions of `celesta-plugin`, `serde_json`, and the
+`celesta-*` test dependencies, from it (`edition.workspace = true`,
+`celesta-plugin.workspace = true`). A plugin kept elsewhere has a
+`[workspace]` table of its own, so each of those lines is written out, or
+Cargo stops with ``error inheriting `edition` from workspace root
+manifest's `workspace.package.edition` ``. The crates come from crates.io by
+version. flag's, moved out:
 
 ```toml
+[package]
+name = "celesta-plugin-flag"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.89"
+publish = false
+
+# Not a member of any other workspace, wherever the folder sits.
+[workspace]
+
+[[bin]]
+name = "celesta-plugin-flag"
+path = "src/main.rs"
+
 [dependencies]
 celesta-plugin = "0.10"
+image = { version = "0.25.8", default-features = false, features = ["jpeg", "png"] }
+serde_json = "1.0"
 
 [dev-dependencies]
 # Only for tests that start the program through the host and draw it.
-celesta-plugin-host = "0.10"
+celesta-composition = "0.10"
 celesta-gpu-renderer = "0.10"
+celesta-plugin-host = "0.10"
+tempfile = "3.23.0"
 ```
 
 To build against crates a checkout has and crates.io does not yet, point
@@ -92,9 +117,12 @@ things it expects of the plugin:
 - `plugin.json`'s `cargoPackage` is also the name of the binary: the script
   runs `cargo build --bin <cargoPackage>`, so a package whose `[[bin]]` has
   another name fails with `no bin target named …`.
-- `Cargo.lock` is up to date, as the script passes `--locked`.
+- `Cargo.lock` is there and up to date, as the script passes `--locked`: a
+  folder just moved out has none, so run `cargo generate-lockfile` in it
+  first.
 - The module imports the runtime as `@celesta.studio/*`. The script keeps
-  only those and `react` as imports, so a module that still imports the
+  `react`, `@celesta.studio/*`, and Node's built-in modules (`node:fs`) as
+  imports and bundles everything else, so a module that still imports the
   older `@celesta/*` names fails with `Could not resolve "@celesta/react"`.
   It draws its layer with `<PluginLayer>`, not with `registerHostElement`
   from `@celesta.studio/react/internal`, which is not stable.
