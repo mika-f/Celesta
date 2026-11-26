@@ -121,8 +121,8 @@ things it expects of the plugin:
   folder just moved out has none, so run `cargo generate-lockfile` in it
   first.
 - The module imports the runtime as `@celesta.studio/*`. The script keeps
-  `react`, `@celesta.studio/*`, and Node's built-in modules (`node:fs`) as
-  imports and bundles everything else, so a module that still imports the
+  `react` and its subpaths (`react/jsx-runtime`), `@celesta.studio/*`, and
+  Node's built-in modules (`node:fs`) as imports and bundles everything else, so a module that still imports the
   older `@celesta/*` names fails with `Could not resolve "@celesta/react"`.
   It draws its layer with `<PluginLayer>`, not with `registerHostElement`
   from `@celesta.studio/react/internal`, which is not stable.

@@ -33,7 +33,7 @@ say:
 | --- | --- |
 | `plugin.json`'s `cargoPackage` is also the binary's name: the script runs `cargo build --bin <cargoPackage>`. | `no bin target named …` |
 | `Cargo.lock` is there and up to date: the script passes `--locked`. | `cannot create the lock file … because --locked was passed` (or `cannot update …`) |
-| The module imports `@celesta.studio/*`: the script keeps `react`, `@celesta.studio/*`, and Node's built-in modules as imports, and bundles the rest. | `Could not resolve "@celesta/react"` |
+| The module imports `@celesta.studio/*`: the script keeps `react` and its subpaths, `@celesta.studio/*`, and Node's built-in modules as imports, and bundles the rest. | `Could not resolve "@celesta/react"` |
 
 A sample moved out also loses what its `Cargo.toml` inherits from Celesta's
 workspace (`edition.workspace = true`, `celesta-plugin.workspace = true`):
