@@ -332,7 +332,8 @@ impl MediaManifest {
 }
 
 /// The list `media.presets` read entry by entry: each must be a JSON object
-/// with a non-empty string `"name"` unique within this plugin.
+/// with a non-empty string `"name"` unique within this plugin and valid field
+/// types for `muxer`, `video`, and `audio`.
 fn read_presets(media: &mut Map<String, Value>, problems: &mut Vec<String>) -> Vec<Value> {
     let entries = match media.remove("presets") {
         None | Some(Value::Null) => return Vec::new(),
@@ -345,9 +346,14 @@ fn read_presets(media: &mut Map<String, Value>, problems: &mut Vec<String>) -> V
     let mut kept: Vec<Value> = Vec::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
     for (index, entry) in entries.into_iter().enumerate() {
-        let Some(name) = entry
-            .as_object()
-            .and_then(|map| map.get("name"))
+        let Some(object) = entry.as_object() else {
+            problems.push(format!(
+                "media.presets[{index}] must be an object with a non-empty \"name\""
+            ));
+            continue;
+        };
+        let Some(name) = object
+            .get("name")
             .and_then(Value::as_str)
             .filter(|name| !name.is_empty())
         else {
@@ -356,6 +362,10 @@ fn read_presets(media: &mut Map<String, Value>, problems: &mut Vec<String>) -> V
             ));
             continue;
         };
+        if let Some(reason) = validate_preset_fields(object) {
+            problems.push(format!("media.presets[{index}] ({name:?}) {reason}"));
+            continue;
+        }
         if !seen.insert(name.to_owned()) {
             problems.push(format!(
                 "media.presets[{index}] repeats the preset name {name:?}"
@@ -365,6 +375,52 @@ fn read_presets(media: &mut Map<String, Value>, problems: &mut Vec<String>) -> V
         kept.push(entry);
     }
     kept
+}
+
+fn validate_preset_fields(object: &Map<String, Value>) -> Option<String> {
+    if let Some(muxer) = object.get("muxer")
+        && !muxer.is_null()
+        && !muxer.is_string()
+    {
+        return Some("\"muxer\" must be a string".into());
+    }
+    if let Some(video) = object.get("video")
+        && !video.is_null()
+        && let Some(reason) = validate_preset_encoder("video", video)
+    {
+        return Some(reason);
+    }
+    if let Some(audio) = object.get("audio")
+        && !audio.is_null()
+        && audio.as_str() != Some("none")
+    {
+        if audio.is_string() {
+            return Some("\"audio\" must be \"none\" or an encoder object".into());
+        }
+        if let Some(reason) = validate_preset_encoder("audio", audio) {
+            return Some(reason);
+        }
+    }
+    None
+}
+
+fn validate_preset_encoder(field: &str, value: &Value) -> Option<String> {
+    let Some(object) = value.as_object() else {
+        return Some(format!("\"{field}\" must be an object"));
+    };
+    if let Some(component) = object.get("component")
+        && !component.is_null()
+        && !component.is_string()
+    {
+        return Some(format!("\"{field}.component\" must be a string"));
+    }
+    if let Some(options) = object.get("options")
+        && !options.is_null()
+        && !options.is_object()
+    {
+        return Some(format!("\"{field}.options\" must be an object"));
+    }
+    None
 }
 
 /// The families of `codecs`, which must not be empty.
@@ -1946,16 +2002,22 @@ mod tests {
     fn media_presets_are_parsed_and_validated() {
         let (media, problems) = MediaManifest::from_json(serde_json::json!({
             "presets": [
-                { "name": "YouTube 1080p", "muxer": "ffmpeg/mp4" },
+                { "name": "YouTube 1080p", "muxer": "ffmpeg/mp4", "video": { "options": { "bitrate": 8000000 } }, "audio": { "options": { "bitrate": 384000 } } },
                 { "name": "" },
                 "not an object",
                 { "name": "YouTube 1080p", "muxer": "ffmpeg/mov" },
+                { "name": "Bad muxer", "muxer": 123 },
+                { "name": "Bad video", "video": "not-an-object" },
+                { "name": "Bad options", "video": { "options": 42 } },
+                { "name": "Bad audio", "audio": "invalid" },
+                { "name": "Silent", "muxer": "ffmpeg/mp4", "audio": "none" },
                 { "name": "niconico", "muxer": "ffmpeg/mp4" }
             ]
         }));
-        assert_eq!(media.presets.len(), 2);
+        assert_eq!(media.presets.len(), 3);
         assert_eq!(media.presets[0]["name"], "YouTube 1080p");
-        assert_eq!(media.presets[1]["name"], "niconico");
-        assert_eq!(problems.len(), 3, "{problems:?}");
+        assert_eq!(media.presets[1]["name"], "Silent");
+        assert_eq!(media.presets[2]["name"], "niconico");
+        assert_eq!(problems.len(), 7, "{problems:?}");
     }
 }
