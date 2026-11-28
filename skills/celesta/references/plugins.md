@@ -313,6 +313,10 @@ which the user copies into a plugin folder, or name `plugins/dist` with
 plugin with it (`node scripts/plugins/build.mts plugins/vrm plugins/ffmpeg`),
 so `--plugin-dir plugins/dist` names both.
 
+MToon's shared base color UV transform still applies when the plugin can
+resolve the base color image but skips it (for example, over the decode
+limit). A KTX2-only base texture does not supply a transform.
+
 ```tsx
 import { Vrm } from '@celesta-plugin/vrm';
 

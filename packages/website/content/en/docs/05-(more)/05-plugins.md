@@ -504,6 +504,8 @@ Meshes the file marks as first-person only (such as a body without a head, for t
 
 Other warnings point out parts of the file the plugin does not use as written: primitives it does not draw, textures a material is drawn without, and morph target binds it ignores. The plugin also skips and warns about unknown humanoid bone or expression preset names; required humanoid bones must still be present. Each kind of warning, including repeated first-person marks, is listed up to 20 times, then one line counts the rest (`and 12 more primitives that are not drawn`).
 
+When Celesta skips an MToon base color image (for example, because it exceeds the decode limit), the textures that share its UV transform still use that transform. If the plugin cannot resolve a base color image, as with a KTX2-only texture, there is no base transform.
+
 A material's emission is brightened by `KHR_materials_emissive_strength` when the material has it, and otherwise by `VRMC_materials_hdr_emissiveMultiplier`, as UniVRM reads them. A multiplier that is not a finite number refuses the model, and the message names the field.
 
 Materials the file gives in plain glTF PBR (often metal or glass parts) are drawn as their flat base color for now, and a note names them. Not supported yet: VRM 0.x files, which the plugin refuses with a message saying how to convert them to VRM 1.0 (with UniVRM or the VRM Add-on for Blender).

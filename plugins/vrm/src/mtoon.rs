@@ -22,8 +22,8 @@
 //! (`invalid`).
 
 use celesta_plugin::{
-    CustomMaterial, EmptyTexel, OutlinePass, SceneShader, SceneTexture, ShaderTexture, TextureRef,
-    Wrap,
+    CustomMaterial, EmptyTexel, OutlinePass, SceneShader, SceneTexture, ShaderTexture,
+    TextureTransform, Wrap,
 };
 
 /// The bytes of `mtoon.wgsl`'s `Params`: eleven `vec4f`s.
@@ -34,7 +34,7 @@ pub const MTOON_PARAMS: usize = 176;
 /// ([`Mtoon::default`]).
 ///
 /// Every texture but the matcap and the outline width is sampled at the
-/// base color texture's coordinates: `base_color_texture`'s `transform`,
+/// base color texture's coordinates: its `base_transform`,
 /// and a frame's texture offset and scale binds, move them all, and then
 /// the UV animation does, as UniVRM's single `_MainTex_ST` does. That is
 /// why the other slots are [`TextureSlot`]s without a transform. The
@@ -56,9 +56,9 @@ pub const MTOON_PARAMS: usize = 176;
 pub struct Mtoon {
     /// Linear RGBA. Default `[1, 1, 1, 1]`.
     pub base_color: [f32; 4],
-    /// Its `transform` moves every texture but the matcap and the outline
-    /// width.
-    pub base_color_texture: Option<TextureRef>,
+    pub base_color_texture: Option<TextureSlot>,
+    /// The base color image's UV transform, even if the image is unreadable.
+    pub base_transform: Option<TextureTransform>,
     /// A tangent-space normal map; `scale` is glTF's `normalTexture.scale`.
     pub normal_texture: Option<ScaledTextureSlot>,
     /// Linear RGB, which may exceed 1: the file's
@@ -116,6 +116,7 @@ impl Default for Mtoon {
         Self {
             base_color: [1.0; 4],
             base_color_texture: None,
+            base_transform: None,
             normal_texture: None,
             emissive_factor: [0.0; 3],
             emissive_texture: None,
@@ -248,7 +249,7 @@ pub fn shader() -> SceneShader {
 /// The scene textures `mtoon`'s slots name, in the shader's order.
 pub fn slots(mtoon: &Mtoon) -> [Option<usize>; 9] {
     [
-        mtoon.base_color_texture.as_ref().map(|slot| slot.texture),
+        mtoon.base_color_texture.map(|slot| slot.texture),
         mtoon.shade_multiply_texture.map(|slot| slot.texture),
         mtoon.shading_shift_texture.map(|slot| slot.texture),
         mtoon.normal_texture.map(|slot| slot.texture),
@@ -301,11 +302,7 @@ fn numbers(mtoon: &Mtoon) -> Vec<f32> {
     ]);
     numbers.extend(mtoon.normal_texture.map(|slot| slot.scale));
     numbers.extend(mtoon.shading_shift_texture.map(|slot| slot.scale));
-    if let Some(transform) = mtoon
-        .base_color_texture
-        .as_ref()
-        .and_then(|texture| texture.transform)
-    {
+    if let Some(transform) = mtoon.base_transform {
         numbers.extend(transform.offset);
         numbers.extend(transform.scale);
         numbers.push(transform.rotation);
@@ -331,24 +328,6 @@ pub(crate) fn invalid(mtoon: &Mtoon, textures: usize) -> Option<String> {
         return Some("its MToon parameters are not finite".into());
     }
     None
-}
-
-/// The rows of `texture`'s transform, which scales, then rotates, then
-/// offsets coordinates as `KHR_texture_transform`'s sample code does, with
-/// the offset and scale `overrides` names in place of the texture's. A
-/// rotation turns `(1, 0)` toward `(0, 1)`.
-fn texture_rows(texture: Option<&TextureRef>, overrides: &MtoonOverrides) -> ([f32; 4], [f32; 4]) {
-    let transform = texture.and_then(|texture| texture.transform);
-    let (offset, rotation, scale) = transform.map_or(([0.0; 2], 0.0, [1.0; 2]), |transform| {
-        (transform.offset, transform.rotation, transform.scale)
-    });
-    let offset = overrides.texture_offset.unwrap_or(offset);
-    let scale = overrides.texture_scale.unwrap_or(scale);
-    let (sin, cos) = rotation.sin_cos();
-    (
-        [cos * scale[0], -sin * scale[1], offset[0], 0.0],
-        [sin * scale[0], cos * scale[1], offset[1], 0.0],
-    )
 }
 
 /// How far `mtoon`'s UV animation has scrolled at `time`, before its mask
@@ -404,7 +383,10 @@ pub fn params(
     textures: &[SceneTexture],
 ) -> [u8; MTOON_PARAMS] {
     let with = |[r, g, b]: [f32; 3], w: f32| [r, g, b, w];
-    let (uv_u, uv_v) = texture_rows(mtoon.base_color_texture.as_ref(), overrides);
+    let (uv_u, uv_v) = mtoon
+        .base_transform
+        .unwrap_or_default()
+        .rows(overrides.texture_offset, overrides.texture_scale);
     let scroll = uv_scroll(mtoon, textures, time);
     let rows: [[f32; 4]; MTOON_PARAMS / 16] = [
         overrides.base_color.unwrap_or(mtoon.base_color),
@@ -486,7 +468,7 @@ pub fn params(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use celesta_plugin::{Filter, Sampler, TextureSource, TextureTransform};
+    use celesta_plugin::{Filter, Sampler, TextureSource};
     use std::sync::Arc;
 
     /// The f32 at byte `offset` of `bytes`.
@@ -545,13 +527,11 @@ mod tests {
     #[test]
     fn params_take_the_overrides_in_place_of_the_material() {
         let mtoon = Mtoon {
-            base_color_texture: Some(TextureRef {
-                texture: 0,
-                transform: Some(TextureTransform {
-                    offset: [0.5, 0.25],
-                    rotation: 0.0,
-                    scale: [2.0, 2.0],
-                }),
+            base_color_texture: Some(TextureSlot { texture: 0 }),
+            base_transform: Some(TextureTransform {
+                offset: [0.5, 0.25],
+                rotation: 0.0,
+                scale: [2.0, 2.0],
             }),
             outline_width_mode: OutlineWidthMode::ScreenCoordinates,
             normal_texture: Some(ScaledTextureSlot {
@@ -596,10 +576,7 @@ mod tests {
     /// Half a texture a second in u, on texture 0.
     fn scrolling(edit: impl FnOnce(&mut Mtoon)) -> Mtoon {
         let mut mtoon = Mtoon {
-            base_color_texture: Some(TextureRef {
-                texture: 0,
-                transform: None,
-            }),
+            base_color_texture: Some(TextureSlot { texture: 0 }),
             uv_animation_scroll_x_speed_factor: 0.5,
             ..Mtoon::default()
         };
@@ -680,10 +657,7 @@ mod tests {
         type Set = fn(&mut Mtoon, Option<TextureSlot>, Option<ScaledTextureSlot>);
         let cases: [(&str, Set); 9] = [
             ("baseColorTexture", |m, _, _| {
-                m.base_color_texture = Some(TextureRef {
-                    texture: 1,
-                    transform: None,
-                })
+                m.base_color_texture = Some(TextureSlot { texture: 1 })
             }),
             ("shadeMultiplyTexture", |m, slot, _| {
                 m.shade_multiply_texture = slot
@@ -725,13 +699,10 @@ mod tests {
                 })
             },
             |m| {
-                m.base_color_texture = Some(TextureRef {
-                    texture: 0,
-                    transform: Some(TextureTransform {
-                        offset: [0.0; 2],
-                        rotation: f32::NAN,
-                        scale: [1.0; 2],
-                    }),
+                m.base_transform = Some(TextureTransform {
+                    offset: [0.0; 2],
+                    rotation: f32::NAN,
+                    scale: [1.0; 2],
                 })
             },
         ];

@@ -13,8 +13,8 @@ use celesta_gpu_renderer::{Color, GpuFrame, GpuRenderError, GpuRenderOptions, Gp
 use celesta_plugin::{
     AlphaMode, Camera, ColorSpace, ContentFrame, ContentProvider, DirectionalLight, DrawInfo,
     DrawState, Filter, Geometry, Lights, MaterialKind, ModelId, MorphTarget, Opened, PluginError,
-    Projection, Sampler, SceneFrame, SceneModel, SceneTexture, TextureRef, TextureSource,
-    TextureTransform, UnlitMaterial, Wrap,
+    Projection, Sampler, SceneFrame, SceneModel, SceneTexture, TextureSource, TextureTransform,
+    UnlitMaterial, Wrap,
 };
 use celesta_plugin_vrm::mtoon::{
     self, Mtoon, MtoonOverrides, OutlineWidthMode, ScaledTextureSlot, TextureSlot,
@@ -991,10 +991,8 @@ fn animated(
 ) -> Scenes {
     let mut scenes = toon_square(
         uv_animation(Mtoon {
-            base_color_texture: Some(TextureRef {
-                texture: 0,
-                transform,
-            }),
+            base_color_texture: Some(TextureSlot { texture: 0 }),
+            base_transform: transform,
             ..flat_toon()
         }),
         vec![],
@@ -1572,10 +1570,8 @@ fn outline_width_texture_uses_raw_uv0_green() {
     // texture's offset the left side would sample u 0.5, width 0.
     let mut scenes = shell_scene(
         Mtoon {
-            base_color_texture: Some(TextureRef {
-                texture: 0,
-                transform: Some(transform([0.5, 0.0], 0.0, [1.0; 2])),
-            }),
+            base_color_texture: Some(TextureSlot { texture: 0 }),
+            base_transform: Some(transform([0.5, 0.0], 0.0, [1.0; 2])),
             outline_width_multiply_texture: Some(TextureSlot { texture: 1 }),
             ..outlined(OutlineWidthMode::WorldCoordinates, FOUR_PX_IN_METRES)
         },
@@ -1675,10 +1671,7 @@ fn outline_surface_follows_the_uv_animation() {
     for (time, expected) in [(0.0, RED), (1.0, GREEN)] {
         let mut scenes = shell_scene(
             lit_outline(Mtoon {
-                base_color_texture: Some(TextureRef {
-                    texture: 0,
-                    transform: None,
-                }),
+                base_color_texture: Some(TextureSlot { texture: 0 }),
                 ..scroll_half_in_x(flat_toon())
             }),
             vec![],
