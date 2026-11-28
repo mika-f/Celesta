@@ -181,8 +181,9 @@ pub struct ExportVideoArgs {
     /// Replace `output` if it exists.
     overwrite: Option<bool>,
     /// An export preset's name, looked up in presetFile, then the project's
-    /// export-presets.json, then the user's. Without it, the project's
-    /// default preset applies when no component is chosen.
+    /// export-presets.json, then the user's, then presets declared by installed
+    /// media plugins (`media.presets`). Without it, the project's default
+    /// preset applies when no component is chosen.
     preset: Option<String>,
     /// An export-presets.json to look `preset` up in first.
     preset_file: Option<PathBuf>,

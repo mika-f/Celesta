@@ -8,9 +8,10 @@
 //! rewritten.
 
 use crate::ExportError;
-use celesta_media::Settings;
+use celesta_media::{MediaRegistry, Settings};
 use celesta_plugin_host::{project_root, user_settings_dir};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -248,20 +249,49 @@ pub struct PresetLookup {
     pub user: Option<PathBuf>,
 }
 
-/// Which file a preset came from.
+/// Export presets declared by registered media plugins (`media.presets` in
+/// each plugin's manifest), in registry search order. When two plugins declare
+/// the same preset name, the earlier plugin wins. Malformed entries are skipped.
+pub fn plugin_presets(registry: &MediaRegistry) -> Vec<Preset> {
+    let mut presets = Vec::new();
+    let mut seen = BTreeSet::new();
+    for plugin in registry.plugins() {
+        for raw in &plugin.media.presets {
+            let Ok(preset) = serde_json::from_value::<Preset>(raw.clone()) else {
+                continue;
+            };
+            if preset.name.is_empty() || !seen.insert(preset.name.clone()) {
+                continue;
+            }
+            presets.push(preset);
+        }
+    }
+    presets
+}
+
+/// The preset named `name` from registered media plugins, if one declares it.
+pub fn find_plugin_preset(registry: &MediaRegistry, name: &str) -> Option<Preset> {
+    plugin_presets(registry)
+        .into_iter()
+        .find(|preset| preset.name == name)
+}
+
+/// Where a preset came from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PresetSource {
     File,
     Project,
     User,
+    Plugin,
 }
 
-/// A preset found by [`PresetLookup::find`].
+/// A preset found by [`PresetLookup::find`] or [`PresetLookup::find_with_plugins`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct FoundPreset {
     pub preset: Preset,
     pub source: PresetSource,
-    pub path: PathBuf,
+    /// The file the preset was read from, or `None` for [`PresetSource::Plugin`].
+    pub path: Option<PathBuf>,
     pub warnings: Vec<String>,
 }
 
@@ -320,8 +350,29 @@ impl PresetLookup {
             return Ok(Some(FoundPreset {
                 preset: preset.clone(),
                 source,
-                path: path.clone(),
+                path: Some(path.clone()),
                 warnings,
+            }));
+        }
+        Ok(None)
+    }
+
+    /// Like [`Self::find`], falling back to presets declared by registered
+    /// media plugins in `registry` when no file defines `name`.
+    pub fn find_with_plugins(
+        &self,
+        name: &str,
+        registry: &MediaRegistry,
+    ) -> Result<Option<FoundPreset>, ExportError> {
+        if let Some(found) = self.find(name)? {
+            return Ok(Some(found));
+        }
+        if let Some(preset) = find_plugin_preset(registry, name) {
+            return Ok(Some(FoundPreset {
+                preset,
+                source: PresetSource::Plugin,
+                path: None,
+                warnings: Vec::new(),
             }));
         }
         Ok(None)
@@ -499,14 +550,17 @@ mod tests {
             user: Some(user.clone()),
         };
         let found = lookup.find("x").unwrap().unwrap();
-        assert_eq!((found.source, &found.path), (PresetSource::File, &file));
+        assert_eq!(
+            (found.source, found.path.as_deref()),
+            (PresetSource::File, Some(file.as_path()))
+        );
         assert!(found.warnings.is_empty());
 
         lookup.file = None;
         let found = lookup.find("x").unwrap().unwrap();
         assert_eq!(
-            (found.source, &found.path),
-            (PresetSource::Project, &project)
+            (found.source, found.path.as_deref()),
+            (PresetSource::Project, Some(project.as_path()))
         );
         assert_eq!(
             found.warnings,
@@ -515,10 +569,69 @@ mod tests {
 
         write(&project, &file_with(&["y"]));
         let found = lookup.find("x").unwrap().unwrap();
-        assert_eq!((found.source, &found.path), (PresetSource::User, &user));
+        assert_eq!(
+            (found.source, found.path.as_deref()),
+            (PresetSource::User, Some(user.as_path()))
+        );
         assert!(found.warnings.is_empty());
 
         assert_eq!(lookup.find("nowhere").unwrap(), None);
+    }
+
+    #[test]
+    fn plugin_presets_are_found_after_files_and_can_be_overridden() {
+        use celesta_media::RegisteredPlugin;
+        use celesta_plugin_host::{MediaManifest, MediaOrigin};
+        use std::sync::Arc;
+
+        let (media, problems) = MediaManifest::from_json(serde_json::json!({
+            "presets": [
+                { "name": "alpha", "muxer": "sample/mp4" },
+                { "name": "beta", "muxer": "sample/mov" }
+            ]
+        }));
+        assert!(problems.is_empty(), "{problems:?}");
+        let registry = MediaRegistry::new(vec![RegisteredPlugin {
+            id: "sample".into(),
+            name: "Sample".into(),
+            version: "0.1.0".into(),
+            origin: MediaOrigin::Bundled,
+            directory: PathBuf::new(),
+            executable: None,
+            media,
+            factory: Arc::new(|_, _| unreachable!()),
+        }]);
+
+        let names: Vec<_> = plugin_presets(&registry)
+            .into_iter()
+            .map(|p| p.name)
+            .collect();
+        assert_eq!(names, ["alpha", "beta"]);
+
+        let found = PresetLookup::default()
+            .find_with_plugins("alpha", &registry)
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.source, PresetSource::Plugin);
+        assert_eq!(found.path, None);
+        assert_eq!(found.preset.output.muxer.as_deref(), Some("sample/mp4"));
+        assert!(found.warnings.is_empty());
+
+        let dir = tempfile::tempdir().unwrap();
+        let user = dir.path().join("user.json");
+        write(&user, &file_with(&["alpha"]));
+        let lookup = PresetLookup {
+            user: Some(user.clone()),
+            ..PresetLookup::default()
+        };
+        let found = lookup
+            .find_with_plugins("alpha", &registry)
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.source, PresetSource::User);
+        assert_eq!(found.path, Some(user));
+        assert_eq!(found.preset.output.muxer, None);
+        assert!(found.warnings.is_empty());
     }
 
     #[test]

@@ -174,7 +174,7 @@ pub fn resolve_output(
 ) -> Result<ResolvedOutput, ExportError> {
     let find = |name: &str, default_in: Option<PathBuf>| {
         presets
-            .find(name)?
+            .find_with_plugins(name, registry)?
             .ok_or_else(|| ExportError::UnknownPreset {
                 name: name.to_owned(),
                 default_in,
@@ -457,7 +457,8 @@ pub fn resolve_preset_output(
         )?,
         schema: muxer_description.settings,
     };
-    let video_base = preset_options(base_video, &choice.video, video).map(|base| (name, base));
+    let video_base = preset_options(base_video, &choice.video, video)
+        .map(|(base, portable)| (name, base, portable));
     let video = resolved_encoder(
         video,
         video_description,
@@ -471,7 +472,8 @@ pub fn resolve_preset_output(
     };
     let audio = audio
         .map(|(audio, encoder, description)| {
-            let base = preset_options(base_audio, encoder, audio).map(|base| (name, base));
+            let base = preset_options(base_audio, encoder, audio)
+                .map(|(base, portable)| (name, base, portable));
             resolved_encoder(audio, description, encoder, base, &mut warnings)
         })
         .transpose()?;
@@ -554,20 +556,23 @@ fn extension_warning(
 
 /// The base's options that apply to `component`: its own encoder's, when
 /// `component` is the one the base names, or when neither the base nor the
-/// choice names one.
+/// choice names one. The boolean is `true` when the preset did not pin a
+/// specific encoder component (portable preset).
 fn preset_options<'a>(
     base: Option<&'a PresetEncoder>,
     choice: &EncoderChoice,
     component: &MediaComponentInfo,
-) -> Option<&'a Settings> {
+) -> Option<(&'a Settings, bool)> {
     let base = base?;
-    let applies = match &base.component {
-        Some(text) => text
-            .parse::<ComponentRef>()
-            .is_ok_and(|reference| reference == component.reference),
-        None => choice.component.is_none(),
+    let (applies, portable) = match &base.component {
+        Some(text) => (
+            text.parse::<ComponentRef>()
+                .is_ok_and(|reference| reference == component.reference),
+            false,
+        ),
+        None => (choice.component.is_none(), true),
     };
-    applies.then_some(&base.options)
+    applies.then_some((&base.options, portable))
 }
 
 /// Each plugin's description, asked of `describe` once.
@@ -814,7 +819,7 @@ fn resolved_encoder(
     component: &MediaComponentInfo,
     description: ComponentDescription,
     choice: &EncoderChoice,
-    base: Option<(&str, &Settings)>,
+    base: Option<(&str, &Settings, bool)>,
     warnings: &mut Vec<ResolveWarning>,
 ) -> Result<ResolvedEncoder, ExportError> {
     Ok(ResolvedEncoder {
@@ -829,6 +834,48 @@ fn resolved_encoder(
     })
 }
 
+/// Adapts average-bitrate `rateControl` values (`"bitrate"` vs `"vbr"`) in an
+/// encoder-agnostic preset to the value `schema` expects when `bitrate` is
+/// gated on a single `rateControl` choice (e.g. `"vbr"` on `libx264`,
+/// `"bitrate"` on AVFoundation and Media Foundation).
+fn adapt_portable_options<'a>(
+    schema: &[SettingField],
+    base: &'a Settings,
+) -> std::borrow::Cow<'a, Settings> {
+    let Some(SettingValue::String(mode)) = base.get("rateControl") else {
+        return std::borrow::Cow::Borrowed(base);
+    };
+    if mode != "bitrate" && mode != "vbr" {
+        return std::borrow::Cow::Borrowed(base);
+    }
+    let Some(rate_control) = schema.iter().find(|field| field.key == "rateControl") else {
+        return std::borrow::Cow::Borrowed(base);
+    };
+    let SettingKind::Select { options } = &rate_control.kind else {
+        return std::borrow::Cow::Borrowed(base);
+    };
+    if options.iter().any(|option| option.value == *mode) {
+        return std::borrow::Cow::Borrowed(base);
+    }
+    let Some(bitrate) = schema.iter().find(|field| field.key == "bitrate") else {
+        return std::borrow::Cow::Borrowed(base);
+    };
+    let Some([SettingValue::String(target)]) =
+        bitrate.visible_when.get("rateControl").map(Vec::as_slice)
+    else {
+        return std::borrow::Cow::Borrowed(base);
+    };
+    if !options.iter().any(|option| option.value == *target) {
+        return std::borrow::Cow::Borrowed(base);
+    }
+    let mut adapted = base.clone();
+    adapted.insert(
+        "rateControl".to_owned(),
+        SettingValue::String(target.clone()),
+    );
+    std::borrow::Cow::Owned(adapted)
+}
+
 /// `options` read by each field's type (text) or as given (values), then
 /// validated against `description`'s schema: alone, or layered over
 /// `base`'s options (what warnings call the preset, its options) once those the schema
@@ -837,7 +884,7 @@ fn settings(
     component: &MediaComponentInfo,
     description: &ComponentDescription,
     options: &BTreeMap<String, SettingInput>,
-    base: Option<(&str, &Settings)>,
+    base: Option<(&str, &Settings, bool)>,
     warnings: &mut Vec<ResolveWarning>,
 ) -> Result<Settings, ExportError> {
     let schema = &description.settings;
@@ -856,10 +903,15 @@ fn settings(
             Ok((key.clone(), value))
         })
         .collect::<Result<Settings, ExportError>>()?;
-    let Some((name, base)) = base else {
+    let Some((name, base, portable)) = base else {
         return validate(schema, &given).map_err(invalid);
     };
-    let (kept, dropped) = sanitize(schema, base);
+    let base = if portable {
+        adapt_portable_options(schema, base)
+    } else {
+        std::borrow::Cow::Borrowed(base)
+    };
+    let (kept, dropped) = sanitize(schema, &base);
     let reference = &component.reference;
     for InvalidSetting { key, message } in dropped {
         let base = name.to_owned();
@@ -973,6 +1025,7 @@ mod tests {
                 ],
                 audio_encoders: vec![audio_encoder("aac", "AAC", "mp4a")],
                 muxers: vec![mp4(), ivf()],
+                presets: Vec::new(),
             },
         )
     }
@@ -988,6 +1041,7 @@ mod tests {
                 video_encoders: vec![video_encoder("h264", "H.264 (user)", "avc1")],
                 audio_encoders: Vec::new(),
                 muxers: vec![mp4()],
+                presets: Vec::new(),
             },
         )
     }
@@ -1003,6 +1057,7 @@ mod tests {
                 video_encoders: vec![video_encoder("h264", "H.264 (project)", "avc1")],
                 audio_encoders: vec![audio_encoder("aac", "AAC (project)", "mp4a")],
                 muxers: vec![mp4()],
+                presets: Vec::new(),
             },
         )
     }
@@ -1274,6 +1329,7 @@ mod tests {
                     trims_leading_audio: false,
                     sequence: false,
                 }],
+                presets: Vec::new(),
             },
         )
     }
@@ -2168,5 +2224,147 @@ mod tests {
             texts(&resolved.warnings),
             ["audio options are ignored: preset `web` leaves the audio out"]
         );
+    }
+
+    #[test]
+    fn plugin_mp4_presets_resolve_across_x264_and_native_h264_schemas() {
+        let rate_control_field = |mode_a: &str, mode_b: &str| SettingField {
+            key: "rateControl".into(),
+            label: "Mode".into(),
+            default: string(mode_a),
+            kind: SettingKind::Select {
+                options: vec![
+                    SelectOption {
+                        value: mode_a.into(),
+                        label: mode_a.into(),
+                    },
+                    SelectOption {
+                        value: mode_b.into(),
+                        label: "Average bitrate".into(),
+                    },
+                ],
+            },
+            description: None,
+            group: None,
+            advanced: false,
+            visible_when: BTreeMap::new(),
+        };
+        let bitrate_field = |when_mode: &str| SettingField {
+            key: "bitrate".into(),
+            label: "Bitrate".into(),
+            default: num(8_000_000.0),
+            kind: SettingKind::Number {
+                min: Some(100_000.0),
+                max: None,
+                step: None,
+                integer: true,
+                unit: Some("bit/s".into()),
+            },
+            description: None,
+            group: None,
+            advanced: false,
+            visible_when: [("rateControl".into(), vec![string(when_mode)])].into(),
+        };
+        let aac_bitrate = SettingField {
+            key: "bitrate".into(),
+            label: "Bitrate".into(),
+            default: num(192_000.0),
+            kind: SettingKind::Number {
+                min: Some(32_000.0),
+                max: Some(512_000.0),
+                step: None,
+                integer: true,
+                unit: Some("bit/s".into()),
+            },
+            description: None,
+            group: None,
+            advanced: false,
+            visible_when: BTreeMap::new(),
+        };
+
+        let expected = [
+            ("YouTube 1080p", 8_000_000.0, 384_000.0),
+            ("YouTube Shorts", 8_000_000.0, 384_000.0),
+            ("TikTok", 8_000_000.0, 192_000.0),
+            ("Instagram Reels", 8_000_000.0, 128_000.0),
+            ("niconico", 12_000_000.0, 320_000.0),
+        ];
+
+        let ffmpeg_plugin: serde_json::Value =
+            serde_json::from_str(include_str!("../../../plugins/ffmpeg/plugin.json")).unwrap();
+        let (ffmpeg_media, problems) = MediaManifest::from_json(ffmpeg_plugin["media"].clone());
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(ffmpeg_media.presets.len(), expected.len());
+
+        for (encoder_id, default_mode, bitrate_mode) in
+            [("libx264", "crf", "vbr"), ("h264", "quality", "bitrate")]
+        {
+            let registry = MediaRegistry::new(vec![plugin(
+                "ffmpeg",
+                MediaOrigin::Bundled,
+                MediaManifest {
+                    priority: 0,
+                    decoders: Vec::new(),
+                    video_encoders: vec![video_encoder(encoder_id, "H.264", "avc1")],
+                    audio_encoders: vec![audio_encoder("aac", "AAC", "mp4a")],
+                    muxers: vec![mp4()],
+                    presets: ffmpeg_media.presets.clone(),
+                },
+            )]);
+            let description = Arc::new(PluginDescription {
+                components: vec![
+                    ComponentDescription {
+                        available: true,
+                        reason: None,
+                        settings: vec![
+                            rate_control_field(default_mode, bitrate_mode),
+                            bitrate_field(bitrate_mode),
+                        ],
+                        ..ComponentDescription::unavailable(
+                            ComponentKind::VideoEncoder,
+                            encoder_id,
+                            "",
+                        )
+                    },
+                    ComponentDescription {
+                        available: true,
+                        reason: None,
+                        settings: vec![aac_bitrate.clone()],
+                        ..ComponentDescription::unavailable(ComponentKind::AudioEncoder, "aac", "")
+                    },
+                    ComponentDescription {
+                        available: true,
+                        reason: None,
+                        settings: Vec::new(),
+                        ..ComponentDescription::unavailable(ComponentKind::Muxer, "mp4", "")
+                    },
+                ],
+            });
+            for (name, video_bps, audio_bps) in expected {
+                let choice = OutputChoice {
+                    preset: Some(name.into()),
+                    ..OutputChoice::default()
+                };
+                let resolved = resolve_output(
+                    &choice,
+                    Path::new("out.mp4"),
+                    &registry,
+                    &PresetLookup::default(),
+                    &mut |_| Arc::clone(&description),
+                )
+                .unwrap();
+                assert!(
+                    resolved.warnings.is_empty(),
+                    "{encoder_id}/{name}: {:?}",
+                    resolved.warnings
+                );
+                assert_eq!(resolved.muxer.reference, reference("ffmpeg/mp4"));
+                assert_eq!(resolved.video.settings["rateControl"], string(bitrate_mode));
+                assert_eq!(resolved.video.settings["bitrate"], num(video_bps));
+                let audio = resolved.audio.as_ref().unwrap();
+                assert_eq!(audio.reference, reference("ffmpeg/aac"));
+                assert_eq!(audio.settings["bitrate"], num(audio_bps));
+            }
+        }
     }
 }

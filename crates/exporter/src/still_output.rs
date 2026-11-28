@@ -1532,6 +1532,7 @@ mod tests {
                 }],
                 audio_encoders: Vec::new(),
                 muxers: Vec::new(),
+                presets: Vec::new(),
             },
             factory: Arc::new(move |_, _| {
                 Ok(Box::new(Delayed {
@@ -1823,6 +1824,7 @@ mod tests {
                 }],
                 audio_encoders: Vec::new(),
                 muxers: vec![muxer("frames", true), muxer("single", false)],
+                presets: Vec::new(),
             },
             factory: Arc::new(move |_, _| {
                 Ok(Box::new(FakeImage {

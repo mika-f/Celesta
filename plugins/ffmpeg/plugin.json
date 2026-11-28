@@ -38,6 +38,38 @@
       { "id": "webm", "name": "WebM", "extensions": ["webm"],
         "video": ["vp09", "av01"], "audio": ["opus"],
         "defaultVideo": "vp09", "defaultAudio": "opus" }
+    ],
+    "presets": [
+      {
+        "name": "YouTube 1080p",
+        "muxer": "ffmpeg/mp4",
+        "video": { "options": { "rateControl": "bitrate", "bitrate": 8000000 } },
+        "audio": { "options": { "bitrate": 384000 } }
+      },
+      {
+        "name": "YouTube Shorts",
+        "muxer": "ffmpeg/mp4",
+        "video": { "options": { "rateControl": "bitrate", "bitrate": 8000000 } },
+        "audio": { "options": { "bitrate": 384000 } }
+      },
+      {
+        "name": "TikTok",
+        "muxer": "ffmpeg/mp4",
+        "video": { "options": { "rateControl": "bitrate", "bitrate": 8000000 } },
+        "audio": { "options": { "bitrate": 192000 } }
+      },
+      {
+        "name": "Instagram Reels",
+        "muxer": "ffmpeg/mp4",
+        "video": { "options": { "rateControl": "bitrate", "bitrate": 8000000 } },
+        "audio": { "options": { "bitrate": 128000 } }
+      },
+      {
+        "name": "niconico",
+        "muxer": "ffmpeg/mp4",
+        "video": { "options": { "rateControl": "bitrate", "bitrate": 12000000 } },
+        "audio": { "options": { "bitrate": 320000 } }
+      }
     ]
   },
   "licenses": ["LICENSE-LGPL-2.1", "../../LICENSE-MIT", "../../LICENSE-APACHE", "../../packaging/FFMPEG-SOURCE.md"]

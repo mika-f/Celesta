@@ -107,6 +107,7 @@ pub fn manifest() -> MediaManifest {
                 ..muxer(GIF_FILE, "GIF", false)
             },
         ],
+        presets: Vec::new(),
     }
 }
 

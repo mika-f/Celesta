@@ -40,7 +40,8 @@ pub use media::{media_registry, use_installed_media, use_media, with_builtin};
 pub use options::{AudioChoice, EncoderChoice, ExportOptions, OutputChoice, SettingInput};
 pub use presets::{
     FoundPreset, NoAudio, PRESETS_FILE, PRESETS_VERSION, Preset, PresetAudio, PresetEncoder,
-    PresetLookup, PresetOutput, PresetSource, PresetsFile, update_presets, user_presets_path,
+    PresetLookup, PresetOutput, PresetSource, PresetsFile, find_plugin_preset, plugin_presets,
+    update_presets, user_presets_path,
 };
 pub use range::ExportRange;
 pub use react::{CompanionProject, ReactRuntimeOptions};

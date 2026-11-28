@@ -1830,6 +1830,7 @@ mod tests {
                 video_encoders: vec![video_entry(None)],
                 audio_encoders: vec![audio_entry()],
                 muxers: vec![muxer_entry(true, trims)],
+                presets: Vec::new(),
             },
             vec![
                 available(ComponentKind::VideoEncoder, "video"),
