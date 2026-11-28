@@ -33,7 +33,7 @@ windows = { version = "0.62.2", features = [
     "Win32_System_Ole",
     "Win32_System_Variant",
 ] }
-windows-core = "0.62.2"
+windows-core = "0.100.0"
 
 # The FFmpeg plugin decodes and muxes what the encoders give, in the tests.
 [target.'cfg(windows)'.dev-dependencies]
