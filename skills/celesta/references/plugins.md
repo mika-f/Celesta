@@ -329,7 +329,8 @@ import { Vrm } from '@celesta-plugin/vrm';
   `lipSync` (a `LipSyncTrack`) with `mouthSmoothing` (frames, default 2)
   when `mouth` is absent. Either sets all five vowels (the rest 0), so a
   motion's vowels never leak through a closed or silent mouth; with
-  neither, a motion's vowels play. `blink`: blink timing, `false` for none.
+  neither, a motion's vowels play. `blink`: automatic blink timing. Set
+  `false` to disable automatic blinks without overriding a clip's blinks.
 - `lookAt`: `'camera'`, `[x, y, z]` in the avatar's space (metres, +Y up,
   facing +Z, its left at +X), or `{ yaw, pitch }` in degrees (yaw
   positive to the avatar's right, pitch positive up).
@@ -374,6 +375,10 @@ import { Vrm } from '@celesta-plugin/vrm';
 ### Motion, constraints, and spring bones
 
 ```tsx
+<Vrm src="./avatar.vrm" motion="./wave.vrma" />
+```
+
+```tsx
 <Vrm
   src="./avatar.vrm"
   motions={[
@@ -394,6 +399,10 @@ import { Vrm } from '@celesta-plugin/vrm';
 />
 ```
 
+- `motion`: one `.vrma` asset, played once from local frame 0. It is
+  shorthand for `motions={[{ src: './wave.vrma' }]}` and holds the ending
+  pose. Giving both props throws. Set `blink={false}` to let a clip's blink
+  track play instead of the automatic blink.
 - `motions`: `[{ src, from?, loop?, fadeIn? }]`, `src` a `.vrma`
   (`VRMC_vrm_animation` 1.0); `from` and `fadeIn` in frames of the
   enclosing sequence (default 0). Retargeted as UniVRM does: each bone's
@@ -418,7 +427,7 @@ import { Vrm } from '@celesta-plugin/vrm';
   (hair, skirts) step on a fixed 60 Hz clock from the layer's start, so
   any frame is the same however it is reached: scrubbed, played, or
   exported at 30 or 60 fps.
-- Keep `motions` and `tracks` constant across a layer's frames. The
+- Keep `motion`, `motions` and `tracks` constant across a layer's frames. The
   plugin keeps the springs' progress per set of them; data computed from
   the frame makes every frame step the springs from 0 s again. Per-frame
   values go in `expressions`, `mouth`, `lookAt` (the springs read none).

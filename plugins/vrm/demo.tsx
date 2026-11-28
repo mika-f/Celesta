@@ -1,5 +1,5 @@
-// The VRM plugin's demo: Seed-san from the bust up, relaxed, playing a VRM
-// animation on a loop, nodding once, looking at the camera and mouthing the
+// The VRM plugin's demo: Seed-san in full view, relaxed, playing a VRM
+// animation once, nodding once, looking at the camera and mouthing the
 // vowels. Neither Seed-san nor the animation is in the repository, and the
 // demo needs both: see README.md for where to download `Seed-san.vrm` and
 // `test.vrma` into plugins/vrm/assets/. Build the plugin and the codec plugin
@@ -19,12 +19,12 @@ function Avatar() {
   return (
     <Vrm
       src="./assets/Seed-san.vrm"
-      camera="bust"
+      camera="full"
       lookAt="camera"
       expressions={{ relaxed: 0.3 }}
       mouth={mouth}
       // Needs ./assets/test.vrma (see README.md); the demo does not run without it.
-      motions={[{ src: './assets/test.vrma', loop: true }]}
+      motion="./assets/test.vrma"
       // A nod from frame 60 to 90, on top of the animation: a negative
       // pitch looks down.
       tracks={{
@@ -42,7 +42,7 @@ function Avatar() {
 
 export default function Root() {
   return (
-    <Composition width={1920} height={1080} fps={30} durationInFrames={180}>
+    <Composition width={1920} height={1080} fps={30} durationInFrames={120}>
       <Rect width={1920} height={1080} fill="#26364a" />
       <Avatar />
     </Composition>
