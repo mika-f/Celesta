@@ -313,6 +313,10 @@ which the user copies into a plugin folder, or name `plugins/dist` with
 plugin with it (`node scripts/plugins/build.mts plugins/vrm plugins/ffmpeg`),
 so `--plugin-dir plugins/dist` names both.
 
+If generating tangents for an MToon normal map exceeds the loading limits,
+the avatar still opens with default tangents on the affected mesh primitive.
+The load warning names that primitive; its normal-map shading may differ.
+
 ```tsx
 import { Vrm } from '@celesta-plugin/vrm';
 

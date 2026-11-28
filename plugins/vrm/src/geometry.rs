@@ -15,6 +15,7 @@
 //! time in proportion to their number.
 
 use crate::document::{Document, LoadError};
+use crate::notices::Warnings;
 use celesta_plugin::{Geometry, MorphTarget};
 use glam::{Mat4, Vec3};
 use gltf::accessor::{Accessor, DataType, Dimensions, Item, Iter};
@@ -26,8 +27,17 @@ use std::fmt;
 use std::mem::size_of;
 use std::rc::Rc;
 
-/// The tangent a vertex gets when MikkTSpace has none for it.
+/// The tangent a vertex gets when MikkTSpace is skipped or has none for it.
 const DEFAULT_TANGENT: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
+
+/// MikkTSpace 0.3.0's five main buffers (304 B per triangle on 64-bit)
+/// plus edges (36 B) and hash entries (12 B), rounded up. Its fixed hash
+/// arrays and face-group scratch are counted separately.
+const MIKK_BYTES_PER_TRIANGLE: u64 = 384;
+const MAX_MIKK_TRIANGLES: usize = 1 << 17;
+const MAX_MIKK_CORNERS_AT_POSITION: u64 = 256;
+const MAX_MIKK_DEGENERATE_COMPARISONS: u64 = 1 << 24;
+pub(crate) const DEFAULT_TANGENT_WARNINGS: &str = "primitives using default tangents";
 
 /// The most a model's geometry may take, every primitive's streams, morph
 /// targets, and indices together: Celesta's whole scene buffer budget
@@ -134,7 +144,8 @@ pub(crate) fn draws_triangles(primitive: &gltf::Primitive) -> bool {
 /// and `WEIGHTS_0`; `needs_tangents` (the material has a `normalTexture`)
 /// adds tangents. The geometry takes at most `budget` bytes
 /// ([`geometry_bytes`]): a primitive that would take more is refused before
-/// its streams are made.
+/// its streams are made. MikkTSpace scratch must fit in the room left over,
+/// or the geometry gets default tangents and adds a warning.
 pub(crate) fn primitive_geometry<'d>(
     accessors: &Accessors<'d>,
     mesh: gltf::Mesh<'d>,
@@ -142,6 +153,7 @@ pub(crate) fn primitive_geometry<'d>(
     skin: Option<gltf::Skin<'d>>,
     needs_tangents: bool,
     budget: u64,
+    tangent_warnings: &mut Warnings,
 ) -> Result<Option<Geometry>, LoadError> {
     let mode = primitive.mode();
     if !draws_triangles(&primitive) {
@@ -207,12 +219,12 @@ pub(crate) fn primitive_geometry<'d>(
     // The vertices the triangles use, in their order in the file. Sorted
     // rather than marked in a table of every vertex, so a primitive costs
     // its own triangles, not the size of an accessor it shares.
-    let mut kept: Vec<usize> = triangles.iter().map(|&index| index as usize).collect();
+    let mut kept = triangles.clone();
     kept.sort_unstable();
     kept.dedup();
     let indices: Vec<u32> = triangles
         .iter()
-        .map(|&index| kept.partition_point(|&vertex| vertex < index as usize) as u32)
+        .map(|&index| kept.partition_point(|&vertex| vertex < index) as u32)
         .collect();
     drop(triangles);
 
@@ -266,7 +278,7 @@ pub(crate) fn primitive_geometry<'d>(
     // The kept vertices' values, each finite: a NaN or infinity the file
     // holds would otherwise reach Celesta and draw as NaN.
     let compact = |stream: &[[f32; 3]], what: &str| -> Result<Vec<[f32; 3]>, LoadError> {
-        let kept: Vec<[f32; 3]> = kept.iter().map(|&vertex| stream[vertex]).collect();
+        let kept: Vec<[f32; 3]> = kept.iter().map(|&vertex| stream[vertex as usize]).collect();
         finite(at, what, &kept)?;
         Ok(kept)
     };
@@ -279,7 +291,7 @@ pub(crate) fn primitive_geometry<'d>(
     let uvs: Vec<[f32; 2]> = match primitive.get(&Semantic::TexCoords(0)) {
         Some(uvs) => {
             let uvs = streams.uvs(&uvs, vertices)?;
-            let uvs: Vec<[f32; 2]> = kept.iter().map(|&vertex| uvs[vertex]).collect();
+            let uvs: Vec<[f32; 2]> = kept.iter().map(|&vertex| uvs[vertex as usize]).collect();
             finite(at, "TEXCOORD_0", &uvs)?;
             uvs
         }
@@ -310,7 +322,18 @@ pub(crate) fn primitive_geometry<'d>(
         targets.push(MorphTarget { positions, normals });
     }
 
-    let tangents = needs_tangents.then(|| tangents(&positions, &normals, &uvs, &indices));
+    drop(kept);
+    let tangents = needs_tangents.then(|| {
+        tangents(
+            &positions,
+            &normals,
+            &uvs,
+            &indices,
+            budget - bytes,
+            at,
+            tangent_warnings,
+        )
+    });
     let geometry = Geometry {
         positions,
         normals,
@@ -561,7 +584,7 @@ impl<'d> Streams<'_, 'd> {
         primitive: &gltf::Primitive<'d>,
         skin: &gltf::Skin<'d>,
         count: usize,
-        kept: &[usize],
+        kept: &[u32],
     ) -> Result<(Option<Vec<[u16; 4]>>, Option<Vec<[f32; 4]>>), LoadError> {
         let (joints, weights) = match (
             primitive.get(&Semantic::Joints(0)),
@@ -615,7 +638,7 @@ impl<'d> Streams<'_, 'd> {
         let joint_count = skin.joints().len();
         let mut kept_joints = Vec::with_capacity(kept.len());
         let mut kept_weights = Vec::with_capacity(kept.len());
-        for &vertex in kept {
+        for vertex in kept.iter().map(|&vertex| vertex as usize) {
             let weight = weights[vertex];
             finite(&self.at, "WEIGHTS_0", &[weight])?;
             let (joint, weight) =
@@ -889,6 +912,62 @@ fn computed_normals(positions: &[[f32; 3]], indices: &[u32]) -> Vec<[f32; 3]> {
         .collect()
 }
 
+fn check_tangent_work(
+    positions: &[[f32; 3]],
+    indices: &[u32],
+    remaining: u64,
+) -> Result<(), String> {
+    let triangles = indices.len() / 3;
+    if triangles > MAX_MIKK_TRIANGLES {
+        return Err(format!(
+            "{triangles} triangles exceed the MikkTSpace limit of {MAX_MIKK_TRIANGLES}"
+        ));
+    }
+    let check_bytes = |bytes| {
+        if bytes > remaining {
+            Err(format!(
+                "MikkTSpace needs an estimated {bytes} bytes of scratch, but the model has {remaining} bytes left"
+            ))
+        } else {
+            Ok(())
+        }
+    };
+    let base_bytes = MIKK_BYTES_PER_TRIANGLE * triangles as u64 + 24 * 1024;
+    check_bytes(base_bytes)?;
+
+    // MikkTSpace welds some vertices at the same position. Counting every
+    // corner there also bounds groups whose vertices started at distinct indices.
+    let mut corners = HashMap::new();
+    let mut most = 0;
+    let mut degenerate = 0;
+    for triangle in indices.as_chunks::<3>().0 {
+        let [a, b, c] = triangle.map(|index| positions[index as usize]);
+        degenerate += u64::from(a == b || a == c || b == c);
+        for position in [a, b, c] {
+            let key = position.map(|v| if v == 0.0 { 0 } else { v.to_bits() });
+            let count = corners.entry(key).or_insert(0);
+            *count += 1;
+            if *count > MAX_MIKK_CORNERS_AT_POSITION {
+                return Err(format!(
+                    "more than {MAX_MIKK_CORNERS_AT_POSITION} triangle corners share one position"
+                ));
+            }
+            most = most.max(*count);
+        }
+    }
+    // MikkTSpace's DegenEpilogue can search every non-degenerate corner
+    // for each degenerate one. Welding preserves the compared positions.
+    let comparisons = 9 * degenerate * (triangles as u64 - degenerate);
+    if comparisons > MAX_MIKK_DEGENERATE_COMPARISONS {
+        return Err(format!(
+            "MikkTSpace degenerate-face recovery could take {comparisons} comparisons, more than {MAX_MIKK_DEGENERATE_COMPARISONS}"
+        ));
+    }
+    // GenerateTSpaces keeps arrays sized to the largest group and up to
+    // one clone of its i32 member array per face, plus a temporary clone.
+    check_bytes(base_bytes + 80 * most + 4 * most * (most + 1))
+}
+
 /// MikkTSpace tangents for the triangles of `indices`, as Unity imports
 /// them for UniVRM: a vertex takes the last tangent written for it. A
 /// primitive whose UVs span no area, or with a stream that is not finite,
@@ -899,14 +978,17 @@ fn tangents(
     normals: &[[f32; 3]],
     uvs: &[[f32; 2]],
     indices: &[u32],
+    remaining: u64,
+    at: &At<'_, '_>,
+    warnings: &mut Warnings,
 ) -> Vec<[f32; 4]> {
-    let fallback = vec![DEFAULT_TANGENT; positions.len()];
+    let fallback = || vec![DEFAULT_TANGENT; positions.len()];
     let finite = |values: &[f32]| values.iter().all(|value| value.is_finite());
     if !(finite(positions.as_flattened())
         && finite(normals.as_flattened())
         && finite(uvs.as_flattened()))
     {
-        return fallback;
+        return fallback();
     }
     let flat = indices.as_chunks::<3>().0.iter().all(|triangle| {
         let [a, b, c] = triangle.map(|index| uvs[index as usize]);
@@ -914,7 +996,11 @@ fn tangents(
         u[0] * v[1] - u[1] * v[0] == 0.0
     });
     if flat {
-        return fallback;
+        return fallback();
+    }
+    if let Err(reason) = check_tangent_work(positions, indices, remaining) {
+        warnings.push(|| format!("{at} uses default tangents: {reason}"));
+        return fallback();
     }
 
     let mut mikk = Mikk {
@@ -924,22 +1010,21 @@ fn tangents(
         indices,
         tangents: vec![[f32::NAN; 4]; positions.len()],
     };
-    if !mikktspace::generate_tangents(&mut mikk) {
-        return fallback;
-    }
-    mikk.tangents
-        .into_iter()
-        .map(|[x, y, z, w]| {
-            let tangent = Vec3::new(x, y, z);
-            match tangent.try_normalize() {
+    if mikktspace::generate_tangents(&mut mikk) {
+        for tangent in &mut mikk.tangents {
+            let [x, y, z, w] = *tangent;
+            *tangent = match Vec3::new(x, y, z).try_normalize() {
                 Some(unit) if w.is_finite() => {
                     let [x, y, z] = unit.to_array();
                     [x, y, z, if w < 0.0 { -1.0 } else { 1.0 }]
                 }
                 _ => DEFAULT_TANGENT,
-            }
-        })
-        .collect()
+            };
+        }
+    } else {
+        mikk.tangents.fill(DEFAULT_TANGENT);
+    }
+    mikk.tangents
 }
 
 /// A primitive's triangles as MikkTSpace reads them. glTF's `v` counts
@@ -1033,6 +1118,7 @@ mod tests {
                     skin.clone(),
                     needs,
                     budget,
+                    &mut Warnings::new(DEFAULT_TANGENT_WARNINGS),
                 )?;
                 Ok(read)
             })
@@ -1101,6 +1187,7 @@ mod tests {
                 skin.clone(),
                 false,
                 GEOMETRY_BUDGET,
+                &mut Warnings::new(DEFAULT_TANGENT_WARNINGS),
             )
             .unwrap();
         }
@@ -1178,8 +1265,16 @@ mod tests {
             let mesh = document.gltf.meshes().next().unwrap();
             let primitive = mesh.primitives().next().unwrap();
             let skin = document.gltf.skins().next();
-            primitive_geometry(&accessors, mesh.clone(), primitive, skin, true, budget)
-                .map(Option::unwrap)
+            primitive_geometry(
+                &accessors,
+                mesh.clone(),
+                primitive,
+                skin,
+                true,
+                budget,
+                &mut Warnings::new(DEFAULT_TANGENT_WARNINGS),
+            )
+            .map(Option::unwrap)
         };
         let cube = read(GEOMETRY_BUDGET).unwrap();
         // 8 vertices: positions, normals 96 bytes each; UVs and joints 64;
@@ -1188,7 +1283,9 @@ mod tests {
             geometry_bytes(&cube),
             96 + 96 + 64 + 128 + 64 + 128 + 288 + 144
         );
-        assert_eq!(read(1008).unwrap(), cube);
+        let mut fallback = cube;
+        fallback.tangents = Some(vec![DEFAULT_TANGENT; fallback.positions.len()]);
+        assert_eq!(read(1008).unwrap(), fallback);
         let message = match read(1007) {
             Ok(_) => panic!("the primitive was made"),
             Err(error) => error.to_string(),
@@ -1198,6 +1295,182 @@ mod tests {
                 && message.contains("1007 left"),
             "{message}"
         );
+    }
+
+    fn read_normal_mapped(
+        document: &Document,
+        mesh: usize,
+        budget: u64,
+    ) -> (Geometry, Vec<celesta_plugin::Notice>) {
+        let accessors = Accessors::with_budget(document, budget);
+        let mesh = document.gltf.meshes().nth(mesh).unwrap();
+        let primitive = mesh.primitives().next().unwrap();
+        let material = primitive.material();
+        assert!(material.normal_texture().is_some());
+        assert!(document.mtoon[material.index().unwrap()].is_some());
+        let mut warnings = Warnings::new(DEFAULT_TANGENT_WARNINGS);
+        let geometry = primitive_geometry(
+            &accessors,
+            mesh.clone(),
+            primitive,
+            None,
+            true,
+            budget,
+            &mut warnings,
+        )
+        .unwrap()
+        .unwrap();
+        let mut notices = Vec::new();
+        warnings.finish(&mut notices);
+        (geometry, notices)
+    }
+
+    #[test]
+    fn tangents_fall_back_when_the_geometry_fits_but_mikk_scratch_does_not() {
+        let document = parse(&SyntheticVrm::avatar().glb());
+        let (mut expected, notices) = read_normal_mapped(&document, 0, GEOMETRY_BUDGET);
+        assert!(notices.is_empty());
+        let defaults = vec![DEFAULT_TANGENT; expected.positions.len()];
+        assert_ne!(expected.tangents.as_ref(), Some(&defaults));
+        let budget = 1024;
+        let remaining = budget - geometry_bytes(&expected);
+        expected.tangents = Some(defaults);
+
+        let (geometry, notices) = read_normal_mapped(&document, 0, budget);
+        assert_eq!(geometry, expected);
+        let [warning] = notices.as_slice() else {
+            panic!("expected one warning, got {notices:?}");
+        };
+        assert_eq!(warning.level, celesta_plugin::NoticeLevel::Warning);
+        assert!(
+            warning
+                .message
+                .starts_with("mesh \"Body\" primitive 0 uses default tangents:")
+        );
+        assert!(warning.message.contains(&format!(
+            "bytes of scratch, but the model has {remaining} bytes left"
+        )));
+    }
+
+    #[test]
+    fn tangents_fall_back_for_too_many_triangles_around_one_vertex() {
+        use base64::Engine as _;
+
+        let triangles = MAX_MIKK_CORNERS_AT_POSITION as usize + 1;
+        let mut positions = vec![[0.0, 0.0, 0.0]];
+        positions.extend((0..=triangles).map(|i| {
+            let a = i as f32 * std::f32::consts::TAU / (triangles + 1) as f32;
+            [a.cos(), a.sin(), 0.0]
+        }));
+        let count = positions.len();
+        let bytes: Vec<u8> = positions
+            .iter()
+            .flatten()
+            .copied()
+            .chain(positions.iter().flat_map(|&[x, y, _]| [y, x]))
+            .flat_map(f32::to_le_bytes)
+            .collect();
+        let uri = format!(
+            "data:application/octet-stream;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(&bytes)
+        );
+        let read = |count| {
+            let document = parse(&SyntheticVrm::avatar().glb_with(|root| {
+                let buffers = root["buffers"].as_array_mut().unwrap();
+                let buffer = buffers.len();
+                buffers.push(json!({ "byteLength": bytes.len(), "uri": uri }));
+                let views = root["bufferViews"].as_array_mut().unwrap();
+                let position_view = views.len();
+                let uv_offset = positions.len() * 12;
+                views.push(json!({ "buffer": buffer, "byteLength": uv_offset }));
+                views.push(json!({
+                    "buffer": buffer, "byteOffset": uv_offset, "byteLength": positions.len() * 8,
+                }));
+                let accessors = root["accessors"].as_array_mut().unwrap();
+                let position = accessors.len();
+                accessors.push(json!({
+                    "bufferView": position_view, "componentType": 5126, "count": count,
+                    "type": "VEC3", "min": [-1.0, -1.0, 0.0], "max": [1.0, 1.0, 0.0],
+                }));
+                accessors.push(json!({
+                    "bufferView": position_view + 1, "componentType": 5126,
+                    "count": count, "type": "VEC2",
+                }));
+                root["meshes"][1]["primitives"][0] = json!({
+                    "attributes": { "POSITION": position, "TEXCOORD_0": position + 1 },
+                    "mode": 6, "material": 0,
+                });
+            }));
+            read_normal_mapped(&document, 1, GEOMETRY_BUDGET)
+        };
+
+        let (within, notices) = read(count - 1);
+        assert!(notices.is_empty());
+        assert_ne!(within.tangents.unwrap()[0], DEFAULT_TANGENT);
+        let (fan, notices) = read(count);
+        assert_eq!(fan.indices.len(), triangles * 3);
+        assert_eq!(fan.tangents.unwrap(), vec![DEFAULT_TANGENT; count]);
+        let [warning] = notices.as_slice() else {
+            panic!("expected one warning, got {notices:?}");
+        };
+        assert_eq!(warning.level, celesta_plugin::NoticeLevel::Warning);
+        assert_eq!(
+            warning.message,
+            format!(
+                "mesh \"FirstPersonOnly\" primitive 0 uses default tangents: more than {MAX_MIKK_CORNERS_AT_POSITION} triangle corners share one position"
+            )
+        );
+    }
+
+    #[test]
+    fn tangents_fall_back_when_degenerate_recovery_costs_too_much() {
+        let document = parse(&SyntheticVrm::avatar().glb());
+        let mesh = document.gltf.meshes().next().unwrap();
+        let at = At::Primitive {
+            mesh: &mesh,
+            primitive: 0,
+        };
+
+        let run = |half: u32| {
+            let positions: Vec<_> = (0..2 * half)
+                .flat_map(|i| {
+                    let x = 2.0 * i as f32;
+                    // Each degenerate face has two distinct vertices
+                    // at the same position, neither in a good face.
+                    let b = if i < half { x } else { x + 1.0 };
+                    [[x, 0.0, 0.0], [b, 0.0, 0.0], [x, 1.0, 0.0]]
+                })
+                .collect();
+            let normals = vec![[0.0, 0.0, 1.0]; positions.len()];
+            let uvs = [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0]].repeat(2 * half as usize);
+            let indices: Vec<_> = (0..6 * half).collect();
+            let mut warnings = Warnings::new(DEFAULT_TANGENT_WARNINGS);
+            let tangents = tangents(
+                &positions,
+                &normals,
+                &uvs,
+                &indices,
+                GEOMETRY_BUDGET,
+                &at,
+                &mut warnings,
+            );
+            let mut notices = Vec::new();
+            warnings.finish(&mut notices);
+            (tangents, notices)
+        };
+
+        let (within, notices) = run(1);
+        assert!(notices.is_empty());
+        assert_ne!(within[3], DEFAULT_TANGENT);
+        let (over, notices) = run(1400);
+        assert!(over.iter().all(|&value| value == DEFAULT_TANGENT));
+        let [warning] = notices.as_slice() else {
+            panic!("expected one warning, got {notices:?}");
+        };
+        assert_eq!(warning.level, celesta_plugin::NoticeLevel::Warning);
+        assert!(warning.message.starts_with(
+            "mesh \"Body\" primitive 0 uses default tangents: MikkTSpace degenerate-face recovery"
+        ));
     }
 
     fn body(vrm: &SyntheticVrm) -> Vec<Geometry> {
@@ -1333,7 +1606,15 @@ mod tests {
             let mesh = document.gltf.meshes().next().unwrap();
             let hair = mesh.primitives().nth(1).unwrap();
             let skin = document.gltf.skins().next();
-            match primitive_geometry(&accessors, mesh.clone(), hair, skin, false, budget) {
+            match primitive_geometry(
+                &accessors,
+                mesh.clone(),
+                hair,
+                skin,
+                false,
+                budget,
+                &mut Warnings::new(DEFAULT_TANGENT_WARNINGS),
+            ) {
                 Ok(_) => panic!("the strip was made"),
                 Err(error) => error.to_string(),
             }
@@ -1383,7 +1664,15 @@ mod tests {
         let primitive = mesh.primitives().next().unwrap();
         let skin = document.gltf.skins().next();
         let accessors = Accessors::new(&document);
-        primitive_geometry(&accessors, mesh.clone(), primitive, skin, false, budget)
+        primitive_geometry(
+            &accessors,
+            mesh.clone(),
+            primitive,
+            skin,
+            false,
+            budget,
+            &mut Warnings::new(DEFAULT_TANGENT_WARNINGS),
+        )
     }
 
     #[test]
@@ -1454,10 +1743,11 @@ mod tests {
 
     #[test]
     fn flat_uvs_give_finite_tangents() {
-        let cube = &body(&SyntheticVrm {
+        let avatar = SyntheticVrm {
             flat_uvs: true,
             ..SyntheticVrm::avatar()
-        })[0];
+        };
+        let cube = &body(&avatar)[0];
         let tangents = cube.tangents.as_ref().unwrap();
         assert_eq!(tangents.len(), 8);
         assert!(
@@ -1465,6 +1755,11 @@ mod tests {
                 .iter()
                 .all(|&tangent| tangent == [1.0, 0.0, 0.0, 1.0])
         );
+
+        let document = parse(&avatar.glb());
+        let (cube, notices) = read_normal_mapped(&document, 0, 1024);
+        assert_eq!(cube.tangents.as_ref().unwrap(), tangents);
+        assert!(notices.is_empty(), "{notices:?}");
     }
 
     #[test]
