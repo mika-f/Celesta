@@ -840,7 +840,7 @@ importers:
     dependencies:
       '@twinkleplop/bash':
         specifier: ^0.1.7
-        version: 0.1.7
+        version: 0.1.10
       '@twinkleplop/core':
         specifier: 0.3.1
         version: 0.3.1
@@ -2296,11 +2296,14 @@ packages:
     cpu: [arm64]
     os: [win32]
 
-  '@twinkleplop/bash@0.1.7':
-    resolution: {integrity: sha512-/cBFzqKcfffT6aaWlSeUhjoXJS3VhG4Tz1sg1oJILooVlbD3WX2Ke+zRWFLS+GmoXrl8hlQF/ZsMNmila41/Jw==}
+  '@twinkleplop/bash@0.1.10':
+    resolution: {integrity: sha512-l07rw+wyWy91QpPWiKY/80S/uEQH/GsglexfJv0rdYxA93OImWu/hnx/sIJkFyGN2arsz58GiAw7U40jxHm53Q==}
 
   '@twinkleplop/core@0.3.1':
     resolution: {integrity: sha512-fMbce7NcJlVROsyI34tz3DCWkAWRWLRlBNCbgwz36mm6yoEO09eyafi8JRN5HJGQIzMr0qjXQ3t3asc7MFSh8Q==}
+
+  '@twinkleplop/core@0.4.1':
+    resolution: {integrity: sha512-NOErtBHmvj2HHQZut5auMTiPRNQO5/FO6IUtVunoRiaPV6bSmO+DYUPwo2AJck6NnaH9/iteD9uk8Pt1Liso8w==}
 
   '@twinkleplop/css@0.1.7':
     resolution: {integrity: sha512-eznre7EgC0IBE3/jqAUKXG2S4iWLczOSAxwLnknS+9BQQGuD82u2A2rCok94E+nMpjkeshhbSvnQxDSEo8YpUA==}
@@ -3991,11 +3994,13 @@ snapshots:
   '@turbo/windows-arm64@2.11.11':
     optional: true
 
-  '@twinkleplop/bash@0.1.7':
+  '@twinkleplop/bash@0.1.10':
     dependencies:
-      '@twinkleplop/core': 0.3.1
+      '@twinkleplop/core': 0.4.1
 
   '@twinkleplop/core@0.3.1': {}
+
+  '@twinkleplop/core@0.4.1': {}
 
   '@twinkleplop/css@0.1.7':
     dependencies:
