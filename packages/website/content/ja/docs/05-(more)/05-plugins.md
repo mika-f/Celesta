@@ -326,7 +326,7 @@ CPU アーキテクチャに合う ZIP を選びます。
 | `ffmpeg-x264` | `ffmpeg-x264/libx264`（GPL） | libx264 による H.264。Linux の MP4 に必要 |
 
 ファイル名は `Celesta-plugin-ffmpeg-x264-<version>-<os>-<arch>.zip` です
-（例：`Celesta-plugin-ffmpeg-x264-0.9.0-macos-arm64.zip`）。アプリと同じリリースを
+（例：`Celesta-plugin-ffmpeg-x264-0.10.0-macos-arm64.zip`）。アプリと同じリリースを
 使ってください。ZIP にはマニフェスト、実行ファイル、必要なネイティブライブラリ、
 ライセンス文書をまとめた `ffmpeg-x264` フォルダーが 1 つ入ります。
 FFmpeg を別途インストールする必要はありません。
@@ -358,8 +358,8 @@ WebM にはダウンロードは不要です。H.264 のエンコーダーがな
 {
   "id": "ffmpeg",
   "name": "FFmpeg",
-  "version": "0.9.0",
-  "celesta": ">=0.9.0, <0.10.0",
+  "version": "0.10.0",
+  "celesta": ">=0.10.0, <0.11.0",
   "protocol": 2,
   "roles": ["media"],
   "executable": { "macos-aarch64": "bin/celesta-codec-ffmpeg" },
@@ -442,6 +442,8 @@ cargo run -p celesta-exporter -- --react examples/plugins/turntable/demo.tsx tur
 ```
 
 2 つ目の `--plugin-dir` で、エクスポーターにメディアプラグインを渡します。メディアプラグインのビルドには FFmpeg の開発ライブラリが必要です（[ソースからのビルド](/ja/docs/build-from-source/)をご覧ください）。
+
+プラグインは、独自のリポジトリに置くこともできます。プログラムは crates.io の `celesta-plugin` クレートに依存します（`celesta-plugin = "0.10"`）。このクレートは Celesta 本体を何もリンクしません。一方、モジュールのビルドには、クローンした Celesta のリポジトリが必要です。`@celesta.studio/*` のパッケージが npm にないためで、クローンしたリポジトリの `node scripts/plugins/build.mts <プラグインのフォルダー>` でビルドします。このスクリプトがプラグインに求めることは、サンプルの [`README.md`](https://github.com/mika-f/Celesta/blob/main/examples/plugins/README.md) にあります。
 
 ## VRM プラグイン
 
@@ -567,7 +569,7 @@ export default function Root() {
 
 `name` はモジュールが export するコンポーネント名で、英大文字で始まり、英字・数字・`_` が続きます。`label` はメニューに表示する名前です（省略すると `name`）。`src`（`"image"` または `"video"`）があると Image と同じように追加され、アプリはファイルを尋ねて `src`・`x`・`y`・`width` を書きます。`"src": "model"` は、3D モデルのようにプラグインが自分で読むファイルのためのものです。受け取るファイルの種類を `extensions` に（英小文字と数字、ドットなし、重複なし。`["glb"]` など）、レイヤーの幅÷高さを `aspect` に（1/16384〜16384。省略できません）書くと、アプリはその縦横比で枠を描きます。アプリはその種類のファイルだけを受け付け、Image と同じく `src`・`x`・`y`・`width` を書きます。`height` は書かないので、コンポーネント自身の既定の縦横比を `aspect` と同じにしてください。違うと、描いた枠とレイヤーが一致しません。`src` がなければ四角形として描かれ、`x`・`y`・`width`・`height` を書きます。`props` はそのあとに書かれる props です。名前には英字・数字・`_` を使い、値は文字列・数値・真偽値のいずれかで、描いた範囲から書く props と同じ名前は使えません。`components` を持つマニフェストには `module` も必要です。
 
-マニフェストには必ず `celesta` を書き、プラグインが動く Celesta のバージョンを `">=0.9.0, <0.10.0"` のような Cargo のバージョン範囲で示します。この範囲は、プログラムがプロトコルの上に頼る機能（`protocol` はメッセージの形式だけを表します。コンテンツプラグインは `1` で、3D シーンのような機能が加わっても `1` のままです。[メディアプラグイン](#メディアプラグイン)は `2` です）と、モジュールが使う `react` や `@celesta.studio/*` の API の両方を表します。これらの API は Celesta と同じバージョンで同梱されます。`0.10.0-beta.1` のような Celesta のプレリリースは、範囲の端が同じバージョンのプレリリースを指すとき（`">=0.10.0-beta.1, <0.11.0"` など）だけ範囲に入ります。リポジトリの `scripts/plugins/build.mts` は、ビルドに使った Celesta から、その次のマイナーリリース（1.0 より前）またはメジャーリリースの手前までの範囲を自動で書きます。
+マニフェストには必ず `celesta` を書き、プラグインが動く Celesta のバージョンを `">=0.10.0, <0.11.0"` のような Cargo のバージョン範囲で示します。この範囲は、プログラムがプロトコルの上に頼る機能（`protocol` はメッセージの形式だけを表します。コンテンツプラグインは `1` で、3D シーンのような機能が加わっても `1` のままです。[メディアプラグイン](#メディアプラグイン)は `2` です）と、モジュールが使う `react` や `@celesta.studio/*` の API の両方を表します。これらの API は Celesta と同じバージョンで同梱されます。`0.10.0-beta.1` のような Celesta のプレリリースは、範囲の端が同じバージョンのプレリリースを指すとき（`">=0.10.0-beta.1, <0.11.0"` など）だけ範囲に入ります。リポジトリの `scripts/plugins/build.mts` は、ビルドに使った Celesta から、その次のマイナーリリース（1.0 より前）またはメジャーリリースの手前までの範囲を自動で書きます。
 
 マニフェストには `license` を書けます。プラグインを配布するときのライセンスを [SPDX ライセンス式](https://spdx.github.io/spdx-spec/v3.0.1/annexes/spdx-license-expressions/)で示します。`"MIT"`、利用者が選べるときは `"MIT OR Apache-2.0"`、複数が同時に適用されるときは `"(MIT OR Apache-2.0) AND LGPL-2.1-or-later"` のように書きます。ソースだけでなく、同梱物を含めた配布物全体のライセンスを書いてください。プロプライエタリなライセンスなど、[SPDX のライセンス一覧](https://spdx.org/licenses/)にないものは、`LicenseRef-` で始まる独自の識別子を書き、それが何を指すかを `licenseRefs` に書きます。
 

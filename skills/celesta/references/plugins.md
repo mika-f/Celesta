@@ -478,7 +478,7 @@ import { Vrm } from '@celesta-plugin/vrm';
 ## Writing one
 
 Every manifest gives `celesta`, the Celesta versions the plugin works with
-as a Cargo version range (`">=0.9.0, <0.10.0"`); a plugin without one, or
+as a Cargo version range (`">=0.10.0, <0.11.0"`); a plugin without one, or
 whose range leaves out the running Celesta, is skipped, as is one whose
 `protocol` is not `1`. The range covers what the program relies on beyond
 `protocol` (the message format alone, still `1`)
@@ -531,6 +531,16 @@ may ask for the same frame again. A material's WGSL may not bind resources or de
 points, `var<workgroup>` variables, `override` constants, names WGSL
 predeclares (such as `clamp` or `vec4f`), or names starting with `celesta`
 in any letter case.
+
+A plugin in a repository of its own depends on the `celesta-plugin` crate
+from crates.io (`celesta-plugin = "0.10"`; `celesta-plugin-host` and
+`celesta-gpu-renderer` for tests that run its program). Its module needs a
+checkout of the Celesta repository, as `@celesta.studio/*` is not on npm:
+build with the checkout's `node scripts/plugins/build.mts <its folder>`,
+which wants `plugin.json`'s `cargoPackage` to be the binary's name too, an
+up-to-date `Cargo.lock`, and `@celesta.studio/*` imports (the older
+`@celesta/*` names fail to resolve). `examples/plugins/README.md` has the
+details.
 
 Start from the samples in the Celesta repository's `examples/plugins`
 (`flag`: a program that returns meshes; `turntable`: a program that returns

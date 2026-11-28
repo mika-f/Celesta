@@ -326,7 +326,7 @@ choose the ZIP matching your OS and CPU architecture:
 | `ffmpeg-x264` | `ffmpeg-x264/libx264` (GPL) | libx264 H.264; required for MP4 on Linux |
 
 Files are named `Celesta-plugin-ffmpeg-x264-<version>-<os>-<arch>.zip`
-(for example `Celesta-plugin-ffmpeg-x264-0.9.0-macos-arm64.zip`). Use the same
+(for example `Celesta-plugin-ffmpeg-x264-0.10.0-macos-arm64.zip`). Use the same
 release as the app. The ZIP contains one `ffmpeg-x264` folder with its
 manifest, executable, native libraries and license notices; no separate FFmpeg
 installation is needed.
@@ -363,8 +363,8 @@ A media plugin's manifest has `"roles": ["media"]` and `"protocol": 2`, and list
 {
   "id": "ffmpeg",
   "name": "FFmpeg",
-  "version": "0.9.0",
-  "celesta": ">=0.9.0, <0.10.0",
+  "version": "0.10.0",
+  "celesta": ">=0.10.0, <0.11.0",
   "protocol": 2,
   "roles": ["media"],
   "executable": { "macos-aarch64": "bin/celesta-codec-ffmpeg" },
@@ -447,6 +447,8 @@ cargo run -p celesta-exporter -- --react examples/plugins/turntable/demo.tsx tur
 ```
 
 The second `--plugin-dir` gives the exporter the media plugin, whose build needs the FFmpeg development libraries (see [Build from source](/en/docs/build-from-source/)).
+
+A plugin can live in a repository of its own. Its program depends on the `celesta-plugin` crate from crates.io (`celesta-plugin = "0.10"`), which links nothing of Celesta. Its module still needs a checkout of the Celesta repository to build, because the `@celesta.studio/*` packages are not on npm: build it with the checkout's `node scripts/plugins/build.mts <the plugin's folder>`. The samples' [`README.md`](https://github.com/mika-f/Celesta/blob/main/examples/plugins/README.md) says what the script expects of such a plugin.
 
 ## The VRM plugin
 
@@ -572,7 +574,7 @@ To offer components in the desktop app's Add menu, list them in the manifest's `
 
 `name` is the component the module exports: a capital letter, then letters, digits, or `_`. `label` is what the menu says (the name when absent). With `src` (`"image"` or `"video"`), the component is added like an Image: the app asks for a file and writes `src`, `x`, `y`, and `width`. `"src": "model"` is for a file the plugin reads itself, such as a 3D model: list the file types it takes in `extensions` (lowercase letters and digits without the dot, each once, such as `["glb"]`), and give its layer's width over its height in `aspect` (from 1/16384 to 16384; required) so the app draws the box at that shape. The app then accepts only a file of those types and writes `src`, `x`, `y`, and `width` as for an Image. Since it writes no `height`, the component's own default aspect must equal `aspect`, or the layer will not match the box that was drawn. Without `src`, the component is drawn as a box and gets `x`, `y`, `width`, and `height`. `props` are written after those: names made of letters, digits, and `_`, with strings, numbers, and booleans as values, and none of the props the drawing writes. A manifest with `components` needs a `module`.
 
-Every manifest gives `celesta`, the Celesta versions the plugin works with, as a Cargo version range such as `">=0.9.0, <0.10.0"`. It covers what the program relies on beyond the protocol (`protocol` is the format of its messages alone: `1` for a content plugin, which stays `1` while features such as 3D scenes are added on top of it, and `2` for a [media plugin](#media-plugins)) and the `react` and `@celesta.studio/*` APIs the module uses, which come with Celesta at its version. A pre-release of Celesta, such as `0.10.0-beta.1`, is in a range only when a bound of the range names a pre-release of the same version, as in `">=0.10.0-beta.1, <0.11.0"`. The repository's `scripts/plugins/build.mts` writes the range for you, from the Celesta it builds against up to that Celesta's next minor release (before 1.0) or next major release.
+Every manifest gives `celesta`, the Celesta versions the plugin works with, as a Cargo version range such as `">=0.10.0, <0.11.0"`. It covers what the program relies on beyond the protocol (`protocol` is the format of its messages alone: `1` for a content plugin, which stays `1` while features such as 3D scenes are added on top of it, and `2` for a [media plugin](#media-plugins)) and the `react` and `@celesta.studio/*` APIs the module uses, which come with Celesta at its version. A pre-release of Celesta, such as `0.10.0-beta.1`, is in a range only when a bound of the range names a pre-release of the same version, as in `">=0.10.0-beta.1, <0.11.0"`. The repository's `scripts/plugins/build.mts` writes the range for you, from the Celesta it builds against up to that Celesta's next minor release (before 1.0) or next major release.
 
 A manifest may give `license`, the license the plugin is distributed under, as an [SPDX license expression](https://spdx.github.io/spdx-spec/v3.0.1/annexes/spdx-license-expressions/): `"MIT"`, `"MIT OR Apache-2.0"` when the user may choose, `"(MIT OR Apache-2.0) AND LGPL-2.1-or-later"` when several apply together. It describes the plugin as you distribute it, with what it bundles, not its source alone. For a license outside the [SPDX license list](https://spdx.org/licenses/), such as a proprietary one, write an identifier of your own that starts with `LicenseRef-` and say what it names in `licenseRefs`:
 
