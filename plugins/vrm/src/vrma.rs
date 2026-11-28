@@ -35,9 +35,10 @@
 //!   translation under their parent's current world.
 //! - **Hostile files.** A `.vrma` is read through the model's limits (the
 //!   file and its JSON); its key times must be finite and rise, its values
-//!   finite, its rotations of a non-zero, finite length; it keys at most
-//!   [`MAX_CHANNELS`] bones and expressions, and its channels hold at most
-//!   [`CLIP_BUDGET`] bytes of keys.
+//!   finite, its times, values, and tangents within [`MAX_KEY`] (so no
+//!   interpolation overflows), its rotations of a non-zero length; it keys
+//!   at most [`MAX_CHANNELS`] bones and expressions, and its channels hold
+//!   at most [`CLIP_BUDGET`] bytes of keys.
 
 use crate::document::{LoadError, VrmAsset, embedded_buffers, json_and_blob, validated_gltf};
 use crate::expressions::{ExpressionKey, Preset};
@@ -68,6 +69,12 @@ pub(crate) const CLIP_BUDGET: u64 = 256 << 20;
 /// The lowest the clip's hips may rest when it moves them: their travel is
 /// scaled by the avatar's hips height over this one.
 const MIN_HIPS_HEIGHT: f32 = 1e-3;
+
+/// The largest magnitude a clip's key times, values, and tangents may have:
+/// far past any pose (metres, weights, unit rotations) or clip length
+/// (seconds), and small enough that no interpolation between them overflows
+/// `f32` (`3e38 → −3e38` lerps to `-inf`).
+const MAX_KEY: f32 = 1e6;
 
 #[cfg(test)]
 thread_local! {
@@ -581,9 +588,10 @@ impl<'d> Reader<'_, 'd> {
         }
     }
 
-    /// The sampler's keys: times finite and rising, `N`-float values
-    /// (`what`, of `dimensions`) finite, one per time (three for
-    /// `CUBICSPLINE`), each made a `T` by `value`.
+    /// The sampler's keys: times finite, within [`MAX_KEY`], and rising,
+    /// `N`-float values (`what`, of `dimensions`) finite and within
+    /// [`MAX_KEY`], one per time (three for `CUBICSPLINE`, tangents
+    /// included), each made a `T` by `value`.
     fn read<const N: usize, T>(
         &mut self,
         what: &str,
@@ -633,6 +641,11 @@ impl<'d> Reader<'_, 'd> {
                 "{at} has a key time that is not finite"
             )));
         }
+        if times.iter().any(|time| time.abs() > MAX_KEY) {
+            return Err(invalid(format_args!(
+                "{at} has a key time past ±{MAX_KEY:e} seconds, the most a clip's keys may be"
+            )));
+        }
         if let Some(pair) = times.windows(2).find(|pair| pair[1] <= pair[0]) {
             return Err(invalid(format_args!(
                 "{at} has key time {} after {}: key times must rise",
@@ -645,6 +658,11 @@ impl<'d> Reader<'_, 'd> {
                 "{at} has a {what} that is not finite"
             )));
         }
+        if values.iter().flatten().any(|v| v.abs() > MAX_KEY) {
+            return Err(invalid(format_args!(
+                "{at} has a {what} past ±{MAX_KEY:e}, the most a clip's keys may be"
+            )));
+        }
         Ok(Channel {
             interpolation,
             times: times.to_vec(),
@@ -654,9 +672,8 @@ impl<'d> Reader<'_, 'd> {
 
     /// `channel`'s rotation keys made unit length (glTF asks for unit
     /// quaternions; files round them); `CUBICSPLINE`'s tangents are left as
-    /// they are. A key of length 0 is refused, and so is one whose squared
-    /// length overflows `f32` (finite components past about 1e19), which
-    /// would normalize to 0.
+    /// they are. A key of length 0 is refused; [`MAX_KEY`] keeps the squared
+    /// length of the others finite.
     fn rotations(&self, mut channel: Channel<Quat>) -> Result<Channel<Quat>, LoadError> {
         let (start, step) = match channel.interpolation {
             Interpolation::CubicSpline => (1, 3),
@@ -1107,20 +1124,85 @@ mod tests {
                 .glb(),
             )
         };
-        // A key of length 0, and one whose components are finite but whose
-        // squared length overflows `f32`, which would normalize to 0.
-        for key in [
-            Quat::from_xyzw(0.0, 0.0, 0.0, 0.0),
-            Quat::from_xyzw(1e20, 0.0, 0.0, 1e20),
-        ] {
-            let message = rotation(key);
-            assert!(
-                message.contains(
-                    "animation 0 sampler 0 has a rotation that cannot be made unit length"
-                ),
-                "{key}: {message}"
-            );
-        }
+        let message = rotation(Quat::from_xyzw(0.0, 0.0, 0.0, 0.0));
+        assert!(
+            message
+                .contains("animation 0 sampler 0 has a rotation that cannot be made unit length"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn keys_past_the_bound_are_refused() {
+        // Finite, but `3e38 → −3e38` lerps to `-inf`.
+        let message = refusal(
+            &SyntheticVrma {
+                happy: vec![(0.0, 3e38), (1.0, -3e38)],
+                ..SyntheticVrma::clip()
+            }
+            .glb(),
+        );
+        assert!(
+            message.contains("animation 0 sampler 2 has a translation past ±1e6"),
+            "{message}"
+        );
+        let message = refusal(
+            &SyntheticVrma {
+                hips: vec![
+                    (0.0, Vec3::new(0.0, 1.0, 0.0)),
+                    (1.0, Vec3::new(2e6, 1.0, 0.0)),
+                ],
+                ..SyntheticVrma::clip()
+            }
+            .glb(),
+        );
+        assert!(
+            message.contains("animation 0 sampler 1 has a translation past ±1e6"),
+            "{message}"
+        );
+        // A rotation whose squared length would overflow `f32`.
+        let message = refusal(
+            &SyntheticVrma {
+                arm: vec![(0.0, Quat::from_xyzw(1e20, 0.0, 0.0, 1e20))],
+                ..SyntheticVrma::clip()
+            }
+            .glb(),
+        );
+        assert!(
+            message.contains("animation 0 sampler 0 has a rotation past ±1e6"),
+            "{message}"
+        );
+        let message = refusal(
+            &SyntheticVrma {
+                arm: vec![(0.0, Quat::IDENTITY), (2e6, Quat::IDENTITY)],
+                ..SyntheticVrma::clip()
+            }
+            .glb(),
+        );
+        assert!(
+            message.contains("animation 0 sampler 0 has a key time past ±1e6 seconds"),
+            "{message}"
+        );
+        // A `CUBICSPLINE` tangent past the bound, its value in range.
+        let message = refusal(
+            &SyntheticVrma {
+                interpolation: "CUBICSPLINE",
+                tangent: 2e6,
+                ..SyntheticVrma::clip()
+            }
+            .glb(),
+        );
+        assert!(
+            message.contains("animation 0 sampler 0 has a rotation past ±1e6"),
+            "{message}"
+        );
+        // At the bound, the keys load.
+        clip(&SyntheticVrma {
+            interpolation: "CUBICSPLINE",
+            tangent: MAX_KEY,
+            happy: vec![(0.0, MAX_KEY), (MAX_KEY, -MAX_KEY)],
+            ..SyntheticVrma::clip()
+        });
     }
 
     #[test]

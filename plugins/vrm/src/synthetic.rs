@@ -639,9 +639,11 @@ pub struct SyntheticVrma {
     pub hips: Vec<(f32, Vec3)>,
     /// `happy`'s keys: (seconds, weight).
     pub happy: Vec<(f32, f32)>,
-    /// Every sampler's: `"LINEAR"`, `"STEP"`, or `"CUBICSPLINE"` (with zero
-    /// tangents).
+    /// Every sampler's: `"LINEAR"`, `"STEP"`, or `"CUBICSPLINE"` (with
+    /// every tangent component `tangent`).
     pub interpolation: &'static str,
+    /// Every `CUBICSPLINE` tangent's components (0 in the reference clip).
+    pub tangent: f32,
 }
 
 impl SyntheticVrma {
@@ -659,6 +661,7 @@ impl SyntheticVrma {
             hips: vec![(0.0, Vec3::new(0.0, h, 0.0)), (1.0, Vec3::new(0.0, h, 0.5))],
             happy: vec![(0.0, 0.0), (1.0, 1.0)],
             interpolation: "LINEAR",
+            tangent: 0.0,
         }
     }
 
@@ -686,7 +689,7 @@ impl SyntheticVrma {
             let values: Vec<[f32; 4]> = if cubic {
                 values
                     .into_iter()
-                    .flat_map(|value| [[0.0; 4], value, [0.0; 4]])
+                    .flat_map(|value| [[self.tangent; 4], value, [self.tangent; 4]])
                     .collect()
             } else {
                 values

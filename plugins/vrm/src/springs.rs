@@ -335,6 +335,29 @@ impl Springs {
             if joints.is_empty() {
                 continue;
             }
+            // Tails are kept in the centre's space, so a centre that cannot
+            // be inverted would make them NaN and hold every joint of the
+            // spring at rest. Its world is singular exactly when it or an
+            // ancestor scales an axis to 0, which rounding in the product
+            // can hide. Nothing animates a node's scale, so the rest decides.
+            if let Some(center) = center {
+                let zero_scale = std::iter::successors(Some(center), |&node| tree.parents[node])
+                    .any(|node| tree.rest[node].scale.cmpeq(Vec3::ZERO).any());
+                let world = rest_world[center];
+                let why = if zero_scale {
+                    "it or an ancestor scales an axis to 0"
+                } else if world.determinant() == 0.0 || !world.inverse().is_finite() {
+                    "its world matrix is too small or too large to invert in f32"
+                } else {
+                    ""
+                };
+                if !why.is_empty() {
+                    return Err(LoadError::Invalid(format!(
+                        "{VRMC_SPRING_BONE} spring {s} center, node {center}, cannot be \
+                         inverted at rest: {why}"
+                    )));
+                }
+            }
 
             let indices: Vec<usize> = spring
                 .collider_groups
@@ -904,6 +927,18 @@ mod tests {
         }
     }
 
+    /// [`refusal`] of an avatar whose glTF `edit` changes.
+    fn refusal_with(spring_bone: Value, edit: impl FnOnce(&mut Value)) -> String {
+        let mut vrm = SyntheticVrm::avatar();
+        vrm.extensions.insert(VRMC_SPRING_BONE.into(), spring_bone);
+        let document = Document::parse(&vrm.glb_with(edit)).unwrap();
+        let tree = NodeTree::new(&document).unwrap();
+        match Springs::read(&document, &tree) {
+            Ok(_) => panic!("the springs were read"),
+            Err(error) => error.to_string(),
+        }
+    }
+
     /// One spring of joints `[hair0, hair1]`, the first with `joint`'s
     /// fields, colliding with `colliders` (all in one group).
     fn hair(joint: Value, colliders: Value) -> Value {
@@ -1338,6 +1373,68 @@ mod tests {
             json!([{ "node": 30, "shape": { "sphere": {} } }]),
         ));
         assert!(message.contains("collider 0 names node 30"), "{message}");
+    }
+
+    #[test]
+    fn a_center_that_cannot_be_inverted_is_refused() {
+        let mut spring_bone = hair(json!({}), json!([]));
+        spring_bone["springs"][0]["center"] = json!(node::HIPS);
+        let message = refusal_with(spring_bone, |root| {
+            root["nodes"][node::HIPS]["scale"] = json!([0.0, 0.0, 0.0]);
+        });
+        assert!(
+            message.contains(&format!(
+                "spring 0 center, node {}, cannot be inverted at rest",
+                node::HIPS
+            )),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_center_flattened_by_a_rotated_ancestor_is_refused() {
+        let mut spring_bone = hair(json!({}), json!([]));
+        spring_bone["springs"][0]["center"] = json!(node::SPINE);
+        let tilt = Quat::from_rotation_z(0.05).to_array();
+        let twist = Quat::from_euler(glam::EulerRot::XYZ, 0.25, 0.175, 0.075).to_array();
+        let edit = |root: &mut Value| {
+            root["nodes"][node::HIPS]["rotation"] = json!(tilt);
+            root["nodes"][node::HIPS]["scale"] = json!([1.0, 0.0, 1.0]);
+            root["nodes"][node::SPINE]["rotation"] = json!(twist);
+        };
+        // The flattened world still rounds to a determinant and an inverse.
+        let document = Document::parse(&SyntheticVrm::avatar().glb_with(edit)).unwrap();
+        let tree = NodeTree::new(&document).unwrap();
+        let world = tree.world(&tree.rest_pose())[node::SPINE];
+        assert!(
+            world.determinant() != 0.0 && world.inverse().is_finite(),
+            "{world:?}"
+        );
+        let message = refusal_with(spring_bone, edit);
+        assert!(
+            message.contains(&format!(
+                "spring 0 center, node {}, cannot be inverted at rest",
+                node::SPINE
+            )),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_center_of_a_spring_that_never_moves_is_not_read() {
+        // One joint is a tail only: the spring has nothing to step.
+        let mut spring_bone = hair(json!({}), json!([]));
+        spring_bone["springs"][0]["joints"] = json!([{ "node": node::HAIR0 }]);
+        spring_bone["springs"][0]["center"] = json!(node::HIPS);
+        let mut vrm = SyntheticVrm::avatar();
+        vrm.extensions.insert(VRMC_SPRING_BONE.into(), spring_bone);
+        let bytes = vrm.glb_with(|root| {
+            root["nodes"][node::HIPS]["scale"] = json!([0.0, 0.0, 0.0]);
+        });
+        let document = Document::parse(&bytes).unwrap();
+        let tree = NodeTree::new(&document).unwrap();
+        let springs = Springs::read(&document, &tree).unwrap();
+        assert_eq!(springs.joints(), 0);
     }
 
     #[test]

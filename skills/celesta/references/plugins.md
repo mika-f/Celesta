@@ -426,7 +426,10 @@ import { Vrm } from '@celesta-plugin/vrm';
   their keys together; springs step up to 4 h into a layer (a later frame
   fails); an avatar whose springs are costly to step (about ten thousand
   nodes, or a few thousand spring–collider checks) reaches less, warns
-  when it opens, and fails past its reach, naming the time.
+  when it opens, and fails past its reach, naming the time. Refused at
+  open: clip key times, values, or `CUBICSPLINE` tangents past ±1e6
+  (naming the sampler), and a moving spring's centre with no inverse
+  at rest (it or an ancestor has a 0 scale axis).
 - Not read: `VRMC_springBone_limit` (warned; those joints swing past their
   limits), a clip's `lookAt` animation, glTF animations after a clip's
   first. Springs ignore `lookAt` and expressions. No foot IK: as in
