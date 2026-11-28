@@ -62,10 +62,10 @@ impl TextRasterizer {
             .as_ref()
             .map(|family| self.primary_family(family, requested_weight));
         let family = primary.as_deref();
-        // cosmic-text only picks the requested family's face when its weight
-        // is exactly the requested one, and otherwise falls back to another
-        // family. Ask for the weight CSS matching picks within the family
-        // instead, so a family loaded only in Bold still draws a 400 request.
+        // cosmic-text accepts an exact face weight or a weight within the
+        // face's `wght` range. Match within the requested family first so
+        // a static Bold face can draw a 400 request and a variable face can
+        // draw requests outside its range at the nearest endpoint.
         let weight = family
             .and_then(|family| self.matched_weight(family, requested_weight))
             .unwrap_or(requested_weight);
@@ -75,8 +75,8 @@ impl TextRasterizer {
             .map(|line_height| line_height as f32 * scale)
             .unwrap_or(font_size * 1.2);
         let mut buffer = Buffer::new(&mut self.font_system, Metrics::new(font_size, line_height));
-        buffer.set_size(&mut self.font_system, width, None);
-        buffer.set_wrap(&mut self.font_system, Wrap::Word);
+        buffer.set_size(width, None);
+        buffer.set_wrap(Wrap::Word);
 
         // Text with features shapes in a family of its own for them.
         let text_features = style
@@ -181,13 +181,7 @@ impl TextRasterizer {
         } else {
             self.color_emoji_family()
         };
-        buffer.set_text(
-            &mut self.font_system,
-            text,
-            &attrs,
-            Shaping::Advanced,
-            alignment,
-        );
+        buffer.set_text(text, &attrs, Shaping::Advanced, alignment);
         // The emoji font's weight depends on the weight asked for where an
         // emoji sits: the text's, or a font run's.
         let mut emoji_weights: Vec<(u16, u16)> = Vec::new();
@@ -291,7 +285,7 @@ impl TextRasterizer {
             // wider than the line loses its joiners and wraps as `normal`
             // text does. Laying out again keeps the shaping, so only lines
             // whose joiners change are shaped again.
-            buffer.set_size(&mut self.font_system, None, None);
+            buffer.set_size(None, None);
             buffer.shape_until_scroll(&mut self.font_system, false);
             let mut glyphs = vec![Vec::new(); buffer.lines.len()];
             for run in buffer.layout_runs() {
@@ -350,7 +344,7 @@ impl TextRasterizer {
                     add_spans(line_i, line);
                 }
             }
-            buffer.set_size(&mut self.font_system, Some(width), None);
+            buffer.set_size(Some(width), None);
         }
         buffer.shape_until_scroll(&mut self.font_system, false);
         // Without a width, cosmic-text aligns each line within itself, so
@@ -363,8 +357,8 @@ impl TextRasterizer {
             let widest = buffer
                 .layout_runs()
                 .fold(0.0_f32, |widest, run| widest.max(run.line_w));
-            buffer.set_wrap(&mut self.font_system, Wrap::None);
-            buffer.set_size(&mut self.font_system, Some(widest), None);
+            buffer.set_wrap(Wrap::None);
+            buffer.set_size(Some(widest), None);
             buffer.shape_until_scroll(&mut self.font_system, false);
         }
         let buffer = Arc::new(buffer);
@@ -495,12 +489,12 @@ impl TextRasterizer {
         let Some(font) = self.font_system.get_font(glyph.font_id, glyph.font_weight) else {
             return (0.0, 0.0);
         };
-        let metrics = font.as_swash().metrics(&[]);
+        let metrics = font.metrics();
         let units = f64::from(metrics.units_per_em).max(1.0);
         let scale = f64::from(glyph.font_size) / units;
         (
-            f64::from(metrics.cap_height) * scale,
-            f64::from(metrics.x_height) * scale,
+            f64::from(metrics.cap_height.unwrap_or(0.0)) * scale,
+            f64::from(metrics.x_height.unwrap_or(0.0)) * scale,
         )
     }
 

@@ -17,7 +17,7 @@
 </Text>
 ```
 
-- `fontFamily` names a font installed on the computer, or one loaded with `<Font>`. When the family has no face at the requested `fontWeight`, Celesta uses its nearest weight, as CSS does. Characters the font lacks, such as emoji, fall back to another installed font. A JSON project can also bundle a font file as a `font` asset.
+- `fontFamily` names a font installed on the computer, or one loaded with `<Font>`. In the desktop app and exporter, when the matched face has a `wght` axis, Celesta uses the requested `fontWeight`, clamped to the axis range. For static fonts, Celesta picks the nearest weight as CSS does. Other variable axes and `font-variation-settings` are not supported by the native renderer. Characters the font lacks, such as emoji, fall back to another installed font. A JSON project can also bundle a font file as a `font` asset.
 - `stroke` outlines the glyphs. Pass a list for several outlines around one another, such as a white inner and a colored outer outline: `stroke: [{ paint: outer, width: 14 }, { paint: inner, width: 7 }]`. Each `width` is measured from the glyph outline, so the outer stroke is the wider one, in whatever order the list gives them.
 - `lang` selects the language used for fallback fonts when `fontFamily` is omitted or lacks a character. Set `<Composition lang="ja-JP">` for the whole composition. Children inherit the nearest `Composition`, `Group`, or `Sequence` with a `lang` prop, including subtitles, project timeline text, `useTextMetrics()`, `useFitText()`, and component previews. These scopes can change language between frames; measurement and rendering use the same value. `<Text lang="zh-Hant">` overrides ancestors, and an explicit `style.lang` takes priority over that prop. An empty `lang` selects the system locale. Tags such as `ja-JP`, `ko-KR`, `zh-Hans`, `zh-Hant`, and `zh-Hant-HK` are supported. When neither sets a language, Celesta uses the system locale; installed or bundled fonts still determine the available glyphs. The browser preview applies `lang` in browsers supporting Canvas language selection.
 
@@ -137,7 +137,7 @@ Set `fontFallback="loaded"` to try the fonts loaded with `<Font>` before the sys
 
 ## Emphasize part of a text
 
-`<Span>` changes the `fill`, `fontWeight`, `fontFamily`, or `fontFeatures` of part of a text. The whole text is still laid out as one paragraph: it wraps, aligns, and measures as one, and its baseline stays where the text’s own letters put it. Spans nest; a weight the family lacks uses its nearest weight.
+`<Span>` changes the `fill`, `fontWeight`, `fontFamily`, or `fontFeatures` of part of a text. The whole text is still laid out as one paragraph: it wraps, aligns, and measures as one, and its baseline stays where the text’s own letters put it. Spans nest and use the same font weight matching as the rest of the text.
 
 ```tsx title="An emphasized word in one paragraph"
 <Text style={{ fontSize: 48, fill: { type: 'solid', color: '#ffffff' } }}>
