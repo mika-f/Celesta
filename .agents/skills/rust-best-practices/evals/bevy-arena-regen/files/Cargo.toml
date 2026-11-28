@@ -6,7 +6,7 @@ rust-version = "1.97.1"
 publish = false
 
 [dependencies]
-bevy = { version = "=0.20.0", default-features = false }
+bevy = { version = "=0.20.1", default-features = false }
 
 [lints.clippy]
 # System signatures with several queries are normal in ECS code; Bevy's own
